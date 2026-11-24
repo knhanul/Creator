@@ -4,13 +4,57 @@
 개발 환경(Linux)에서는 **jsdom으로 만든 Gemini 모형**과 **가짜 확장 프로그램**으로만 검증했습니다.
 아래 항목을 통과하기 전까지 실제 Gemini 동작은 **미검증**입니다.
 
-## 0. 준비 (한 번만)
+## 0. 준비 — `git pull` 할 때마다 (Windows)
 
-1. `git pull` 후 `npm install`, `npm run build` (또는 `npm run dev`)
-2. `chrome://extensions` → GOMO Gemini Connector **새로고침** (버전 0.2.0, 권한에 `scripting` 추가됨)
-3. 이미 열려 있던 Gemini 탭은 **F5로 새로고침** (새 content script 적용)
-4. Gemini 탭에서 직접 로그인되어 있는지 확인. 입력창은 비워 둡니다.
-5. 앱 → 환경 설정 → AI 연결 → **연결 상태 확인**: "Gemini 탭이 감지되었습니다." 확인
+앱·Native Host·확장 프로그램·Gemini 탭은 **각각 따로** 새 코드로 바뀝니다. 하나라도 이전 코드로 돌고 있으면
+전에는 `jobId/requestId/projectId 누락` 같은 오류가 났고, 지금은 연결 확인 단계에서 무엇이 이전 버전인지 알려 주고 **보내지 않습니다**.
+
+1. **저장소 갱신** — 저장소 폴더에서 PowerShell:
+   ```powershell
+   git pull
+   npm install
+   npm run build
+   ```
+2. **앱 완전히 종료 후 다시 실행** — 평소 실행 방식 그대로 (`npm run dev` 또는 `npm run preview`).
+   설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드).
+3. **Chrome 확장 새로고침** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
+   - GOMO Gemini Connector 카드의 **↻ 새로고침**을 누릅니다.
+   - 버전이 **0.2.1**인지 확인합니다. 다르면 다른 폴더를 불러온 것입니다 → 카드 「세부정보」의 「소스」 경로가
+     `<저장소>\extension` 인지 확인하고, 아니면 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다
+     (이 경우 확장 ID가 바뀌므로 4번 필수).
+   - 카드의 「서비스 워커」 링크 → 콘솔에 빨간 오류가 없는지 확인.
+   - 카드에 표시된 **ID**(32자)를 메모해 둡니다.
+   - 확장을 새로고침하면 Native Host도 새 코드로 다시 시작됩니다.
+4. **Native Host** — 등록된 Host는 `%USERPROFILE%\.gomo-create\gomo-host.cmd` 가 **저장소의 `native-host\host.mjs`를 직접 실행**하는
+   방식이라 `git pull` 만으로 코드가 바뀝니다(3번의 확장 새로고침으로 재시작). **다시 등록이 필요한 경우**: 저장소 폴더를 옮겼을 때,
+   확장 ID가 바뀌었을 때, Node를 다시 설치했을 때, 또는 연결 확인에서 「Native Host가 이전 버전」이 계속 나올 때.
+   ```powershell
+   # 반드시 저장소 폴더에서 실행 (현재 폴더 기준으로 host.mjs 경로를 기록함)
+   npm run native:register -- --extension-id=<3번에서 메모한 ID>
+   npm run native:check
+   type $env:USERPROFILE\.gomo-create\gomo-host.cmd   # 저장소의 native-host\host.mjs 경로인지 확인
+   ```
+   다시 등록했다면 Chrome을 **완전히 종료**(트레이 아이콘까지)한 뒤 다시 켭니다.
+5. **Gemini 탭 새로고침** — 열려 있던 `gemini.google.com` 탭을 **F5**. 로그인 상태 확인, 입력창은 비워 둡니다.
+6. **연결 상태 확인** — 앱 → 환경 설정 → AI 연결 → **연결 상태 확인**. 아래 「연결·진단 결과」가 이렇게 나와야 합니다:
+   ```
+   Gemini 탭이 감지되었습니다.
+   앱 프로토콜 2
+   Native Host: 0.2.1 (프로토콜 2)
+   Chrome 확장: 0.2.1 (프로토콜 2)
+   Gemini 탭 스크립트: 최신          (또는 "아직 없음(전송 때 자동 주입)")
+   ```
+   「이전 버전」/「응답 없음」이 보이면 그 줄 아래 **해결 방법**대로 한 뒤 다시 확인합니다.
+
+| 화면 안내 코드 | 뜻 | 할 일 |
+|---|---|---|
+| `EXTENSION_OUTDATED` | 확장 서비스 워커가 이전 코드 | 3번 → 5번 |
+| `CONTENT_OUTDATED` | Gemini 탭에 이전 스크립트 | 5번 |
+| `HOST_OUTDATED` | Native Host가 이전 코드(버전 확인에 무응답) | 3번, 안 되면 4번 |
+| `EXTENSION_OUTDATED_UNCERTAIN` | 이전 확장이 실제로 입력·전송했을 수 있음 | Gemini 화면 확인 → 「응답 기다리기」 또는 「다시 보내기」 (자동 재전송 없음) |
+
+> 2026-11-24에 본 `jobId/requestId/projectId 누락` 오류는 **Gemini에 아무것도 입력·전송하지 않은 상태**에서 난 오류입니다.
+> 위 0번을 마친 뒤 「AI 기획 분석 다시 시작」을 누르면 됩니다.
 
 ## 1. 선택자 진단 (아무것도 보내지 않음)
 

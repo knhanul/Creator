@@ -91,6 +91,16 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 
 실기 검증 절차: [docs/GEMINI_AUTOMATION_CHECKLIST.md](docs/GEMINI_AUTOMATION_CHECKLIST.md)
 
+## 버전 확인 (연결 확인 단계)
+
+`git pull` 후 앱·Native Host·확장(서비스 워커)·Gemini 탭(content script)이 각각 따로 갱신되므로, 연결 확인 때 각자 자동화 프로토콜 값(`AUTOMATION_PROTOCOL = 2`)을 보고합니다.
+
+- 앱 → Host: `HOST_INFO_REQUEST` (Host가 직접 응답, Chrome으로 넘기지 않음). 무응답 = 이전 Host → `HOST_OUTDATED`
+- 앱 → 확장: `GEMINI_STATUS_RESULT.payload.extension.protocol`. 없음 = 이전 서비스 워커 → `EXTENSION_OUTDATED`
+- 확장 → 탭: `PING_CONTENT` 응답의 `protocol`. 없음 = 이전 content script → `CONTENT_OUTDATED`
+- 하나라도 맞지 않으면 **전송하지 않고** 무엇을 갱신할지 안내. 전송 결과 봉투에 jobId·projectId가 없으면(이전 확장) 성공이라고 해도 '전송 여부 불명'으로 처리.
+- 갱신 절차: `docs/GEMINI_AUTOMATION_CHECKLIST.md` 0번.
+
 ## 미검증 항목 (실환경 필요)
 
 - 실제 Chrome에서 Native Host 등록 및 `connectNative` 성공

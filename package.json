@@ -12,13 +12,13 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node scripts/run-tests.mjs && node scripts/test-job-queue.mjs && node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs && node src/renderer/theme/theme.test.mjs",
+    "test": "node scripts/run-tests.mjs && node scripts/test-job-queue.mjs && node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs && node scripts/test-version-skew.mjs && node src/renderer/theme/theme.test.mjs",
     "dist:win": "npm run build && electron-builder --win nsis portable --x64",
     "dist:dir": "npm run build && electron-builder --dir",
     "native:register": "node native-host/register.mjs register",
     "native:unregister": "node native-host/register.mjs unregister",
     "native:check": "node native-host/register.mjs check",
-    "test:gemini": "node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs",
+    "test:gemini": "node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs && node scripts/test-version-skew.mjs",
     "check:extension": "node scripts/check-extension.mjs"
   },
   "dependencies": {
