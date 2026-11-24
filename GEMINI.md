@@ -21,12 +21,12 @@
 | `src/main/gemini/pipe-client.ts` | Electron ↔ Host Named Pipe 클라이언트 |
 | `extension/gemini-selectors.js` | Gemini 화면 셀렉터 중앙 목록 (근거·검증 여부 표기) |
 | `extension/gemini-dom.js` | 입력·전송·전송 증거·신규 응답 분리·완료 판별·선택자 진단 |
-| `src/main/gemini/analysis-service.ts` | 「AI 기획 분석 시작」: 프롬프트 생성 → 큐 → 전송 → 응답 검증 → 작품 저장 |
+| `src/main/gemini/analysis-service.ts` | AI 단계 자동화(기획 분석·장면 구성·생성 프롬프트·최종 편집 구성): 프롬프트 생성 → 큐 → 전송 → 응답 검증 → 작품 저장 |
 | `src/shared/gemini-analysis.ts` | JSON 후보 선택·덮어쓰기 방지 판단·UI 단계·오류 안내 |
 | `src/main/index.ts` | `gemini:status`, `gemini:ping`, `gemini:submit`, `gemini:analysis:*`, `gemini:probe` IPC |
 | `src/preload/index.ts` | `window.studio.gemini` 노출 (`analysis`, `probe`, `onJobUpdate`) |
-| `src/renderer/App.tsx` | 환경 설정 → AI 연결 UI(선택자 진단), 기획 분석 진행 배너 |
-| `src/renderer/components/AIDialog.tsx` | 기획 분석 자동화 모달 (수동 연결은 접힌 보조 기능) |
+| `src/renderer/App.tsx` | 환경 설정 → AI 연결 UI(선택자 진단), 단계별 시작 버튼·진행 배너 |
+| `src/renderer/components/AIDialog.tsx` | 단계 공용 자동화 모달 (수동 연결은 접힌 보조 기능) |
 
 ## 개발 환경 실행
 
@@ -74,7 +74,7 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 |-------|------|------|
 | 1 | Native Messaging 기반 (Host, Extension, Pipe, PING/PONG, UI) | 코드 구현 완료 |
 | 2 | Gemini 탭 검색 및 상태 전달 | 코드 구현 완료 (실탭 미검증) |
-| 3 | 프롬프트 자동 전송 / 응답 수집 (기획 분석) | 구현 완료 · jsdom 모형 테스트 통과 · **실제 Gemini DOM 미검증** |
+| 3 | 프롬프트 자동 전송 / 응답 수집 | 기획 분석: **실제 Gemini 확인 완료**(0b3905d) · 장면 구성·생성 프롬프트·최종 편집 구성: 구현·모형 테스트 통과, **실제 Gemini 미검증** |
 | 4 | 작업 큐·복구·기존 저장 연동 | 구현 완료 (Mock Provider 테스트 12건 통과) |
 | 5 | 이미지/영상/음악 생성 | 미구현 (검증 후 확장) |
 
@@ -88,6 +88,24 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 6. `RESPONSE_RECEIVED` → jobId·requestId·projectId 모두 일치할 때만 수락 → 코드 블록/텍스트에서 JSON 후보 → `applyAIResponse`(creator.analysis.v1 검사)
 7. 작품 정보가 바뀌었거나 더 새로운 결과가 있으면 자동 적용 보류(사용자 확인) → 아니면 저장 → 화풍·연출안 선택으로 이동
 8. 전송 여부 불명·응답 시간 초과·연결 끊김·앱 재시작은 모두 `사용자 확인 필요`로 두고 **자동 재전송하지 않음**. 완료 응답은 확장 프로그램이 최근 5개를 보관해 「응답 다시 가져오기」로 재전송 없이 받을 수 있음
+
+## 이후 단계 자동화 (장면 구성·생성 프롬프트·최종 편집 구성)
+
+기획 분석과 **같은 경로**를 씁니다. 작업의 `kind`가 단계(`analysis`·`storyboard`·`prompt`·`editplan`)이고 `PROMPT_SUBMIT_REQUEST.payload.stage`로도 전달됩니다(확장은 단계와 무관하게 동작 → 확장·Host 변경 없음).
+
+| 단계 | 시작 버튼 | 프롬프트 | 스키마·검사 | 적용 |
+|---|---|---|---|---|
+| 기획 분석 | AI 기획 분석 시작 | `makeAIPrompt(p,'analysis')` | creator.analysis.v1 · `validateAnalysis` | `applyAIResponse` → 화풍·연출 선택 |
+| 장면 구성 | AI 장면 구성 시작 | `makeAIPrompt(p,'storyboard')` (선택 화풍·연출 포함) | creator.storyboard.v1 · `validateStoryboard` + 낭독=원문 검사 | 장면표 저장(이후 단계 초기화) |
+| 생성 프롬프트 | AI 프롬프트 생성 시작 | `makeAIPrompt(p,'prompt')` (장면표 JSON 포함) | creator.prompts.v1 · `validatePrompts` (장면 ID 1:1) | 장면별 프롬프트 저장 |
+| 최종 편집 구성 | AI 편집 구성 시작 | `makeAIPrompt(p,'editplan')` (미디어 인벤토리 포함) | creator.editplan.v1 · `validateEditPlan` | 편집 클립 저장 |
+
+- 판정은 `decideStageApply`(src/shared/gemini-analysis.ts) 하나로: 다른 단계 작업/다른 단계 화면에서의 적용 → `WRONG_KIND`, 다른 작품 → `OTHER_PROJECT`(강제 적용도 불가), 요청 후 앞 단계·작품 정보가 바뀌어 지금 만든 프롬프트와 다르면 → `UPSTREAM_CHANGED`(분석은 `BRIEF_CHANGED`) 보류, 요청 후 같은 단계 결과가 이미 적용됐으면 → `NEWER_RESULT` 보류. 보류는 「이 결과 적용」으로만 적용.
+- JSON 후보: 그 단계 스키마 이름이 들어 있는 코드 블록 → 나머지 코드 블록 → 전체 텍스트 순서. 다른 단계 JSON은 그 단계 검사기를 통과하지 못함.
+- 진행 중 작업은 작품·단계별로 하나(중복 전송 방지). 단계가 달라도 큐는 한 번에 하나씩 보냄.
+- **같은 Gemini 탭·같은 대화**를 이어 씀: 각 프롬프트가 필요한 앞 단계 결과를 모두 담고 있어 독립적이고, 요청 표식으로 이번 답변만 분리하므로 이전 단계 JSON이 섞이지 않음. 새 대화를 자동으로 여는 동작은 추가하지 않음(셀렉터 추가 위험).
+- 긴 응답: 완료 판정은 중지 버튼 사라짐 + 텍스트 안정(생성 중엔 완료 안 함), 상한 8분. 수집은 응답 블록 전체를 한 번에 읽어 보냄(Chrome→Host 메시지 1 MB 한도 대비 장면표는 수십 KB). 장면 40개(약 9 KB) 모형 테스트 통과.
+- 자동화하지 않는 단계: 미디어 제작(파일 생성·가져오기, Phase 5), 더빙 전달(내보내기).
 
 실기 검증 절차: [docs/GEMINI_AUTOMATION_CHECKLIST.md](docs/GEMINI_AUTOMATION_CHECKLIST.md)
 

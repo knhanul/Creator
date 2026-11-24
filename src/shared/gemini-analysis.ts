@@ -4,17 +4,57 @@
  * - 다른 작품/바뀐 작품 정보/더 새로운 결과를 덮어쓰지 않도록 적용 전 검사
  * - UI 단계 표시와 오류별 원인·해결 안내
  */
-import type { GeminiJobPhase, GeminiJobRecord, StudioProject } from './types';
+import type { AIStage, GeminiJobPhase, GeminiJobRecord, StudioProject } from './types';
 import { applyAIResponse } from './workflow';
 import { makeAIPrompt } from './prompts';
 
-/** 응답 텍스트와 코드 블록에서 JSON 후보를 우선순위대로 (중복 제거) */
-export function answerCandidates(text: string | undefined, codeBlocks: string[] | undefined): string[] {
+/** 자동화 대상 AI 단계: 모두 "프롬프트 → Gemini 텍스트 응답 → JSON 스키마 검사 → 작품 저장" 구조 */
+export const AI_STAGES: readonly AIStage[] = ['analysis', 'storyboard', 'prompt', 'editplan'] as const;
+export const isAIStage = (k: unknown): k is AIStage => typeof k === 'string' && (AI_STAGES as readonly string[]).includes(k);
+
+export interface StageMeta {
+  name: string; schema: string; startLabel: string; restartLabel: string; doneLabel: string; resultLabel: string;
+  /** 다시 실행하면 사라지는 것 (확인 창 문구). null = 확인 없이 시작 */
+  resetWarning(p: StudioProject): string | null;
+  /** 시작 전 필요한 앞 단계 결과. null = 시작 가능 */
+  prerequisite(p: StudioProject): string | null;
+  /** 앞 단계 결과가 바뀌었을 때의 안내 */
+  upstreamChanged: string;
+}
+export const STAGE_META: Record<AIStage, StageMeta> = {
+  analysis: {
+    name: '기획 분석', schema: 'creator.analysis.v1', startLabel: 'AI 기획 분석 시작', restartLabel: 'AI 기획 분석 다시 시작', doneLabel: '분석 완료', resultLabel: 'ANALYSIS RESULT',
+    resetWarning: p => p.analysis && (p.selection.styleId || p.scenes.length) ? '다시 분석하면 현재 화풍·연출 선택과 스토리보드 장면이 초기화됩니다. 계속할까요?' : null,
+    prerequisite: p => (!p.brief.title.trim() || !p.brief.originalText.trim()) ? '작품 제목과 낭독 원문을 먼저 입력해 주세요.' : null,
+    upstreamChanged: '요청을 보낸 뒤 작품 정보(원문·장르·대상 등)가 바뀌어 자동으로 적용하지 않았습니다.'
+  },
+  storyboard: {
+    name: '스토리보드', schema: 'creator.storyboard.v1', startLabel: 'AI 장면 구성 시작', restartLabel: 'AI 장면 구성 다시 시작', doneLabel: '장면 구성 완료', resultLabel: 'STORYBOARD RESULT',
+    resetWarning: p => p.scenes.length ? '다시 구성하면 바뀐 장면의 생성 프롬프트·미디어 연결과 최종 편집안이 초기화됩니다. 계속할까요?' : null,
+    prerequisite: p => !p.analysis || !p.selection.styleId || !p.selection.directionId ? '기획 분석 후 화풍과 연출안을 먼저 선택해 주세요.' : null,
+    upstreamChanged: '요청을 보낸 뒤 작품 정보나 선택한 화풍·연출안이 바뀌어 자동으로 적용하지 않았습니다.'
+  },
+  prompt: {
+    name: '생성 프롬프트', schema: 'creator.prompts.v1', startLabel: 'AI 프롬프트 생성 시작', restartLabel: 'AI 프롬프트 다시 생성', doneLabel: '프롬프트 생성 완료', resultLabel: 'PROMPT RESULT',
+    resetWarning: p => p.scenes.some(s => s.imagePrompt) ? '다시 생성하면 장면별 이미지·영상 프롬프트를 새 결과로 덮어씁니다. 계속할까요?' : null,
+    prerequisite: p => !p.scenes.length ? '스토리보드 장면을 먼저 구성해 주세요.' : null,
+    upstreamChanged: '요청을 보낸 뒤 작품 정보·화풍 또는 스토리보드 장면이 바뀌어 자동으로 적용하지 않았습니다.'
+  },
+  editplan: {
+    name: '최종 편집 구성', schema: 'creator.editplan.v1', startLabel: 'AI 편집 구성 시작', restartLabel: 'AI 편집 구성 다시 시작', doneLabel: '편집 구성 완료', resultLabel: 'EDIT PLAN RESULT',
+    resetWarning: p => p.assembly.clips.length ? '다시 구성하면 현재 최종 편집안(클립 순서·길이·전환)을 새 결과로 덮어씁니다. 계속할까요?' : null,
+    prerequisite: p => !p.scenes.length ? '스토리보드 장면을 먼저 구성해 주세요.' : null,
+    upstreamChanged: '요청을 보낸 뒤 작품 정보, 장면 또는 연결된 미디어가 바뀌어 자동으로 적용하지 않았습니다.'
+  }
+};
+
+/** 응답 텍스트와 코드 블록에서 JSON 후보를 우선순위대로 (중복 제거).
+ *  해당 단계 schema 표기가 있는 코드 블록 → 나머지 코드 블록(뒤에서부터) → 전체 텍스트 */
+export function answerCandidates(text: string | undefined, codeBlocks: string[] | undefined, schema = 'creator.analysis.v1'): string[] {
   const out: string[] = [];
   const push = (s: string | undefined) => { const t = (s || '').trim(); if (t && !out.includes(t)) out.push(t); };
   const blocks = (codeBlocks || []).filter(b => b.includes('{'));
-  // creator.analysis.v1 표기가 있는 코드 블록을 가장 먼저, 그다음 나머지 코드 블록(뒤에서부터), 마지막으로 전체 텍스트
-  for (const b of blocks.filter(b => b.includes('creator.analysis.v1')).reverse()) push(b);
+  for (const b of blocks.filter(b => b.includes(schema)).reverse()) push(b);
   for (const b of blocks.slice().reverse()) push(b);
   push(text);
   return out;
@@ -24,34 +64,50 @@ export type ApplyDecision =
   | { action: 'apply'; project: StudioProject; raw: string; candidateIndex: number }
   | { action: 'reject'; outcome: 'invalid' | 'stale'; code: string; message: string };
 
+type ApplyJob = Pick<GeminiJobRecord, 'jobId' | 'projectId' | 'kind' | 'prompt' | 'createdAt' | 'resultText' | 'codeBlocks'>;
+
 /**
- * 완료된 작업의 응답을 작품에 적용할지 결정.
- * force=true(사용자가 확인 후 적용)여도 다른 작품·다른 단계에는 절대 적용하지 않습니다.
+ * 완료된 작업의 응답을 작품에 적용할지 결정 (모든 AI 단계 공용).
+ * - expectedStage가 주어지면 그 단계의 작업만 (다른 단계 결과를 이 단계에 적용 불가)
+ * - 다른 작품에는 force여도 절대 적용하지 않음
+ * - force가 아니면: 프롬프트가 지금 작품으로 다시 만든 것과 다르면(앞 단계 결과·작품 정보 변경) 보류,
+ *   이 요청 이후 같은 단계 결과가 이미 적용되었으면 보류
+ * - JSON은 그 단계의 스키마 검사기(applyAIResponse)로만 검증 → 다른 단계의 JSON은 통과하지 못함
  */
-export function decideAnalysisApply(job: Pick<GeminiJobRecord, 'jobId' | 'projectId' | 'kind' | 'prompt' | 'createdAt' | 'resultText' | 'codeBlocks'>, project: StudioProject, opts: { force?: boolean } = {}): ApplyDecision {
-  if (job.kind !== 'analysis') return { action: 'reject', outcome: 'stale', code: 'WRONG_KIND', message: '기획 분석 작업이 아닙니다.' };
+export function decideStageApply(job: ApplyJob, project: StudioProject, opts: { force?: boolean; expectedStage?: AIStage } = {}): ApplyDecision {
+  const stage = job.kind as AIStage;
+  if (!isAIStage(job.kind) || (opts.expectedStage && opts.expectedStage !== stage)) {
+    return { action: 'reject', outcome: 'stale', code: 'WRONG_KIND', message: opts.expectedStage ? `${STAGE_META[opts.expectedStage].name} 작업이 아닙니다.` : '자동 적용할 수 있는 AI 단계 작업이 아닙니다.' };
+  }
   if (project.id !== job.projectId) return { action: 'reject', outcome: 'stale', code: 'OTHER_PROJECT', message: '다른 작품의 응답이므로 적용하지 않았습니다.' };
   if (!opts.force) {
-    if (makeAIPrompt(project, 'analysis') !== job.prompt) {
-      return { action: 'reject', outcome: 'stale', code: 'BRIEF_CHANGED', message: '요청을 보낸 뒤 작품 정보(원문·장르·대상 등)가 바뀌어 자동으로 적용하지 않았습니다.' };
+    if (makeAIPrompt(project, stage) !== job.prompt) {
+      return { action: 'reject', outcome: 'stale', code: stage === 'analysis' ? 'BRIEF_CHANGED' : 'UPSTREAM_CHANGED', message: STAGE_META[stage].upstreamChanged };
     }
-    const prev = project.ai.analysis.updatedAt ? Date.parse(project.ai.analysis.updatedAt) : 0;
+    const at = project.ai[stage]?.updatedAt;
+    const prev = at ? Date.parse(at) : 0;
     if (prev && prev > Date.parse(job.createdAt)) {
-      return { action: 'reject', outcome: 'stale', code: 'NEWER_ANALYSIS', message: '이 요청 이후에 다른 기획 분석 결과가 이미 적용되어 덮어쓰지 않았습니다.' };
+      return { action: 'reject', outcome: 'stale', code: stage === 'analysis' ? 'NEWER_ANALYSIS' : 'NEWER_RESULT', message: `이 요청 이후에 다른 ${STAGE_META[stage].name} 결과가 이미 적용되어 덮어쓰지 않았습니다.` };
     }
   }
-  const candidates = answerCandidates(job.resultText, job.codeBlocks);
+  const candidates = answerCandidates(job.resultText, job.codeBlocks, STAGE_META[stage].schema);
   if (!candidates.length) return { action: 'reject', outcome: 'invalid', code: 'EMPTY_RESPONSE', message: 'Gemini 응답이 비어 있습니다.' };
   let firstError = '';
   for (let i = 0; i < candidates.length; i++) {
     try {
-      const next = applyAIResponse(project, 'analysis', candidates[i]);
+      const next = applyAIResponse(project, stage, candidates[i]);
       return { action: 'apply', project: next, raw: candidates[i], candidateIndex: i };
     } catch (e) {
       if (!firstError) firstError = e instanceof Error ? e.message : String(e);
     }
   }
   return { action: 'reject', outcome: 'invalid', code: 'INVALID_JSON', message: firstError || 'JSON을 찾지 못했습니다.' };
+}
+
+/** 기획 분석 전용 (기존 이름 유지 — 실제 Gemini에서 검증된 경로) */
+export function decideAnalysisApply(job: ApplyJob, project: StudioProject, opts: { force?: boolean } = {}): ApplyDecision {
+  if (job.kind !== 'analysis') return { action: 'reject', outcome: 'stale', code: 'WRONG_KIND', message: '기획 분석 작업이 아닙니다.' };
+  return decideStageApply(job, project, { ...opts, expectedStage: 'analysis' });
 }
 
 /** UI 진행 단계 (요구된 8개 상태 표기) */
@@ -124,9 +180,11 @@ export const ERROR_GUIDE: Record<string, { cause: string; fix: string }> = {
   APP_RESTARTED_UNCERTAIN: { cause: '전송 도중 앱이 종료되어 전송 여부를 알 수 없습니다.', fix: 'Gemini 화면을 확인한 뒤 「응답 기다리기」 또는 「다시 보내기」를 선택해 주세요.' },
   RESPONSE_TIMEOUT: { cause: 'Gemini 응답 완료를 제시간에 확인하지 못했습니다.', fix: 'Gemini 화면에서 답변이 끝났는지 확인해 주세요. 끝났다면 「응답 다시 가져오기」 또는 수동 연결로 붙여넣을 수 있습니다.' },
   NO_RESPONSE_NODE: { cause: '전송 후 Gemini 응답 블록을 찾지 못했습니다(화면 구조 변경 가능).', fix: '선택자 진단 결과를 확인하고, 답변이 보이면 수동 연결로 붙여넣어 주세요.' },
-  INVALID_JSON: { cause: 'Gemini 응답에서 올바른 creator.analysis.v1 JSON을 찾지 못했습니다.', fix: '아래 「Gemini 응답 원문」을 확인하고 「다시 요청」하거나, 수동 연결에서 JSON을 고쳐 적용해 주세요.' },
+  INVALID_JSON: { cause: 'Gemini 응답에서 이 단계의 올바른 JSON(스키마)을 찾지 못했습니다.', fix: '아래 「Gemini 응답 원문」을 확인하고 「다시 요청」하거나, 수동 연결에서 JSON을 고쳐 적용해 주세요.' },
   EMPTY_RESPONSE: { cause: 'Gemini 응답이 비어 있습니다.', fix: 'Gemini 화면을 확인하고 「다시 요청」해 주세요.' },
   BRIEF_CHANGED: { cause: '요청 후 작품 정보가 바뀌어 결과를 자동 적용하지 않았습니다.', fix: '바뀐 작품 정보로 「다시 요청」하는 것을 권장합니다. 그래도 이 결과를 쓰려면 「이 결과 적용」을 누르세요.' },
+  UPSTREAM_CHANGED: { cause: '요청 후 앞 단계 결과(작품 정보·화풍·장면·미디어)가 바뀌어 결과를 자동 적용하지 않았습니다.', fix: '바뀐 내용으로 「다시 시작」하는 것을 권장합니다. 그래도 이 결과를 쓰려면 「이 결과 적용」을 누르세요.' },
+  NEWER_RESULT: { cause: '이 요청 이후 같은 단계의 다른 결과가 이미 적용되어 있습니다.', fix: '덮어쓰려면 「이 결과 적용」을 누르세요. 그대로 두려면 닫으면 됩니다.' },
   NEWER_ANALYSIS: { cause: '이 요청 이후 다른 기획 분석 결과가 이미 적용되어 있습니다.', fix: '덮어쓰려면 「이 결과 적용」을 누르세요. 그대로 두려면 닫으면 됩니다.' },
   PROJECT_NOT_FOUND: { cause: '요청한 작품을 찾을 수 없습니다(보관·삭제됨).', fix: '작품을 복원한 뒤 다시 요청해 주세요.' },
   SAVE_FAILED: { cause: '결과를 작품 파일에 저장하지 못했습니다.', fix: '작품을 다시 열고 「응답 다시 가져오기」 또는 「이 결과 적용」을 눌러 주세요.' }

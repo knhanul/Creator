@@ -15,7 +15,7 @@ const selectorsSrc = readFileSync(join(root, 'extension/gemini-selectors.js'), '
 const domSrc = readFileSync(join(root, 'extension/gemini-dom.js'), 'utf8');
 const { DEFAULT_BRIEF, makeProject } = loadTS(join(root, 'src/shared/workflow.ts'));
 const { makeAIPrompt } = loadTS(join(root, 'src/shared/prompts.ts'));
-const { decideAnalysisApply } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
+const { decideAnalysisApply, decideStageApply } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
 
 const FAST = { pollMs: 15, sendEnableWaitMs: 300, sendConfirmTimeoutMs: 400, firstResponseTimeoutMs: 1500, stableMs: 120, maxWaitMs: 3000, progressThrottleMs: 30 };
@@ -108,6 +108,29 @@ await test('실제 기획 프롬프트 전체 흐름: 이전 대화 제외, 신�
   const d = decideAnalysisApply(job, project);
   assert.equal(d.action, 'apply');
   assert.equal(d.project.analysis.styles.length, 3);
+});
+
+await test('긴 스토리보드 응답(장면 40개, 이전 대화 있음): 끝까지 수집 → 이번 응답만 → creator.storyboard.v1 적용', async () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `${i + 1}번째 문장에서 정원의 빛이 조금씩 달라졌다.`);
+  const base = makeProject('33333333-3333-3333-3333-333333333333', { ...DEFAULT_BRIEF, title: '긴 이야기', originalText: lines.join('\n'), genre: 'poetry' });
+  const { applyAIResponse } = loadTS(join(root, 'src/shared/workflow.ts'));
+  const analysed = applyAIResponse(base, 'analysis', analysisJSON);
+  const p = { ...analysed, selection: { styleId: analysed.analysis.styles[0].id, directionId: analysed.analysis.directions[0].id } };
+  const sbPrompt = makeAIPrompt(p, 'storyboard');
+  const story = JSON.stringify({ schema: 'creator.storyboard.v1', scenes: lines.map((l, i) => ({ id: 'S' + String(i + 1).padStart(2, '0'), title: `장면 ${i + 1}`, narration: l, visual: `수채화 느낌의 정원, 아침 햇살이 ${i + 1}번째로 바뀌는 순간을 부드럽게 보여 주는 장면`, durationSec: 8, kind: i % 3 ? 'image' : 'video' })) }, null, 2);
+  assert.ok(story.length > 8000);
+  const { g } = setup(html, { intro: '요청하신 장면 구성입니다.', code: story, chunkMs: 1, thinking: true });
+  const r = await g.submit({ prompt: sbPrompt, marker });
+  assert.equal(r.sendState, 'sent');
+  const out = await g.watch(r.ctx);
+  assert.equal(out.ok, true);
+  assert.ok(!out.text.includes('이전 대화의 답변'));
+  assert.equal(out.codeBlocks.length, 1);
+  assert.equal(out.codeBlocks[0].trim(), story.trim(), '긴 JSON이 잘리지 않고 그대로 수집');
+  const job = { jobId: 'j', projectId: p.id, kind: 'storyboard', prompt: sbPrompt, createdAt: new Date(Date.now() - 1000).toISOString(), resultText: out.text, codeBlocks: out.codeBlocks };
+  const d = decideStageApply(job, p, { expectedStage: 'storyboard' });
+  assert.equal(d.action, 'apply');
+  assert.equal(d.project.scenes.length, 40);
 });
 
 await test('응답 중간에 잠시 멈춰도(안정 시간 미만) 조기 완료하지 않음', async () => {

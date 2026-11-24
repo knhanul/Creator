@@ -1,16 +1,16 @@
 /**
- * 「AI 기획 분석 시작」 오케스트레이션 (Electron main).
+ * AI 단계 자동화 오케스트레이션 (Electron main): 기획 분석(실제 Gemini 검증됨) + 스토리보드·생성 프롬프트·최종 편집 구성.
+ * 모든 단계가 같은 작업 큐·같은 전송 경로·같은 ID 대조·같은 자동 재전송 금지를 씁니다. 단계는 작업의 kind로 구분.
  * 기존 구성 재사용: GeminiJobQueue(Phase 4) + GeminiAdapter(Native Messaging) + storage(read/saveProject)
  * + makeAIPrompt + applyAIResponse(creator.analysis.v1 검사기).
  *
  * 의존성을 주입받으므로 Electron 없이 mock으로 테스트할 수 있습니다(scripts/test-gemini-automation.mjs).
  */
-import type { GeminiAnalysisStartResult, GeminiJobRecord, StudioProject } from '../../shared/types';
+import type { AIStage, GeminiAnalysisStartResult, GeminiJobRecord, StudioProject } from '../../shared/types';
 import type { ProtocolMessage } from '../../shared/gemini-protocol';
 import type { JobResult, ProviderStatus } from './adapter';
 import { makeAIPrompt } from '../../shared/prompts';
-import { stageComplete } from '../../shared/workflow';
-import { decideAnalysisApply } from '../../shared/gemini-analysis';
+import { STAGE_META, decideStageApply, isAIStage } from '../../shared/gemini-analysis';
 
 /** GeminiJobQueue(job-queue.mjs) 중 이 서비스가 쓰는 부분 */
 export interface QueueLike {
@@ -18,7 +18,7 @@ export interface QueueLike {
   get(jobId: string): GeminiJobRecord | undefined;
   findActive(projectId: string, kind: string): GeminiJobRecord | undefined;
   latest(projectId: string, kind?: string): GeminiJobRecord | undefined;
-  enqueue(input: { projectId: string; kind: 'analysis'; prompt: string }): Promise<GeminiJobRecord>;
+  enqueue(input: { projectId: string; kind: AIStage; prompt: string }): Promise<GeminiJobRecord>;
   tick(provider: { submit(job: GeminiJobRecord): Promise<JobResult> }): Promise<void>;
   onResponse(jobId: string, requestId: string, text: string, complete: boolean, extra?: { projectId?: string; codeBlocks?: string[]; isolation?: string }): Promise<'applied' | 'ignored'>;
   setPhase(jobId: string, requestId: string, phase: string, info?: Record<string, unknown>, projectId?: string): Promise<'applied' | 'ignored'>;
@@ -84,36 +84,40 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
   }
 
   const starting = new Set<string>();
-  async function start(projectId: string): Promise<GeminiAnalysisStartResult> {
-    // 같은 작품에 대한 동시 시작(더블클릭 등)은 하나만 통과
-    if (starting.has(projectId)) {
-      const active = queue.findActive(projectId, 'analysis');
+  /** 단계 시작. 같은 작품·같은 단계의 진행 중 작업이 있으면 새로 보내지 않고 그 작업을 돌려줌 */
+  async function start(projectId: string, stage: AIStage = 'analysis'): Promise<GeminiAnalysisStartResult> {
+    if (!isAIStage(stage)) return { ok: false, message: '자동화할 수 없는 단계입니다.' };
+    const key = projectId + '\u0000' + stage;
+    // 같은 작품·같은 단계에 대한 동시 시작(더블클릭 등)은 하나만 통과
+    if (starting.has(key)) {
+      const active = queue.findActive(projectId, stage);
       return { ok: true, job: active, reused: true, message: '이미 시작 중입니다.' };
     }
-    starting.add(projectId);
-    try { return await startLocked(projectId); } finally { starting.delete(projectId); }
+    starting.add(key);
+    try { return await startLocked(projectId, stage); } finally { starting.delete(key); }
   }
-  async function startLocked(projectId: string): Promise<GeminiAnalysisStartResult> {
+  async function startLocked(projectId: string, stage: AIStage): Promise<GeminiAnalysisStartResult> {
     let project: StudioProject;
     try { project = await deps.readProject(projectId); } catch (e) { return { ok: false, message: '작품을 읽지 못했습니다: ' + (e instanceof Error ? e.message : String(e)) }; }
-    if (!stageComplete(project, 'brief')) return { ok: false, message: '작품 제목과 낭독 원문을 먼저 입력해 주세요.' };
-    const existing = queue.findActive(projectId, 'analysis');
-    if (existing) return { ok: true, job: existing, reused: true, message: '이미 진행 중인 기획 분석이 있어 새로 보내지 않았습니다.' };
-    const job = await queue.enqueue({ projectId, kind: 'analysis', prompt: makeAIPrompt(project, 'analysis') });
+    const missing = STAGE_META[stage].prerequisite(project);
+    if (missing) return { ok: false, message: missing };
+    const existing = queue.findActive(projectId, stage);
+    if (existing) return { ok: true, job: existing, reused: true, message: `이미 진행 중인 ${STAGE_META[stage].name} 작업이 있어 새로 보내지 않았습니다.` };
+    const job = await queue.enqueue({ projectId, kind: stage, prompt: makeAIPrompt(project, stage) });
     void kick();
     return { ok: true, job };
   }
 
   /** 완료된 응답 검증·적용. force=사용자가 '이 결과 적용'으로 확인(다른 작품에는 여전히 적용 불가) */
-  async function applyCompleted(jobId: string, force = false): Promise<GeminiJobRecord | null> {
+  async function applyCompleted(jobId: string, force = false, expectedStage?: AIStage): Promise<GeminiJobRecord | null> {
     const job = queue.get(jobId);
-    if (!job || job.state !== 'completed' || job.kind !== 'analysis') return null;
+    if (!job || job.state !== 'completed' || !isAIStage(job.kind)) return null;
     if (job.outcome === 'applied') return job;
     await queue.setOutcome(job.jobId, job.requestId, { phase: 'validating' });
     let project: StudioProject;
     try { project = await deps.readProject(job.projectId); }
     catch { return queue.setOutcome(job.jobId, job.requestId, { outcome: 'stale', phase: 'needs_user', needsUser: true, errorCode: 'PROJECT_NOT_FOUND', errorMessage: '요청한 작품을 찾을 수 없습니다.' }); }
-    const d = decideAnalysisApply(job, project, { force });
+    const d = decideStageApply(job, project, { force, expectedStage });
     if (d.action === 'reject') {
       return queue.setOutcome(job.jobId, job.requestId, {
         outcome: d.outcome, phase: d.outcome === 'stale' ? 'needs_user' : 'error', needsUser: d.outcome === 'stale',
@@ -145,7 +149,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       });
       if (r === 'applied' && complete) {
         const job = queue.get(jobId);
-        if (job?.kind === 'analysis') await applyCompleted(jobId);
+        if (job && isAIStage(job.kind)) await applyCompleted(jobId);
         else if (job) await queue.setOutcome(job.jobId, job.requestId, { outcome: 'received', phase: 'done' });
         void kick();
       }
@@ -180,7 +184,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     const job = queue.get(jobId);
     if (!job) return { success: false, message: '작업을 찾을 수 없습니다.' };
     if (job.state === 'completed') {
-      if (job.kind === 'analysis' && job.outcome !== 'applied') await applyCompleted(jobId);
+      if (isAIStage(job.kind) && job.outcome !== 'applied') await applyCompleted(jobId);
       return { success: true, message: '이미 응답을 받았습니다.' };
     }
     if (job.state !== 'needs_confirmation' && job.state !== 'waiting') return { success: false, message: '응답을 다시 받을 수 있는 상태가 아닙니다.' };
@@ -198,6 +202,8 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     void kick();
   }
 
-  return { start, kick, applyCompleted, applyResult: (jobId: string) => { const j = queue.get(jobId); return applyCompleted(jobId, j?.outcome === 'stale'); }, handleMessage, fetchResult, onReconnect, provider };
+  /** 사용자가 「이 결과 적용」: 보류(stale)된 결과만 force. expectedStage가 다르면 거부(다른 단계 화면에서 적용 불가) */
+  const applyResult = (jobId: string, expectedStage?: AIStage) => { const j = queue.get(jobId); return applyCompleted(jobId, j?.outcome === 'stale', expectedStage); };
+  return { start, kick, applyCompleted, applyResult, handleMessage, fetchResult, onReconnect, provider };
 }
 export type AnalysisService = ReturnType<typeof createAnalysisService>;

@@ -18,10 +18,10 @@ const api:StudioAPI={
       continue:(jobId)=>ipcRenderer.invoke('gemini:jobs:continue',jobId)
     },
     analysis:{
-      start:(projectId)=>ipcRenderer.invoke('gemini:analysis:start',projectId),
-      latest:(projectId)=>ipcRenderer.invoke('gemini:analysis:latest',projectId),
+      start:(projectId,stage)=>ipcRenderer.invoke('gemini:analysis:start',projectId,stage),
+      latest:(projectId,stage)=>ipcRenderer.invoke('gemini:analysis:latest',projectId,stage),
       fetchResult:(jobId)=>ipcRenderer.invoke('gemini:analysis:fetch',jobId),
-      applyResult:(jobId)=>ipcRenderer.invoke('gemini:analysis:apply',jobId)
+      applyResult:(jobId,stage)=>ipcRenderer.invoke('gemini:analysis:apply',jobId,stage)
     },
     probe:()=>ipcRenderer.invoke('gemini:probe'),
     onJobUpdate:(cb)=>{const h=(_e:unknown,job:GeminiJobRecord)=>cb(job);ipcRenderer.on('gemini:job-update',h);return()=>{ipcRenderer.removeListener('gemini:job-update',h);};}

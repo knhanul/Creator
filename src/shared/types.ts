@@ -92,16 +92,16 @@ export type StudioAPI = {
       confirm(jobId: string): Promise<GeminiJobRecord | null>;
       continue(jobId: string): Promise<GeminiJobRecord | null>;
     };
-    /** 「AI 기획 분석 시작」 자동화 */
+    /** AI 단계 자동화 (stage 생략 = 기획 분석). 기획 분석·스토리보드·생성 프롬프트·최종 편집 구성 */
     analysis: {
-      /** 작품 정보로 프롬프트를 만들어 큐에 넣고 바로 실행. 진행 중 작업이 있으면 그 작업을 돌려줌(중복 전송 방지) */
-      start(projectId: string): Promise<GeminiAnalysisStartResult>;
-      /** 이 작품의 가장 최근 기획 분석 작업 */
-      latest(projectId: string): Promise<GeminiJobRecord | null>;
+      /** 작품 정보로 그 단계의 프롬프트를 만들어 큐에 넣고 바로 실행. 같은 단계의 진행 중 작업이 있으면 그 작업을 돌려줌(중복 전송 방지) */
+      start(projectId: string, stage?: AIStage): Promise<GeminiAnalysisStartResult>;
+      /** 이 작품의 그 단계 가장 최근 작업 */
+      latest(projectId: string, stage?: AIStage): Promise<GeminiJobRecord | null>;
       /** 확장 프로그램에 보관된 응답을 다시 요청 (재전송 아님) */
       fetchResult(jobId: string): Promise<OperationResult>;
       /** 자동 적용이 보류된(stale) 결과를 사용자가 확인 후 적용 */
-      applyResult(jobId: string): Promise<GeminiJobRecord | null>;
+      applyResult(jobId: string, stage?: AIStage): Promise<GeminiJobRecord | null>;
     };
     /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */
     probe(): Promise<GeminiProbeResult>;

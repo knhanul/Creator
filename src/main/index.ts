@@ -8,6 +8,8 @@ import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
 import { createAnalysisService, type AnalysisService } from './gemini/analysis-service';
+import { isAIStage } from '../shared/gemini-analysis';
+import type { AIStage } from '../shared/types';
 import type { GeminiJobRecord } from '../shared/types';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
@@ -34,10 +36,12 @@ function registerHandlers(){
   ipcMain.handle('gemini:jobs:cancel',async(_event,jobId)=>jobQueue.cancel(jobId));
   ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>{const j=await jobQueue.confirmResend(jobId);if(j)void analysis.kick();return j;});
   ipcMain.handle('gemini:jobs:continue',async(_event,jobId)=>jobQueue.continueWaiting(jobId));
-  ipcMain.handle('gemini:analysis:start',async(_event,projectId:string)=>analysis.start(String(projectId)));
-  ipcMain.handle('gemini:analysis:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'analysis')||null);
+  // stage 생략 = 기획 분석 (기존 호출 호환). 스토리보드·생성 프롬프트·최종 편집 구성도 같은 경로
+  const stageArg=(stage:unknown):AIStage=>isAIStage(stage)?stage:'analysis';
+  ipcMain.handle('gemini:analysis:start',async(_event,projectId:string,stage?:string)=>analysis.start(String(projectId),stageArg(stage)));
+  ipcMain.handle('gemini:analysis:latest',async(_event,projectId:string,stage?:string)=>jobQueue.latest(String(projectId),stageArg(stage))||null);
   ipcMain.handle('gemini:analysis:fetch',async(_event,jobId:string)=>analysis.fetchResult(String(jobId)));
-  ipcMain.handle('gemini:analysis:apply',async(_event,jobId:string)=>analysis.applyResult(String(jobId)));
+  ipcMain.handle('gemini:analysis:apply',async(_event,jobId:string,stage?:string)=>analysis.applyResult(String(jobId),stage===undefined?undefined:stageArg(stage)));
   ipcMain.handle('gemini:probe',async()=>geminiAdapter.probe());
 }
 let analysis: AnalysisService;
