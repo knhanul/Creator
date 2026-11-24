@@ -6,8 +6,9 @@
 
 ## 0. 준비 — `git pull` 할 때마다 (Windows)
 
-앱·Native Host·확장 프로그램·Gemini 탭은 **각각 따로** 새 코드로 바뀝니다. 하나라도 이전 코드로 돌고 있으면
-전에는 `jobId/requestId/projectId 누락` 같은 오류가 났고, 지금은 연결 확인 단계에서 무엇이 이전 버전인지 알려 주고 **보내지 않습니다**.
+앱·Native Host·확장 프로그램(서비스 워커)·Gemini 탭은 **각각 따로** 새 코드로 바뀝니다. 또 Chrome은 확장이
+`connectNative`를 부를 때마다 Host 프로세스를 하나씩 띄우므로, **Chrome 프로필이 여럿이거나 확장 사본이 여럿이면 Host도 여럿**
+앱에 붙습니다. 앱은 연결 확인 때 이 모든 것을 확인하고, 하나라도 맞지 않으면 **보내지 않고** 진단 정보를 보여 줍니다.
 
 1. **저장소 갱신** — 저장소 폴더에서 PowerShell:
    ```powershell
@@ -18,43 +19,53 @@
 2. **앱 완전히 종료 후 다시 실행** — 평소 실행 방식 그대로 (`npm run dev` 또는 `npm run preview`).
    설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드).
 3. **Chrome 확장 새로고침** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
-   - GOMO Gemini Connector 카드의 **↻ 새로고침**을 누릅니다.
-   - 버전이 **0.2.1**인지 확인합니다. 다르면 다른 폴더를 불러온 것입니다 → 카드 「세부정보」의 「소스」 경로가
-     `<저장소>\extension` 인지 확인하고, 아니면 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다
-     (이 경우 확장 ID가 바뀌므로 4번 필수).
-   - 카드의 「서비스 워커」 링크 → 콘솔에 빨간 오류가 없는지 확인.
+   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.2**인지 확인.
+   - 다르면 다른 폴더를 불러온 것입니다 → 카드 「세부정보」의 「소스」 경로가 `<저장소>\extension` 인지 확인하고,
+     아니면 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다(ID가 바뀌면 5번 필수).
    - 카드에 표시된 **ID**(32자)를 메모해 둡니다.
-   - 확장을 새로고침하면 Native Host도 새 코드로 다시 시작됩니다.
-4. **Native Host** — 등록된 Host는 `%USERPROFILE%\.gomo-create\gomo-host.cmd` 가 **저장소의 `native-host\host.mjs`를 직접 실행**하는
-   방식이라 `git pull` 만으로 코드가 바뀝니다(3번의 확장 새로고침으로 재시작). **다시 등록이 필요한 경우**: 저장소 폴더를 옮겼을 때,
-   확장 ID가 바뀌었을 때, Node를 다시 설치했을 때, 또는 연결 확인에서 「Native Host가 이전 버전」이 계속 나올 때.
-   ```powershell
-   # 반드시 저장소 폴더에서 실행 (현재 폴더 기준으로 host.mjs 경로를 기록함)
-   npm run native:register -- --extension-id=<3번에서 메모한 ID>
-   npm run native:check
-   type $env:USERPROFILE\.gomo-create\gomo-host.cmd   # 저장소의 native-host\host.mjs 경로인지 확인
+4. **다른 Chrome 프로필 확인** — Chrome 오른쪽 위 프로필 아이콘에 프로필이 여러 개면, **각 프로필에서** `chrome://extensions` 를 열어
+   GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.2)하거나, 쓰지 않으면 **제거**합니다.
+5. **Chrome 완전히 종료 후 다시 켜기**
+   - 모든 Chrome 창을 닫고, 작업 표시줄 오른쪽 트레이(^)에 Chrome 아이콘이 있으면 우클릭 → 종료.
+   - (선택) 남은 Host 프로세스 확인 — PowerShell:
+     ```powershell
+     Get-CimInstance Win32_Process -Filter "name='node.exe'" | Where-Object CommandLine -like '*host.mjs*' | Select-Object ProcessId, CommandLine
+     ```
+     Chrome을 끈 상태에서 여기에 나오는 것은 남은 Host입니다 → `Stop-Process -Id <ProcessId>` 로 종료.
+     (앱을 `npm run dev` 로 띄운 node.exe는 `host.mjs` 가 아니므로 여기에 나오지 않습니다.)
+   - Native Host 재등록은 보통 필요 없습니다(등록된 `gomo-host.cmd` 가 저장소의 `native-host\host.mjs` 를 직접 실행).
+     저장소 폴더를 옮겼거나 확장 ID가 바뀌었거나 연결 확인에서 `HOST_OUTDATED` 가 계속 나올 때만:
+     ```powershell
+     # 반드시 저장소 폴더에서 실행
+     npm run native:register -- --extension-id=<3번에서 메모한 ID>
+     npm run native:check
+     ```
+6. **Gemini 탭 열기/새로고침** — `gemini.google.com` 을 열거나 F5. 로그인 상태 확인, 입력창은 비워 둡니다.
+7. **연결 상태 확인** — 앱 → 환경 설정 → AI 연결 → **연결 상태 확인**. 「연결·진단 결과」가 대략 이렇게 나와야 합니다:
    ```
-   다시 등록했다면 Chrome을 **완전히 종료**(트레이 아이콘까지)한 뒤 다시 켭니다.
-5. **Gemini 탭 새로고침** — 열려 있던 `gemini.google.com` 탭을 **F5**. 로그인 상태 확인, 입력창은 비워 둡니다.
-6. **연결 상태 확인** — 앱 → 환경 설정 → AI 연결 → **연결 상태 확인**. 아래 「연결·진단 결과」가 이렇게 나와야 합니다:
+   [GOMO 연결 진단] 2026. 11. 24. 16:40:00
+   판정: 정상 (버전 일치)
+   앱: 자동화 프로토콜 2, 연결 통로 \\.\pipe\com.gomo.create
+   Host 연결 1개:
+     #1 (사용 중) 연결 … · Host 0.2.2 프로토콜 2 pid 1234 시작 …
+         호출 확장: chrome-extension://<ID>/ · 확장 연결: 연결됨 · 확장 HELLO: 버전 0.2.2 프로토콜 2 (…)
+   Host 버전 확인 응답: 0.2.2 프로토콜 2 pid 1234 …
+   확장 상태 응답(120ms): 버전 0.2.2 프로토콜 2 빌드 0.2.2 ID <ID> 서비스 워커 시작 … · Gemini 탭 1개
+   Gemini 탭 스크립트: 최신 (프로토콜 2)      ← 또는 "아직 없음(전송 때 자동 주입)"
+   Host 로그 파일: C:\Users\<이름>\.gomo-create\host.log
    ```
-   Gemini 탭이 감지되었습니다.
-   앱 프로토콜 2
-   Native Host: 0.2.1 (프로토콜 2)
-   Chrome 확장: 0.2.1 (프로토콜 2)
-   Gemini 탭 스크립트: 최신          (또는 "아직 없음(전송 때 자동 주입)")
-   ```
-   「이전 버전」/「응답 없음」이 보이면 그 줄 아래 **해결 방법**대로 한 뒤 다시 확인합니다.
+   판정이 정상이 아니면 그 아래 **해결 방법**대로 한 뒤 다시 확인하고, 그래도 안 되면 이 블록 전체를 **복사**해서 보내 주세요
+   (프롬프트·응답 내용은 들어 있지 않습니다). 기획 분석 모달의 「진단 정보」에도 같은 내용이 남습니다.
 
-| 화면 안내 코드 | 뜻 | 할 일 |
+| 판정 코드 | 뜻 | 할 일 |
 |---|---|---|
-| `EXTENSION_OUTDATED` | 확장 서비스 워커가 이전 코드 | 3번 → 5번 |
-| `CONTENT_OUTDATED` | Gemini 탭에 이전 스크립트 | 5번 |
-| `HOST_OUTDATED` | Native Host가 이전 코드(버전 확인에 무응답) | 3번, 안 되면 4번 |
+| `EXTENSION_OUTDATED` | 응답한 확장(서비스 워커)이 이전 코드. 진단에 Host가 여러 개면 다른 프로필/사본, 「카드 버전은 0.2.x인데…」면 Chrome이 서비스 워커를 이전 코드로 실행 중 | 3 → 4 → 5 → 6 |
+| `EXTENSION_NO_REPLY` | Host는 최신인데 확장이 5초 안에 답하지 않음 | 5 → 6 |
+| `CONTENT_OUTDATED` | Gemini 탭에 이전 스크립트 | 6 |
+| `HOST_OUTDATED` | Host가 이전 코드(버전 확인에 무응답) | 5 (재등록 포함) |
 | `EXTENSION_OUTDATED_UNCERTAIN` | 이전 확장이 실제로 입력·전송했을 수 있음 | Gemini 화면 확인 → 「응답 기다리기」 또는 「다시 보내기」 (자동 재전송 없음) |
 
-> 2026-11-24에 본 `jobId/requestId/projectId 누락` 오류는 **Gemini에 아무것도 입력·전송하지 않은 상태**에서 난 오류입니다.
-> 위 0번을 마친 뒤 「AI 기획 분석 다시 시작」을 누르면 됩니다.
+> 지금까지의 두 오류(`jobId/requestId/projectId 누락`, `보고된 프로토콜: 없음`)는 모두 **Gemini에 아무것도 입력·전송하지 않은 상태**에서 멈춘 것입니다.
 
 ## 1. 선택자 진단 (아무것도 보내지 않음)
 
@@ -142,6 +153,6 @@
 
 ## 문제가 생기면
 
-- 선택자 진단 결과 JSON + `%USERPROFILE%\.gomo-create\native-host.log` 마지막 부분
+- 선택자 진단 결과 JSON + `%USERPROFILE%\.gomo-create\host.log` 마지막 부분 (종류·ID·버전만 기록, 본문 없음)
 - Chrome `chrome://extensions` → GOMO Gemini Connector → 서비스 워커 콘솔 오류
 - 셀렉터 수정은 `extension/gemini-selectors.js` 한 파일만 고치면 됩니다. 확인된 셀렉터는 `verified: true`로 바꿉니다.

@@ -126,7 +126,8 @@ await test('연결 확인: 0.1.0 백그라운드는 버전을 보고하지 않�
   const issue = checkPeerVersions({ host: { protocol: 2, version: '0.2.1' }, extension: st.payload.extension ?? null, content: st.payload.content ?? null });
   assert.equal(issue.code, 'EXTENSION_OUTDATED');
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /chrome:\/\/extensions/);
-  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Gemini 탭을 새로고침/);
+  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Gemini 탭 새로고침/);
+  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Chrome을 완전히 종료/);
 });
 
 await test('이전 백그라운드 + 이전 content(둘 다 0.1.0): "성공"이라고 해도 전송 여부 불명으로 처리', async () => {
@@ -225,13 +226,14 @@ async function service(status, submitResult) {
 const okStatus = { connected: true, hostRegistered: true, extensionConnected: true, geminiTabFound: true, loginState: 'unknown', message: '' };
 
 await test('앱: 연결 확인에서 EXTENSION_OUTDATED → 보내지 않고 사용자 확인 필요 + 구체적 안내', async () => {
-  const { svc, queue, submits } = await service({ ...okStatus, versionIssue: { code: 'EXTENSION_OUTDATED', message: 'Chrome 확장 프로그램이 이전 버전으로 실행 중입니다.' } }, () => { throw new Error('must not submit'); });
+  const { svc, queue, submits } = await service({ ...okStatus, versionIssue: { code: 'EXTENSION_OUTDATED', message: 'Chrome 확장 프로그램이 이전 버전으로 실행 중입니다.' }, diagnosticText: '[GOMO 연결 진단] test' }, () => { throw new Error('must not submit'); });
   await svc.start(JOB.projectId); await svc.kick();
   const job = queue.list()[0];
   assert.equal(submits.length, 0);
   assert.equal(job.state, 'failed'); assert.equal(job.phase, 'needs_user'); assert.equal(job.errorCode, 'EXTENSION_OUTDATED');
   assert.equal(job.sendConfirmed, false);
   assert.match(guideFor(job).fix, /chrome:\/\/extensions/);
+  assert.equal(job.diagnostics, '[GOMO 연결 진단] test'); // 모달의 '진단 정보'에 표시
 });
 
 await test('앱: 이전 버전 확장이 결과를 회신(전송 여부 불명) → needs_confirmation, 자동 재전송 없음', async () => {

@@ -99,6 +99,8 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 - 앱 → 확장: `GEMINI_STATUS_RESULT.payload.extension.protocol`. 없음 = 이전 서비스 워커 → `EXTENSION_OUTDATED`
 - 확장 → 탭: `PING_CONTENT` 응답의 `protocol`. 없음 = 이전 content script → `CONTENT_OUTDATED`
 - 하나라도 맞지 않으면 **전송하지 않고** 무엇을 갱신할지 안내. 전송 결과 봉투에 jobId·projectId가 없으면(이전 확장) 성공이라고 해도 '전송 여부 불명'으로 처리.
+- Host 여러 개: Chrome은 확장의 `connectNative()`마다 Host를 하나씩 띄웁니다(프로필·확장 사본이 여럿이면 여럿). 앱(pipe-client)은 모든 연결을 기억하고, 확장 HELLO/회신으로 자동화 프로토콜 2 이상을 보고한 Host 중 가장 최근 것을 씁니다(예전: 마지막에 붙은 Host). Host는 확장 포트가 닫히면 즉시 종료합니다.
+- 진단: 「연결 상태 확인」과 모달 「진단 정보」에 Host 연결 목록(pid·시작 시각·호출 확장·확장 HELLO), Host·확장·탭 버전, 응답 시간, Host 로그 경로(`%USERPROFILE%\.gomo-create\host.log`, 종류·ID·버전만 기록)를 표시.
 - 갱신 절차: `docs/GEMINI_AUTOMATION_CHECKLIST.md` 0번.
 
 ## 미검증 항목 (실환경 필요)
@@ -116,7 +118,7 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 ## 오류 시 확인
 
 - `npm run native:check` 로 레지스트리 확인
-- `%USERPROFILE%\.gomo-create\native-host.log` 확인 (stdout에 로그를 쓰지 않음)
+- `%USERPROFILE%\.gomo-create\host.log` 확인 (stdout에 로그를 쓰지 않음)
 - Chrome 확장 프로그램 콘솔에서 `connectNative` 오류 메시지 확인
 - 확장 프로그램 ID가 Host manifest `allowed_origins`와 일치하는지 확인
 
