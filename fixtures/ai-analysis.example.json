@@ -1,0 +1,17 @@
+{
+  "schema": "creator.analysis.v1",
+  "summary": "작은 정원의 평화로운 아침을 그린 창작 낭독",
+  "emotion": "평온하고 희망적인 아침",
+  "keywords": ["정원", "아침", "바람", "희망"],
+  "styles": [
+    {"id":"warm-watercolor","label":"따뜻한 수채화","description":"종이 질감과 부드러운 자연광"},
+    {"id":"pastel","label":"파스텔 그림책","description":"부드러운 색연필과 단순한 형태"},
+    {"id":"minimal","label":"미니멀 일러스트","description":"여백이 많은 단색 배경"}
+  ],
+  "directions": [
+    {"id":"gentle","label":"고요한 산책","description":"느린 장면 전환"},
+    {"id":"tender","label":"감성적인 독백","description":"클로즈업 위주의 연출"},
+    {"id":"scenic","label":"자연 풍경","description":"넓은 풍경으로 진행"}
+  ],
+  "cautions": ["과도한 화면 움직임을 피하세요."]
+}

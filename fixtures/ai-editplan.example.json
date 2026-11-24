@@ -1,0 +1,9 @@
+{
+  "schema": "creator.editplan.v1",
+  "clips": [
+    {"sceneId":"S01","durationSec":12,"transition":"fade"},
+    {"sceneId":"S02","durationSec":10,"transition":"dissolve"},
+    {"sceneId":"S03","durationSec":11,"transition":"fade"}
+  ],
+  "notes": "실제 사람 목소리를 녹음한 뒤 자막 시간을 조정합니다."
+}

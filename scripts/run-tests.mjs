@@ -1,0 +1,44 @@
+import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
+import {resolve,dirname,join} from 'node:path';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url);
+let ts;
+try{ts=require('typescript');}catch{ts=require('/opt/nvm/versions/node/v22.16.0/lib/node_modules/typescript/lib/typescript.js');}
+const cache=new Map();
+function loadTS(filename){filename=resolve(filename);if(cache.has(filename))return cache.get(filename).exports;const module={exports:{}};cache.set(filename,module);const js=ts.transpileModule(readFileSync(filename,'utf8'),{fileName:filename,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;function localRequire(spec){if(spec.startsWith('.'))return loadTS(resolve(dirname(filename),spec+'.ts'));return require(spec);}new Function('require','module','exports',js)(localRequire,module,module.exports);return module.exports;}
+const root=resolve(import.meta.dirname,'..');
+const {DEFAULT_BRIEF,makeProject,extractJSON,applyAIResponse,validateEditPlan,readyForHandoff,toHandoff,stageComplete}=loadTS(join(root,'src/shared/workflow.ts'));
+const {makeAIPrompt}=loadTS(join(root,'src/shared/prompts.ts'));
+const fixture=name=>JSON.parse(readFileSync(join(root,'fixtures',name),'utf8'));
+let checks=0;const test=(label,fn)=>{try{fn();checks++;console.log('PASS',label);}catch(e){console.error('FAIL',label,e);process.exitCode=1;}};
+const sample={...DEFAULT_BRIEF,title:'새벽의 작은 정원',originalText:'새벽의 작은 정원에 빛이 내려앉았다.\n풀잎 사이로 부드러운 바람이 지나갔다.\n오늘도 좋은 이야기가 시작된다.',genre:'poetry',rightsStatus:'reviewed'};
+const p=makeProject('11111111-1111-1111-1111-111111111111',sample);
+test('프로젝트 기본 생성',()=>assert.equal(p.schema,'creator.project.v1'));
+test('분석 프롬프트 원문 포함',()=>assert.ok(makeAIPrompt(p,'analysis').includes('새벽의 작은 정원에 빛이')));
+test('JSON 코드블록 추출',()=>assert.deepEqual(extractJSON('설명\n```json\n{"schema":"ok","v":1}\n```'),{schema:'ok',v:1}));
+test('JSON 주변 설명 추출',()=>assert.deepEqual(extractJSON('설명 {"a":2} 입니다'),{a:2}));
+const p1=applyAIResponse(p,'analysis',JSON.stringify(fixture('ai-analysis.example.json')));
+test('분석 JSON 검사 및 반영',()=>assert.equal(p1.analysis.styles.length,3));
+test('화풍 미승인시 스토리보드 차단',()=>assert.throws(()=>applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')))));
+p1.selection={styleId:'warm-watercolor',directionId:'gentle'};
+const p2=applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')));
+test('스토리보드 장면 적용',()=>assert.equal(p2.scenes.length,3));
+test('장면 생성 시 확정 원문',()=>assert.ok(p2.scenes[0].narration.includes('새벽의 작은 정원')));
+const p3=applyAIResponse(p2,'prompt',JSON.stringify(fixture('ai-prompts.example.json')));
+test('장면 프롬프트 1:1 매핑',()=>assert.ok(p3.scenes.every(s=>s.imagePrompt.length>10)));
+test('프롬프트 장면 ID 누락시 실패',()=>assert.throws(()=>applyAIResponse(p2,'prompt','{"schema":"creator.prompts.v1","items":[]}')));
+const p4=applyAIResponse(p3,'editplan',JSON.stringify(fixture('ai-editplan.example.json')));
+test('편집 구성 3개 적용',()=>assert.equal(p4.assembly.clips.length,3));
+test('잘못된 장면 거부',()=>assert.throws(()=>validateEditPlan({schema:'creator.editplan.v1',clips:[{sceneId:'UNKNOWN',durationSec:10,transition:'fade'}]},p3.scenes)));
+test('미디어 없으면 전달 점검 경고',()=>assert.equal(readyForHandoff(p4).ready,false));
+test('교환 포맷 별도 표기',()=>assert.equal(toHandoff(p4).schema,'creator.handoff.v1'));
+test('장면 없이 기획 진행 상태 계산',()=>assert.equal(stageComplete(p,'storyboard'),false));
+const {toComposerDraft}=loadTS(join(root,'src/shared/workflow.ts'));
+test('미디어 미연결 편집안은 더빙 초안 생략',()=>assert.equal(toComposerDraft(p4),null));
+const pReady=structuredClone(p4);
+pReady.assets=pReady.scenes.map((s,i)=>({id:`media-${i}`,kind:s.kind,name:`scene-${i}.${s.kind==='image'?'png':'mp4'}`,relativePath:`assets/${s.kind}/scene-${i}.${s.kind==='image'?'png':'mp4'}`,bytes:500,importedAt:new Date().toISOString()}));
+pReady.scenes=pReady.scenes.map((s,i)=>({...s,assetId:`media-${i}`}));
+test('더빙 v2 초안 프로젝트·SRT 생성',()=>{const draft=toComposerDraft(pReady);assert.ok(draft);assert.equal(draft.project.version,2);assert.equal(draft.project.clips.length,3);assert.ok(draft.srt.includes('-->'));});
+
+console.log(`${checks} tests completed`);

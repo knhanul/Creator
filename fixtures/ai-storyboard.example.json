@@ -1,0 +1,8 @@
+{
+  "schema": "creator.storyboard.v1",
+  "scenes": [
+    {"id":"S01","title":"새벽 정원","narration":"새벽의 작은 정원에 빛이 내려앉았다.","visual":"잔잔한 햇빛이 비추는 정원","durationSec":12,"kind":"image"},
+    {"id":"S02","title":"바람의 인사","narration":"풀잎 사이로 부드러운 바람이 지나갔다.","visual":"풀잎이 흔들리는 풍경","durationSec":10,"kind":"video"},
+    {"id":"S03","title":"새로운 하루","narration":"오늘도 좋은 이야기가 시작된다.","visual":"환하게 열린 오솔길","durationSec":11,"kind":"image"}
+  ]
+}

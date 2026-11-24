@@ -1,0 +1,116 @@
+# 고모 미디어공방 · 고모 창작실
+
+**GOMO Create v0.1.0 — Windows 데스크톱 초기 소스**
+
+프로젝트의 중심은 HTML 프롬프트 제조기가 아니라, **Electron + React + TypeScript로 처음부터 새로 만든 Windows 창작 워크스페이스**입니다. 기존 프롬프트 제조기의 장르·시청 대상·기획→화풍/연출 승인→스토리보드→영문 생성 프롬프트→실제 미디어→최종 편집안 흐름만 재해석해 이식했습니다.
+
+> **현재 단계에 대한 안내:** UI·프로젝트 로컬 저장·AI JSON 스키마 검증·미디어 관리·편집안·내보내기 기능을 포함하는 **소스코드 MVP**입니다. Gemini 웹사이트 무인 자동화는 아직 연결하지 않았습니다. 파일을 제공하는 실행 환경에서 npm 패키지 설치/실제 Windows Electron 실행을 수행하지 못했으므로, 해당 부분은 사용자 PC에서 첫 빌드 확인이 필요합니다.
+
+## 1. Windows에서 처음 실행
+
+요구 사항: **Windows 10/11**, **Node.js 22.12 이상**(권장 Node.js 22 LTS), VS Code, 인터넷 연결(첫 npm 설치).
+
+1. ZIP을 압축 해제합니다. 예: `D:\dev\gomo-creation-studio`
+2. VS Code에서 `파일 > 폴더 열기`로 위 폴더를 선택합니다.
+3. VS Code 메뉴 `터미널 > 새 터미널`을 엽니다.
+4. 아래 명령을 순서대로 실행합니다.
+
+```powershell
+npm install
+npm run dev
+```
+
+처음 실행에서는 Electron이 빌드되어 **고모 창작실 Windows 창**이 표시됩니다. 개발 중 코드를 저장하면 화면이 다시 빌드·갱신됩니다.
+
+### 검사·패키징
+
+```powershell
+npm run typecheck    # 전체 TypeScript 검사
+npm test             # AI 단계 및 프로젝트 구조 단위 검사
+npm run build        # Electron 프로덕션 빌드
+npm run dist:win     # Windows 설치형 + 포터블 EXE 제작
+```
+
+EXE는 `release/`에 생성되도록 설정했습니다. 서명하지 않은 자체 빌드는 Windows SmartScreen 경고가 나올 수 있습니다. 코드 서명·배포용 업데이트 기능은 아직 포함하지 않았습니다.
+
+## 2. 현재 구현된 사용자 기능
+
+| 화면 | 실제 기능 |
+| --- | --- |
+| 대시보드 | 최근 작품·통계·빠른 새 작품 등록 |
+| 내 작품 | 작품 목록·검색·보관·복원 |
+| 작품 정보 | 장르/시청 대상/원문/출처/권리확인/길이/화면비 등록·수정 |
+| 기획 분석 | AI 요청문 자동 생성, JSON 검증·적용, 화풍/연출안 직접 선택 |
+| 스토리보드 | 장면 JSON 적용, 카드 보기, 추가·수정·순서 조정·삭제 |
+| 생성 프롬프트 | 장면별 이미지/동영상 프롬프트 JSON 적용, 직접 수정·복사 |
+| 미디어 보관함 | 로컬 이미지·영상·음악 복사, 미리보기, 장면별 미디어 연결 |
+| 최종 편집안 | 편집 JSON 적용 또는 자동 초안 생성, 시간·전환·BGM 선택, 예상 자막 표시 |
+| 더빙 전달 | 작품과 미디어 복사, GOMO 교환 JSON, 가능한 경우 더빙용 v2 JSON/SRT 초안 생성 |
+| 환경 설정 | 데이터 폴더·AI 모드·브랜드 구조 안내 |
+
+### 프로젝트 저장 방식
+
+프로젝트와 가져온 미디어는 Windows 사용자 폴더의 `creator-workspace/projects/<UUID>/`에 저장됩니다. 프로젝트는 `project.json`에 기록되며 파일 변경과 가져오기는 실제 파일 시스템에서 수행합니다. 내부 프로젝트 ID/스키마/경로는 **GOMO→NUNI 브랜드 변경에도 그대로 유지**합니다.
+
+> 기존 자동 생성 미디어를 삭제하거나 변형하지 않습니다. 작품 보관은 프로젝트 삭제가 아닙니다. 내보내기는 원본 프로젝트를 이동하지 않고 선택한 출력 폴더에 **복사본**을 만듭니다.
+
+## 3. AI 기능 사용 (현재)
+
+1. 새 작품을 등록하고 **기획 분석**에서 `AI 분석 가져오기`를 클릭합니다.
+2. AI 워크벤치 왼쪽의 프롬프트를 복사해 원하는 AI에 전달합니다.
+3. 받은 JSON을 워크벤치 오른쪽에 붙여 넣고 **검사 후 적용**을 누릅니다.
+4. 화풍과 연출안을 승인하고 같은 방식으로 스토리보드·생성 프롬프트·최종 편집안을 진행합니다.
+5. 이미지·동영상·음악을 생성 도구에서 내려받은 뒤 **미디어 보관함**에서 가져옵니다.
+
+예시 JSON은 `fixtures/`에 네 종류가 모두 포함되어 있습니다. **이 JSON은 예제 창작 텍스트용이므로, 성경 본문 등 실제 프로젝트에 그대로 적용하면 안 됩니다.**
+
+**현재 구현하지 않은 기능:** 로그인된 Chrome Gemini 자동 제어, 프롬프트 무인 전송, 생성 이미지/영상/음악의 무인 다운로드, 생성 세션 복구, reference-image UI 조작. `src/shared/prompts.ts`의 `AIProviderAdapter`는 향후 연결을 위한 인터페이스입니다. Google의 인증·사용량 제한을 우회하는 구현은 계획하지 않습니다.
+
+## 4. 더빙 프로그램 연결
+
+`더빙 전달 > 제작 패키지 내보내기` 시 폴더 안에 다음을 출력합니다.
+
+```text
+<작품명>_<ID>/
+  project.json                  # GOMO 원본 프로젝트
+  assets/                       # 가져온 이미지, 영상, 음악
+  gomo-handoff.json             # GOMO 중간 교환 데이터
+  composer_project.json         # 모든 편집 클립에 미디어가 연결되어 있을 때만 생성
+  captions.srt                  # 위 조건이 만족될 때 생성
+  README_더빙프로그램_연결.txt
+```
+
+`composer_project.json`은 `https://github.com/knhanul/dubbing`의 README에 있는 `version: 2`, `clips`, `subtitle.items`, `bgm` 설명을 기준으로 만든 **호환 초안**입니다. 실제 더빙 프로그램의 스키마 전체를 검증하거나 실프로그램에서 파일을 열어 테스트한 것은 아닙니다. 설치된 더빙 프로그램에서 반드시 열기·미리보기·녹음 테스트를 진행하세요. 추후 `src/shared/workflow.ts#toComposerDraft`를 별도 `adapters/dubbing` 모듈로 이동하고 엄격한 스키마 검사를 추가할 예정입니다.
+
+## 5. 코드 구조
+
+```text
+src/
+  main/                       # Electron 메인: 파일시스템, 프로젝트 저장, 미디어 프로토콜
+  preload/                    # 노출된 IPC API (UI는 Node.js 직접 접근 안 함)
+  shared/
+    brand.ts                  # GOMO/NUNI 브랜드 표시 설정
+    types.ts                  # 프로젝트 데이터와 IPC 계약
+    workflow.ts               # AI JSON 검증, 단계 전이, 더빙 export
+    prompts.ts                # 단계별 AI 프롬프트, Provider 인터페이스
+  renderer/
+    App.tsx                   # 메인 Windows 워크스페이스
+    components/              # 공통 UI·모달·AI 워크벤치
+    hooks/                   # 프로젝트 저장·조회 및 상태 연결
+    styles/app.css           # 디자인 시스템·데스크톱 레이아웃
+fixtures/                    # 테스트용 AI JSON 네 종류
+scripts/run-tests.mjs        # 순수 코어 단위 테스트
+docs/                        # 아키텍처·브랜딩·로드맵·검증 상태
+```
+
+이음오피스의 모듈형 Electron 구조를 참고했지만, 이음오피스 코드를 복사하거나 Git 하위모듈을 포함하지 않았습니다. 별도의 독립 소스 프로젝트입니다.
+
+## 6. 다음 권장 개발 순서
+
+1. Windows에서 `npm install`, `npm run typecheck`, `npm run dev` 확인.
+2. 실제 작품 1개를 생성해 저장·재실행·미디어 가져오기·편집 패키지 출력까지 통합 테스트.
+3. UI 사용성을 개선하며 공통 디자인 시스템 `packages/ui` 분리.
+4. **Chrome 확장 + Windows Native Messaging**으로 Gemini 연결 어댑터를 별도 개발·검증.
+5. 실제 더빙 프로그램과 `composer_project.json` 호환 검증 및 원클릭 실행 추가.
+
+자세한 내용은 `docs/ARCHITECTURE.md`, `docs/BRANDING.md`, `docs/ROADMAP.md`를 참고하세요.

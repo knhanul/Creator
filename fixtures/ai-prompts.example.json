@@ -1,0 +1,9 @@
+{
+  "schema": "creator.prompts.v1",
+  "items": [
+    {"sceneId":"S01","imagePrompt":"Soft watercolor illustration of a peaceful morning garden, warm sunlight, delicate paper texture, no text.","videoPrompt":"Slow camera movement across a sunlit garden, no speech or text.","negativePrompt":"Text, watermark, harsh lighting."},
+    {"sceneId":"S02","imagePrompt":"Soft watercolor illustration of grass gently moving in a spring breeze, warm light, no text.","videoPrompt":"Subtle grass movement in a gentle breeze, stable slow camera, no speech, no text.","negativePrompt":"Text, watermark, shaky camera."},
+    {"sceneId":"S03","imagePrompt":"Soft watercolor illustration of a bright woodland path in the morning, serene hopeful mood, no text.","videoPrompt":"Slow reveal of a bright woodland pathway, no speech or text.","negativePrompt":"Text, watermark, harsh lighting."}
+  ],
+  "bgmPrompt": "Instrumental ambient piano and warm strings, gentle positive arc, no vocals or lyrical melody."
+}

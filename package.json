@@ -1,0 +1,68 @@
+{
+  "name": "gomo-creation-studio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "고모 미디어공방 — 고모 창작실 (AI 콘텐츠 기획 및 미디어 제작)",
+  "main": "./out/main/index.js",
+  "author": "GOMO Media Workshop",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "test": "node scripts/run-tests.mjs",
+    "dist:win": "npm run build && electron-builder --win nsis portable --x64",
+    "dist:dir": "npm run build && electron-builder --dir"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.1",
+    "electron-vite": "^6.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  },
+  "build": {
+    "appId": "com.gomoworkshop.creator",
+    "productName": "고모 창작실",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "resources/app.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "extraResources": [
+      {
+        "from": "resources/app.png",
+        "to": "app.png"
+      }
+    ]
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
