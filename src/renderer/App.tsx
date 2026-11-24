@@ -1,5 +1,6 @@
 import {useEffect,useState} from 'react';
-import type {CSSProperties} from 'react';
+import {useTheme} from './theme/useTheme';
+import {THEME_META, THEMES, type ThemeId} from './theme/themes';
 import {
   AppWindow, Archive, ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, CheckCircle2,
   ChevronDown, ChevronRight, Clapperboard, Clock3, Copy, Download, Film, Folder, FolderOpen, HardDriveDownload, Home, Image as ImageIcon, Info,
@@ -53,6 +54,7 @@ function PromptCard({scene,onSave,onCopy}:{scene:Scene,onSave:(scene:Scene)=>voi
 }
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
+  const themeApi = useTheme();
   const [view,setView]=useState<View>('home');const [newOpen,setNewOpen]=useState(false);const [aiStage,setAiStage]=useState<AIStage|null>(null);
   const [search,setSearch]=useState('');const [editingScene,setEditingScene]=useState<Scene|null>(null);
   const [activeAsset,setActiveAsset]=useState<string|null>(null);const [showArchived,setShowArchived]=useState(false);
@@ -72,7 +74,7 @@ function App(){
   const activeMedia=project?.assets.find(a=>a.id===activeAsset);
   const completed=project?STAGE_ORDER.filter(s=>stageComplete(project,s)).length:0;
 
-  return <div className="app-shell" style={{'--accent':BRAND.colors.accent,'--accent-hover':BRAND.colors.accentHover} as CSSProperties}>
+  return <div className="app-shell">
     <aside className="sidebar"><div className="brand-area"><BrandIcon/><div><strong>{BRAND.productKo}</strong><small>{BRAND.productEn}</small></div></div>
       <button className="workspace-selector" onClick={()=>go('home')}><div className="workspace-avatar">G</div><div><strong>{BRAND.suiteKo}</strong><span>개인 작업 공간</span></div><ChevronDown size={15}/></button>
       <div className="nav-groups"><div className="nav-label">WORKSPACE</div>
@@ -128,9 +130,47 @@ function App(){
           </div>}
         </div>}
         {view==='settings'&&<div className="page-enter"><SectionHeading eyebrow="PREFERENCES" title="환경 설정" description="저장소, 브랜드 분리, AI 연결 상태를 확인합니다."/>
-          <div className="settings-grid"><Card><div className="setting-head"><div className="setting-icon"><Sparkles size={21}/></div><div><h3>AI 연결</h3><p>AI Provider 어댑터를 독립 모듈로 관리합니다.</p></div></div><div className="setting-line"><div><strong>수동 JSON 워크벤치</strong><small>기획·장면·프롬프트·편집 구성</small></div><Tag tone="success">사용 가능</Tag></div><div className="setting-line"><div><strong>Gemini Chrome 연동</strong><small>정상 로그인된 Chrome 사용 예정 · 실환경 검증 필요</small></div><Tag tone="warning">미연결</Tag></div><p className="setting-note">이 초기 버전에는 Gemini 웹 자동 조작, 로그인 우회, 영상·음악 무인 생성 기능이 포함되어 있지 않습니다.</p></Card>
-          <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
-          <Card><div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>브랜드 관리</h3><p>초기 GOMO 표시 → 향후 NUNI 변경을 위한 구조</p></div></div><div className="setting-line"><div><strong>제품군</strong><small>{BRAND.suiteKo}</small></div><Tag>{BRAND.companyMark}</Tag></div><div className="setting-line"><div><strong>제품</strong><small>{BRAND.productKo}</small></div></div><p className="setting-note">브랜드 표시 이름: src/shared/brand.ts · 테마: src/renderer/styles/app.css · 설치 표시 이름: package.json</p></Card></div>
+          <div className="settings-grid">
+            <Card className="theme-settings-card">
+              <div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>화면 테마</h3><p>프로그램 전체 색상을 즉시 변경합니다. 재시작 없이 적용됩니다.</p></div></div>
+              <div className="theme-grid">
+                {(Object.keys(THEME_META) as ThemeId[]).map(id => {
+                  const meta = THEME_META[id];
+                  const tokens = THEMES[id];
+                  const selected = themeApi.effectiveTheme === id;
+                  return (
+                    <button key={id} className={`theme-card ${selected ? 'selected' : ''}`} onClick={() => themeApi.setTheme(id)} type="button">
+                      <div className="theme-preview" style={{ background: tokens['--color-bg'] }}>
+                        <div className="theme-preview-sidebar" style={{ background: tokens['--color-sidebar'] }} />
+                        <div className="theme-preview-main">
+                          <div className="theme-preview-bar" style={{ background: tokens['--color-topbar'], borderColor: tokens['--color-border'] }} />
+                          <div className="theme-preview-card" style={{ background: tokens['--color-surface'], borderColor: tokens['--color-border'] }} />
+                        </div>
+                      </div>
+                      <div className="theme-card-info">
+                        <strong>{meta.name}</strong>
+                        <span>{meta.nameEn}</span>
+                      </div>
+                      <div className="theme-swatches">
+                        <i style={{ background: tokens['--color-primary'] }} />
+                        <i style={{ background: tokens['--color-text'] }} />
+                        <i style={{ background: tokens['--color-border'] }} />
+                      </div>
+                      {selected && <div className="theme-check"><Check size={14}/></div>}
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="system-sync-row">
+                <input type="checkbox" checked={themeApi.systemSync} onChange={e => themeApi.setSystemSync(e.target.checked)} />
+                <span>Windows 시스템 테마에 따라 자동 변경</span>
+              </label>
+              <p className="setting-note">켜면 Windows가 밝은 테마일 때 화이트 블루, 어두운 테마일 때 다크를 사용합니다. 끄면 마지막으로 직접 선택한 테마가 유지됩니다.</p>
+            </Card>
+            <Card><div className="setting-head"><div className="setting-icon"><Sparkles size={21}/></div><div><h3>AI 연결</h3><p>AI Provider 어댑터를 독립 모듈로 관리합니다.</p></div></div><div className="setting-line"><div><strong>수동 JSON 워크벤치</strong><small>기획·장면·프롬프트·편집 구성</small></div><Tag tone="success">사용 가능</Tag></div><div className="setting-line"><div><strong>Gemini Chrome 연동</strong><small>정상 로그인된 Chrome 사용 예정 · 실환경 검증 필요</small></div><Tag tone="warning">미연결</Tag></div><p className="setting-note">이 초기 버전에는 Gemini 웹 자동 조작, 로그인 우회, 영상·음악 무인 생성 기능이 포함되어 있지 않습니다.</p></Card>
+            <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
+            <Card><div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>브랜드 관리</h3><p>초기 GOMO 표시 → 향후 NUNI 변경을 위한 구조</p></div></div><div className="setting-line"><div><strong>제품군</strong><small>{BRAND.suiteKo}</small></div><Tag>{BRAND.companyMark}</Tag></div><div className="setting-line"><div><strong>제품</strong><small>{BRAND.productKo}</small></div></div><p className="setting-note">브랜드 표시 이름: src/shared/brand.ts · 테마: src/renderer/theme/ · 설치 표시 이름: package.json</p></Card>
+          </div>
         </div>}
         </>}
       </main>

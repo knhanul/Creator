@@ -1,1 +1,32 @@
-<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><title>고모 창작실</title></head><body><div id="root"></div><script type="module" src="/main.tsx"></script></body></html>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>고모 창작실</title>
+  <script>
+    // Early theme application to prevent flash
+    (function(){
+      try {
+        var key = 'creator-theme';
+        var syncKey = 'creator-theme-system-sync';
+        var stored = localStorage.getItem(key);
+        var sync = localStorage.getItem(syncKey) === '1';
+        var theme = 'light-blue';
+        if (sync) {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light-blue';
+        } else if (stored && ['light-blue','warm-cream','silver-light','dark'].indexOf(stored) !== -1) {
+          theme = stored;
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+      } catch(e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/main.tsx"></script>
+</body>
+</html>

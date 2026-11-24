@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell, dialog } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell, dialog, nativeTheme } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
@@ -22,7 +22,8 @@ function registerHandlers(){
 }
 async function createWindow(){
   win=new BrowserWindow({width:1500,height:960,minWidth:1080,minHeight:720,show:false,title:BRAND.productKo,
-    backgroundColor:BRAND.colors.dark,autoHideMenuBar:true,icon:app.isPackaged?join(process.resourcesPath,'app.png'):join(app.getAppPath(),'resources/app.png'),
+    backgroundColor: '#F8FAFC', // Default light-blue; renderer applies stored theme before paint
+    autoHideMenuBar:true,icon:app.isPackaged?join(process.resourcesPath,'app.png'):join(app.getAppPath(),'resources/app.png'),
     webPreferences:{preload:join(__dirname,'../preload/index.js'),sandbox:false,nodeIntegration:false,contextIsolation:true,webSecurity:true}});
   win.once('ready-to-show',()=>win?.show());
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
