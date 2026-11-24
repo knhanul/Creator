@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "GOMO Gemini Connector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connects GOMO Create to Gemini web via Native Messaging",
   "permissions": [
     "nativeMessaging",
     "tabs",
     "downloads",
-    "storage"
+    "storage",
+    "scripting"
   ],
   "host_permissions": [
     "https://gemini.google.com/*"
@@ -17,8 +18,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
+      "js": [
+        "gemini-selectors.js",
+        "gemini-dom.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
