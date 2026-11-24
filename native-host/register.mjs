@@ -6,7 +6,7 @@
  *   node native-host/register.mjs check
  */
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -95,10 +95,13 @@ function check() {
     console.log(out);
     if (existsSync(MANIFEST_PATH)) {
       console.log('Manifest content:');
-      console.log(require('fs').readFileSync(MANIFEST_PATH, 'utf8'));
+      console.log(readFileSync(MANIFEST_PATH, 'utf8'));
+    } else {
+      console.log('Registry points to a missing manifest:', MANIFEST_PATH);
     }
-  } catch {
-    console.log('Host not registered.');
+  } catch (e) {
+    console.log('Host not registered or check failed.');
+    if (e && e.message) console.log(String(e.message));
   }
 }
 
