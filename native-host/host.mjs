@@ -71,21 +71,32 @@ function connectToElectron() {
 }
 
 function startPipeServer() {
-  try {
-    pipeServer = createServer((socket) => {
-      debug('Electron connected to host pipe');
-      electronSocket = socket;
-      socket.on('data', (data) => {
-        const lines = data.toString().split('\n').filter(Boolean);
-        for (const line of lines) {
-          try { sendToChrome(JSON.parse(line)); } catch { /* ignore */ }
-        }
+  return new Promise((resolve) => {
+    try {
+      pipeServer = createServer((socket) => {
+        debug('Electron connected to host pipe');
+        electronSocket = socket;
+        socket.on('data', (data) => {
+          const lines = data.toString().split('\n').filter(Boolean);
+          for (const line of lines) {
+            try { sendToChrome(JSON.parse(line)); } catch { /* ignore */ }
+          }
+        });
+        socket.on('close', () => { if (electronSocket === socket) electronSocket = null; });
       });
-      socket.on('close', () => { if (electronSocket === socket) electronSocket = null; });
-    });
-    pipeServer.listen(PIPE_NAME, () => debug('Pipe server listening:', PIPE_NAME));
-    pipeServer.on('error', (err) => debug('Pipe server error:', err.message));
-  } catch (e) { debug('Could not start pipe server:', e); }
+      pipeServer.listen(PIPE_NAME, () => {
+        debug('Pipe server listening:', PIPE_NAME);
+        resolve(true);
+      });
+      pipeServer.on('error', (err) => {
+        debug('Pipe server error:', err.message);
+        resolve(false);
+      });
+    } catch (e) {
+      debug('Could not start pipe server:', e);
+      resolve(false);
+    }
+  });
 }
 
 debug('Native host started, pid=', process.pid);
@@ -112,6 +123,12 @@ process.stdin.on('data', (chunk) => {
 
 process.stdin.on('end', () => { debug('stdin closed, exiting'); process.exit(0); });
 
-startPipeServer();
-setTimeout(connectToElectron, 500);
-setInterval(() => { if (!electronSocket) connectToElectron(); }, 5000);
+startPipeServer().then((listening) => {
+  if (!listening) {
+    debug('Pipe already owned, connecting as client');
+    connectToElectron();
+    setInterval(() => { if (!electronSocket) connectToElectron(); }, 5000);
+  } else {
+    debug('Waiting for Electron to connect to this host pipe');
+  }
+});

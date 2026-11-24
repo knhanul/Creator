@@ -44,7 +44,7 @@ export class GeminiAdapter {
 
   async getStatus(): Promise<ProviderStatus> {
     try {
-      const connected = await pipeClient.isConnected();
+      const connected = await pipeClient.ensureConnected();
       if (!connected) {
         return {
           connected: false,

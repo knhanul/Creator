@@ -30,6 +30,15 @@ class PipeClient {
     return !!(this.socket && !this.socket.destroyed);
   }
 
+  /** Try to attach to the host pipe. Safe to call repeatedly. */
+  async ensureConnected(): Promise<boolean> {
+    if (await this.isConnected()) return true;
+    try {
+      await this.connect();
+    } catch { /* host may connect inbound */ }
+    return this.isConnected();
+  }
+
   async send(msg: ProtocolMessage): Promise<void> {
     if (!this.socket || this.socket.destroyed) {
       await this.connect();
