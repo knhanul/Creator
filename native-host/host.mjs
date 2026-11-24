@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { StringDecoder } from 'node:string_decoder';
 
 const HOST_NAME = 'com.gomo.create';
 const PIPE_NAME = process.platform === 'win32' ? `\\\\.\\pipe\\${HOST_NAME}` : `/tmp/${HOST_NAME}.sock`;
@@ -61,10 +62,16 @@ function connectToElectron() {
       debug('Connected to Electron pipe');
       sock.write(JSON.stringify({ type: 'HOST_HELLO', from: 'native-host' }) + '\n');
     });
+    // 큰 프롬프트는 여러 data 청크로 나뉘어 올 수 있으므로 줄 단위로 버퍼링합니다.
+    let pending = '';
+    const decoder = new StringDecoder('utf8'); // 청크 경계에서 한글(멀티바이트)이 깨지지 않도록
     sock.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(Boolean);
+      pending += decoder.write(data);
+      const lines = pending.split('\n');
+      pending = lines.pop() || '';
       for (const line of lines) {
-        try { sendToChrome(JSON.parse(line)); } catch { /* ignore */ }
+        if (!line.trim()) continue;
+        try { sendToChrome(JSON.parse(line)); } catch (e) { debug('Bad line from Electron:', e.message); }
       }
     });
     sock.on('error', (err) => {
