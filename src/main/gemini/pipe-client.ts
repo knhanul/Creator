@@ -3,7 +3,7 @@
  * Windows: \\\\.\\pipe\\com.gomo.create
  * Other: /tmp/com.gomo.create.sock
  */
-import { createConnection, createServer, Server, Socket } from 'node:net';
+import { createServer, Server, Socket } from 'node:net';
 import type { ProtocolMessage } from '../../shared/gemini-protocol';
 
 const PIPE = process.platform === 'win32' ? '\\\\.\\pipe\\com.gomo.create' : '/tmp/com.gomo.create.sock';
@@ -30,43 +30,19 @@ class PipeClient {
     return !!(this.socket && !this.socket.destroyed);
   }
 
-  /** Try to attach to the host pipe. Safe to call repeatedly. */
+  /** Host connects inbound. Start the server and wait briefly for it. */
   async ensureConnected(): Promise<boolean> {
-    if (await this.isConnected()) return true;
-    try {
-      await this.connect();
-    } catch { /* host may connect inbound */ }
-    return this.isConnected();
+    this.ensureServer();
+    if (this.socket && !this.socket.destroyed) return true;
+    await new Promise((r) => setTimeout(r, 800));
+    return !!(this.socket && !this.socket.destroyed);
   }
 
   async send(msg: ProtocolMessage): Promise<void> {
-    if (!this.socket || this.socket.destroyed) {
-      await this.connect();
-    }
-    if (this.socket && !this.socket.destroyed) {
-      this.socket.write(JSON.stringify(msg) + '\n');
-    } else {
+    if (!(await this.ensureConnected())) {
       throw new Error('Native Host에 연결할 수 없습니다.');
     }
-  }
-
-  private connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Prefer connecting as client; also start server so host can connect to us
-      this.ensureServer();
-      const sock = createConnection(PIPE, () => {
-        this.socket = sock;
-        this.attach(sock);
-        resolve();
-      });
-      sock.on('error', () => {
-        // Host may connect to our server instead
-        setTimeout(() => {
-          if (this.socket) resolve();
-          else reject(new Error('Pipe 연결 실패'));
-        }, 300);
-      });
-    });
+    this.socket!.write(JSON.stringify(msg) + '\n');
   }
 
   private ensureServer() {

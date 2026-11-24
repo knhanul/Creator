@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
 import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
+import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
@@ -48,6 +49,7 @@ app.whenReady().then(async()=>{
   await mkdir(app.getPath('userData'),{recursive:true});
   jobQueue = new GeminiJobQueue(join(app.getPath('userData'), 'gemini-jobs.json'));
   await jobQueue.load();
+  void pipeClient.ensureConnected();
   protocol.handle('gomo-asset', async(req)=>{
     try {
       const url=new URL(req.url);if(url.hostname!=='media')return new Response('Not found',{status:404});

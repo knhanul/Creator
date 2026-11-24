@@ -5,7 +5,7 @@
  * Communicates with Electron Main via Named Pipe.
  * NEVER writes logs to stdout.
  */
-import { createConnection, createServer } from 'node:net';
+import { createConnection } from 'node:net';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -51,52 +51,31 @@ function sendToChrome(message) {
 }
 
 let electronSocket = null;
-let pipeServer = null;
 
 function connectToElectron() {
+  if (electronSocket && !electronSocket.destroyed) return;
   try {
-    electronSocket = createConnection(PIPE_NAME, () => {
+    const sock = createConnection(PIPE_NAME);
+    sock.on('connect', () => {
+      electronSocket = sock;
       debug('Connected to Electron pipe');
-      if (electronSocket) electronSocket.write(JSON.stringify({ type: 'HOST_HELLO', from: 'native-host' }) + '\n');
+      sock.write(JSON.stringify({ type: 'HOST_HELLO', from: 'native-host' }) + '\n');
     });
-    electronSocket.on('data', (data) => {
+    sock.on('data', (data) => {
       const lines = data.toString().split('\n').filter(Boolean);
       for (const line of lines) {
         try { sendToChrome(JSON.parse(line)); } catch { /* ignore */ }
       }
     });
-    electronSocket.on('error', (err) => { debug('Electron pipe error:', err.message); electronSocket = null; });
-    electronSocket.on('close', () => { debug('Electron pipe closed'); electronSocket = null; });
+    sock.on('error', (err) => {
+      debug('Electron pipe error:', err.message);
+      if (electronSocket === sock) electronSocket = null;
+    });
+    sock.on('close', () => {
+      debug('Electron pipe closed');
+      if (electronSocket === sock) electronSocket = null;
+    });
   } catch (e) { debug('Failed to connect to Electron:', e); }
-}
-
-function startPipeServer() {
-  return new Promise((resolve) => {
-    try {
-      pipeServer = createServer((socket) => {
-        debug('Electron connected to host pipe');
-        electronSocket = socket;
-        socket.on('data', (data) => {
-          const lines = data.toString().split('\n').filter(Boolean);
-          for (const line of lines) {
-            try { sendToChrome(JSON.parse(line)); } catch { /* ignore */ }
-          }
-        });
-        socket.on('close', () => { if (electronSocket === socket) electronSocket = null; });
-      });
-      pipeServer.listen(PIPE_NAME, () => {
-        debug('Pipe server listening:', PIPE_NAME);
-        resolve(true);
-      });
-      pipeServer.on('error', (err) => {
-        debug('Pipe server error:', err.message);
-        resolve(false);
-      });
-    } catch (e) {
-      debug('Could not start pipe server:', e);
-      resolve(false);
-    }
-  });
 }
 
 debug('Native host started, pid=', process.pid);
@@ -108,6 +87,9 @@ process.stdin.on('data', (chunk) => {
     debug('From Chrome:', JSON.stringify(msg).slice(0, 200));
     if (electronSocket && !electronSocket.destroyed) {
       electronSocket.write(JSON.stringify(msg) + '\n');
+      debug('Forwarded to Electron:', msg.type);
+    } else {
+      debug('No Electron socket, dropped:', msg.type);
     }
     if (msg && msg.type === 'PING') {
       sendToChrome({
@@ -123,12 +105,5 @@ process.stdin.on('data', (chunk) => {
 
 process.stdin.on('end', () => { debug('stdin closed, exiting'); process.exit(0); });
 
-startPipeServer().then((listening) => {
-  if (!listening) {
-    debug('Pipe already owned, connecting as client');
-    connectToElectron();
-    setInterval(() => { if (!electronSocket) connectToElectron(); }, 5000);
-  } else {
-    debug('Waiting for Electron to connect to this host pipe');
-  }
-});
+connectToElectron();
+setInterval(() => { if (!electronSocket) connectToElectron(); }, 2000);
