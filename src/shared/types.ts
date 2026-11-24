@@ -40,11 +40,22 @@ export interface GeminiJob { jobId: string; projectId: string; stage: string; pr
 export interface GeminiJobResult { success: boolean; jobId: string; errorCode?: string; message?: string; }
 export type GeminiJobKind = 'analysis' | 'storyboard' | 'prompt' | 'editplan' | 'image' | 'video' | 'music';
 export type GeminiJobState = 'queued' | 'dispatching' | 'waiting' | 'completed' | 'failed' | 'needs_confirmation' | 'cancelled' | 'cancelling';
+/** UI 단계: 연결 확인/프롬프트 전송 중/Gemini 응답 대기/응답 수집 중/JSON 검증 중/분석 완료/사용자 확인 필요/오류 */
+export type GeminiJobPhase = 'queued' | 'checking' | 'sending' | 'waiting' | 'collecting' | 'validating' | 'done' | 'needs_user' | 'error' | 'cancelled';
+/** 응답 처리 결과: applied(작품에 저장) · invalid(JSON/스키마 오류) · stale(작품이 바뀌어 자동 적용 보류) · received(검증기 없는 단계) */
+export type GeminiJobOutcome = 'applied' | 'invalid' | 'stale' | 'received';
 export interface GeminiJobRecord {
   jobId: string; requestId: string; projectId: string; sceneId?: string; kind: GeminiJobKind;
   executable: boolean; prompt: string; state: GeminiJobState; createdAt: string; updatedAt: string;
-  errorCode?: string; errorMessage?: string; resultText?: string; sendConfirmed: boolean;
+  dispatchedAt?: string; sentAt?: string; completedAt?: string;
+  errorCode?: string; errorMessage?: string; resultText?: string; resultRef?: string; sendConfirmed: boolean;
   cancelRequested: boolean; externalCancelConfirmed: boolean;
+  phase?: GeminiJobPhase; needsUser?: boolean; outcome?: GeminiJobOutcome;
+  codeBlocks?: string[]; isolation?: string; progressChars?: number;
+  tab?: { id: number; title: string; url?: string }; insertMethod?: string; sendEvidence?: string;
+  appliedAt?: string; appliedRevision?: number; validationError?: string;
+  /** 오류·확인 필요로 멈추기 직전 단계 */
+  stoppedPhase?: GeminiJobPhase;
 }
 export interface GeminiEnqueueInput { projectId: string; kind: GeminiJobKind; prompt: string; sceneId?: string; }
 export type StudioAPI = {
@@ -71,5 +82,21 @@ export type StudioAPI = {
       confirm(jobId: string): Promise<GeminiJobRecord | null>;
       continue(jobId: string): Promise<GeminiJobRecord | null>;
     };
+    /** 「AI 기획 분석 시작」 자동화 */
+    analysis: {
+      /** 작품 정보로 프롬프트를 만들어 큐에 넣고 바로 실행. 진행 중 작업이 있으면 그 작업을 돌려줌(중복 전송 방지) */
+      start(projectId: string): Promise<GeminiAnalysisStartResult>;
+      /** 이 작품의 가장 최근 기획 분석 작업 */
+      latest(projectId: string): Promise<GeminiJobRecord | null>;
+      /** 확장 프로그램에 보관된 응답을 다시 요청 (재전송 아님) */
+      fetchResult(jobId: string): Promise<OperationResult>;
+      /** 자동 적용이 보류된(stale) 결과를 사용자가 확인 후 적용 */
+      applyResult(jobId: string): Promise<GeminiJobRecord | null>;
+    };
+    /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */
+    probe(): Promise<GeminiProbeResult>;
+    onJobUpdate(cb: (job: GeminiJobRecord) => void): () => void;
   };
 };
+export interface GeminiAnalysisStartResult { ok: boolean; job?: GeminiJobRecord; reused?: boolean; message?: string; }
+export interface GeminiProbeResult { ok: boolean; message?: string; report?: unknown; tab?: { id: number; title: string }; }

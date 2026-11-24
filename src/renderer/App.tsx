@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {useTheme} from './theme/useTheme';
 import {THEME_META, THEMES, type ThemeId} from './theme/themes';
 import {
@@ -11,6 +11,7 @@ import {
 import {BRAND} from '../shared/brand';
 import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
 import {makeAIPrompt} from '../shared/prompts';
+import {PHASE_LABEL,phaseView} from '../shared/gemini-analysis';
 import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDialog} from './components/AIDialog';
@@ -55,11 +56,11 @@ function PromptCard({scene,onSave,onCopy}:{scene:Scene,onSave:(scene:Scene)=>voi
 function JobQueueCard({flash}:{flash:(text:string,type?:'info'|'success'|'error')=>void}){
   const [jobs,setJobs]=useState<GeminiJobRecord[]>([]);
   const refresh=async()=>{try{setJobs(await window.studio.gemini.jobs.list());}catch{/* ignore */}};
-  useEffect(()=>{void refresh();},[]);
+  useEffect(()=>{void refresh();return window.studio.gemini.onJobUpdate(()=>{void refresh();});},[]);
   const label:Record<string,string>={queued:'대기',dispatching:'전송 중',waiting:'응답 대기',completed:'완료',failed:'실패',needs_confirmation:'확인 필요',cancelled:'취소됨',cancelling:'취소 중'};
   return <Card className="theme-settings-card"><div className="setting-head"><div className="setting-icon"><ListOrdered size={21}/></div><div><h3>Gemini 작업 큐</h3><p>한 번에 하나의 작업만 실행합니다. 전송 여부가 불분명하면 자동 재전송하지 않습니다.</p></div></div>
     <div className="ai-connect-actions"><Button size="sm" kind="secondary" onClick={()=>void refresh()}>목록 새로고침</Button></div>
-    {jobs.length===0?<p className="setting-note">등록된 작업이 없습니다.</p>:<div className="job-list">{jobs.slice().reverse().map(j=><div className="job-row" key={j.jobId}><div><strong>{j.kind}</strong> <Tag tone={j.state==='completed'?'success':j.state==='failed'?'warning':'muted'}>{label[j.state]||j.state}</Tag><small>{j.jobId.slice(0,8)} · {j.projectId.slice(0,8)}</small>{j.errorMessage&&<p className="setting-note">{j.errorMessage}</p>}</div>
+    {jobs.length===0?<p className="setting-note">등록된 작업이 없습니다.</p>:<div className="job-list">{jobs.slice().reverse().map(j=><div className="job-row" key={j.jobId}><div><strong>{j.kind}</strong> <Tag tone={j.state==='completed'?'success':j.state==='failed'?'warning':'muted'}>{label[j.state]||j.state}</Tag>{j.phase&&<Tag tone="muted">{PHASE_LABEL[j.phase]||j.phase}</Tag>}<small>{j.jobId.slice(0,8)} · {j.projectId.slice(0,8)}</small>{j.errorMessage&&<p className="setting-note">{j.errorMessage}</p>}</div>
       <div className="ai-connect-actions">
         {j.state==='failed'&&j.executable&&<Button size="sm" onClick={async()=>{await window.studio.gemini.jobs.retry(j.jobId);flash('실패 작업을 다시 대기열에 넣었습니다.','info');void refresh();}}>재시도</Button>}
         {j.state==='needs_confirmation'&&<Button size="sm" kind="outline" onClick={async()=>{await window.studio.gemini.jobs.confirm(j.jobId);flash('사용자 확인 후 재전송 대기열에 넣었습니다.','info');void refresh();}}>확인 후 재전송</Button>}
@@ -71,12 +72,33 @@ function JobQueueCard({flash}:{flash:(text:string,type?:'info'|'success'|'error'
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
   const themeApi = useTheme();
-  const [view,setView]=useState<View>('home');const [newOpen,setNewOpen]=useState(false);const [aiStage,setAiStage]=useState<AIStage|null>(null);
+  const [view,setView]=useState<View>('home');const [newOpen,setNewOpen]=useState(false);const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiAuto,setAiAuto]=useState(false);
+  const [analysisJob,setAnalysisJob]=useState<GeminiJobRecord|null>(null);const [probe,setProbe]=useState('');
+  const projectRef=useRef(project);projectRef.current=project;const handledJobs=useRef(new Set<string>());
   const [search,setSearch]=useState('');const [editingScene,setEditingScene]=useState<Scene|null>(null);
   const [activeAsset,setActiveAsset]=useState<string|null>(null);const [showArchived,setShowArchived]=useState(false);
   const [infoPath,setInfoPath]=useState('');
   useEffect(()=>{void window.studio.app.info().then(i=>setInfoPath(i.dataRoot)).catch(()=>{});},[]);
   useEffect(()=>{if(project&&!activeAsset&&project.assets.length)setActiveAsset(project.assets[0].id);},[project?.id]);
+  // Gemini 기획 분석 작업 상태 구독: 모달을 닫아도 main의 작업 큐가 상태를 유지하고, 결과가 저장되면 현재 작품을 다시 읽습니다.
+  useEffect(()=>{
+    const id=project?.id;let alive=true;setAnalysisJob(null);
+    if(id)void window.studio.gemini.analysis.latest(id).then(j=>{if(alive)setAnalysisJob(j);}).catch(()=>{});
+    const off=window.studio.gemini.onJobUpdate(j=>{
+      if(j.kind!=='analysis')return;
+      const cur=projectRef.current;
+      if(cur&&j.projectId===cur.id)setAnalysisJob(old=>!old||old.jobId===j.jobId||j.createdAt>=old.createdAt?j:old);
+      if(j.outcome!=='applied'||handledJobs.current.has(j.jobId))return;
+      handledJobs.current.add(j.jobId);
+      if(cur&&j.projectId===cur.id){if(!j.appliedRevision||cur.revision<j.appliedRevision)void studio.load(cur.id).then(p=>{if(p)flash('Gemini 기획 분석 결과를 검사하고 작품에 저장했습니다. 화풍과 연출안을 선택하세요.','success');});}
+      else{void studio.refresh();flash('다른 작품의 Gemini 기획 분석 결과가 저장되었습니다.','info');}
+    });
+    return()=>{alive=false;off();};
+  },[project?.id]);
+  const analysisView=phaseView(analysisJob);
+  const analysisBusy=!!analysisJob&&!['completed','failed','cancelled'].includes(analysisJob.state);
+  const openAnalysis=(auto:boolean)=>{setAiAuto(auto&&!analysisBusy);setAiStage('analysis');};
+  const goSelect=()=>{setView('analysis');setTimeout(()=>document.querySelector('.choice-layout')?.scrollIntoView({behavior:'smooth',block:'start'}),120);};
   const go=(next:View)=>{if(next!=='projects'&&next!=='home'&&next!=='settings'&&!project){setView('projects');return;}setView(next);};
   const open=async(id:string)=>{const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);}};
   const start=async(brief:Brief)=>{const p=await studio.create(brief);if(p){setNewOpen(false);setView('brief');}};
@@ -117,8 +139,9 @@ function App(){
         {project&&(['brief','analysis','storyboard','prompt','media','assembly','handoff'] as View[]).includes(view)&&<div className="page-enter project-context"><div className="project-context-top"><div><div className="eyebrow">CURRENT PRODUCTION</div><h1>{project.brief.title}</h1><div className="project-meta"><Tag tone="accent">{GENRES[project.brief.genre]}</Tag><span>{AUDIENCES[project.brief.audience]}</span><span className="separator-dot"/> <span>최종 수정 {formatDate(project.updatedAt)}</span></div></div><div className="context-actions"><Tag tone="success"><CheckCircle2 size={13}/> 로컬 자동 저장</Tag><Button kind="outline" size="sm" onClick={()=>void window.studio.app.openFolder(project.id)}><FolderOpen size={15}/> 작업 폴더</Button></div></div>
           <StageProgress project={project} onSelect={go}/>
           {view==='brief'&&<BriefPage project={project} onSave={v=>void mutate(p=>{const changed=p.brief.genre!==v.genre||p.brief.audience!==v.audience||p.brief.originalText!==v.originalText;return {...p,brief:v,...(changed?{analysis:null,selection:{styleId:'',directionId:''},scenes:[],assembly:{...p.assembly,clips:[]},ai:{...p.ai,analysis:{raw:'',status:'idle',updatedAt:null},storyboard:{raw:'',status:'idle',updatedAt:null},prompt:{raw:'',status:'idle',updatedAt:null},editplan:{raw:'',status:'idle',updatedAt:null}}}:{})};}).then(saved=>{if(saved)flash('작품 정보를 저장했습니다.','success');})} onNext={()=>go('analysis')}/>}
-          {view==='analysis'&&<div><SectionHeading eyebrow="01 / PLANNING" title="기획 분석" description="작품의 분위기와 시각적 방향을 정합니다. 원하는 화풍과 연출안을 직접 선택하세요." action={<Button onClick={()=>setAiStage('analysis')}><Sparkles size={16}/> AI 분석 가져오기</Button>}/>
-            {!project.analysis?<Card><Empty title="아직 기획안이 없습니다" description="AI 분석 프롬프트를 만들고 JSON 답변을 가져오세요. 기획 결과를 바탕으로 화풍과 연출 방향을 선택합니다." action={<Button onClick={()=>setAiStage('analysis')}><WandSparkles size={16}/> 기획 시작</Button>}/></Card>:<><div className="analysis-intro"><div className="analysis-symbol"><Palette size={29}/></div><div><div className="micro">AI ANALYSIS SUMMARY</div><h3>{project.analysis.summary}</h3><p>{project.analysis.emotion}</p><div className="keywords">{project.analysis.keywords.map(k=><span key={k}>#{k}</span>)}</div></div></div>
+          {view==='analysis'&&<div><SectionHeading eyebrow="01 / PLANNING" title="기획 분석" description="작품의 분위기와 시각적 방향을 정합니다. 원하는 화풍과 연출안을 직접 선택하세요." action={<div className="action-group">{analysisBusy?<Button onClick={()=>openAnalysis(false)}><Sparkles size={16}/> 진행 상황 보기</Button>:<Button onClick={()=>openAnalysis(true)}><Sparkles size={16}/> {project.analysis?'AI 기획 분석 다시 시작':'AI 기획 분석 시작'}</Button>}<Button kind="outline" onClick={()=>openAnalysis(false)}>상세·수동 연결</Button></div>}/>
+            {analysisJob&&analysisView&&(analysisView.active||analysisView.phase==='needs_user'||analysisView.phase==='error')&&<button className={`analysis-job-banner tone-${analysisView.tone}`} onClick={()=>openAnalysis(false)}><Sparkles size={16}/><strong>Gemini 기획 분석 · {analysisView.label}</strong><span>{analysisView.active?'창을 닫아도 계속 진행됩니다.':'확인이 필요합니다.'} 눌러서 자세히 보기</span><ArrowRight size={15}/></button>}
+            {!project.analysis?<Card><Empty title="아직 기획안이 없습니다" description="「AI 기획 분석 시작」을 누르면 Chrome의 Gemini 탭에 요청을 보내고 응답 JSON을 검사해 바로 반영합니다. 결과를 바탕으로 화풍과 연출 방향을 선택합니다." action={<Button onClick={()=>openAnalysis(true)} disabled={analysisBusy}><WandSparkles size={16}/> AI 기획 분석 시작</Button>}/></Card>:<><div className="analysis-intro"><div className="analysis-symbol"><Palette size={29}/></div><div><div className="micro">AI ANALYSIS SUMMARY</div><h3>{project.analysis.summary}</h3><p>{project.analysis.emotion}</p><div className="keywords">{project.analysis.keywords.map(k=><span key={k}>#{k}</span>)}</div></div></div>
             <div className="choice-layout"><div><div className="choice-title"><h3>01. 화풍 선택</h3><p>모든 장면에 일관되게 적용할 스타일입니다.</p></div><div className="choice-list">{project.analysis.styles.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.styleId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('화풍을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,styleId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-v${i%3}`}><Palette size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.styleId===o.id&&<Check size={14}/>}</div></button>)}</div></div>
               <div><div className="choice-title"><h3>02. 연출 방향 선택</h3><p>장면의 흐름과 감정 전달 방식입니다.</p></div><div className="choice-list">{project.analysis.directions.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.directionId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('연출안을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,directionId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-d${i%3}`}><MonitorPlay size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.directionId===o.id&&<Check size={14}/>}</div></button>)}</div></div></div>
               {!!project.analysis.cautions.length&&<div className="notice"><ShieldAlert size={17}/><div><b>제작 시 유의사항</b><p>{project.analysis.cautions.join(' · ')}</p></div></div>}
@@ -200,9 +223,15 @@ function App(){
                     flash(r.message, r.ok ? 'success' : 'error');
                   } catch (e) { flash(String(e), 'error'); }
                 }}>테스트 요청 (PING)</Button>
+                <Button size="sm" kind="outline" onClick={async () => {
+                  setProbe('Gemini 탭 확인 중… (아무것도 입력·전송하지 않습니다)');
+                  try { const r = await window.studio.gemini.probe(); setProbe(JSON.stringify(r, null, 2)); flash(r.ok ? '선택자 진단을 받았습니다.' : (r.message || '진단 실패'), r.ok ? 'success' : 'error'); }
+                  catch (e) { setProbe(String(e)); }
+                }}>선택자 진단 (전송 없음)</Button>
                 <Button size="sm" kind="ghost" onClick={() => window.open('https://gemini.google.com/', '_blank')}>Gemini 열기</Button>
               </div>
-              <p className="setting-note">Chrome 확장 프로그램과 Native Host가 설치·등록되어야 연결됩니다. 연결이 실패해도 기존 기능은 정상 작동합니다. 자동 입력은 실험적 구현이며 실환경 검증이 필요합니다.</p>
+              {probe&&<details className="automation-details" open><summary>선택자 진단 결과</summary><div className="details-actions"><Button size="sm" kind="secondary" onClick={()=>void copy(probe)}><Copy size={14}/> 복사</Button></div><pre>{probe}</pre></details>}
+              <p className="setting-note">Chrome 확장 프로그램과 Native Host가 설치·등록되어야 연결됩니다. 연결이 실패해도 기존 기능은 정상 작동합니다. 기획 분석 자동 전송은 실제 Gemini 화면에서의 확인이 필요합니다. 먼저 「선택자 진단」으로 입력창·전송 버튼이 인식되는지 확인하세요.</p>
             </Card>
             <JobQueueCard flash={flash}/>
             <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
@@ -214,7 +243,7 @@ function App(){
       <footer className="statusbar"><div><span className="status-indicator"/> {busy?'저장 및 처리 중…':'모든 작업은 로컬에 저장됩니다'}</div><span>{project?`작품 ID ${project.id.slice(0,8)}`:BRAND.suiteEn} · v0.1.0</span></footer>
     </div>
     {newOpen&&<NewProjectModal busy={busy} onClose={()=>setNewOpen(false)} onCreate={b=>void start(b)}/>}
-    {aiStage&&project&&<AIDialog project={project} stage={aiStage} onClose={()=>setAiStage(null)} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>}
+    {aiStage&&project&&<AIDialog key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiStage==='analysis'&&aiAuto} onGoSelect={goSelect} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>}
     {editingScene&&project&&<SceneModal key={editingScene.id} scene={editingScene} onClose={()=>setEditingScene(null)} onSave={s=>{if(project.scenes.some(x=>x.id===s.id))saveScene(s);else void mutate(p=>({...p,scenes:[...p.scenes,s]}));}}/>}
     {studio.toast&&<div className={`toast toast-${studio.toast.type}`} role="status"><Info size={17}/><span>{studio.toast.text}</span><button className="icon-btn" onClick={()=>studio.setToast(null)}><X size={16}/></button></div>}
   </div>;
@@ -222,7 +251,8 @@ function App(){
 function ArchivedList({onRestore}:{onRestore:(id:string)=>void}){const [all,setAll]=useState<Awaited<ReturnType<typeof window.studio.projects.list>>>([]);useEffect(()=>{void window.studio.projects.list(true).then(p=>setAll(p.filter(x=>x.archived)));},[]);return <div className="project-list">{all.length?all.map(p=><article className="project-row" key={p.id}><div className="row-icon"><Archive size={21}/></div><div className="row-primary"><h3>{p.title}</h3><p>{formatDate(p.updatedAt)} · 보관됨</p></div><Button size="sm" kind="secondary" onClick={()=>onRestore(p.id)}><RotateCcw size={15}/> 복원</Button></article>):<p className="muted-text">보관한 작품이 없습니다.</p>}</div>;}
 function BriefPage({project,onSave,onNext}:{project:StudioProject,onSave:(brief:Brief)=>void,onNext:()=>void}){
   const [draft,setDraft]=useState<Brief>(project.brief);const [dirty,setDirty]=useState(false);
-  useEffect(()=>{setDraft(project.brief);setDirty(false);},[project.id,project.brief]);
+  // 내용 비교: 기획 분석 결과 저장 등으로 작품을 다시 읽어도 작성 중인 작품 정보가 지워지지 않도록
+  useEffect(()=>{setDraft(project.brief);setDirty(false);},[project.id,JSON.stringify(project.brief)]);
   const set=<K extends keyof Brief>(k:K,v:Brief[K])=>{setDraft(p=>({...p,[k]:v}));setDirty(true);};
   const submit=()=>{if(!draft.title.trim()||!draft.originalText.trim())return;const coreChanged=draft.genre!==project.brief.genre||draft.audience!==project.brief.audience||draft.originalText!==project.brief.originalText;if(coreChanged&&project.analysis&&!confirm('원문·장르·대상을 변경하면 기존 AI 기획과 장면 결과가 초기화됩니다. 계속할까요?'))return;onSave(draft);setDirty(false);};
   return <div><SectionHeading eyebrow="00 / PROJECT BRIEF" title="작품 정보" description="AI 기획의 기준이 되는 원문과 제작 조건을 관리합니다." action={<Button onClick={submit} disabled={!dirty||!draft.title.trim()||!draft.originalText.trim()}><Check size={16}/> 변경 저장</Button>}/>

@@ -230,3 +230,58 @@
 .job-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .job-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--color-border); }
 .job-row small { display: block; color: var(--color-text-muted); margin-top: 4px; }
+
+/* ── Gemini 기획 분석 자동화 (테마 변수만 사용: 화이트 블루 기본 + 모든 선택 테마 호환) ── */
+.automation-body { padding: 22px 26px; display: flex; flex-direction: column; gap: 14px; }
+.automation-start { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-primary-soft); }
+.automation-start > div { flex: 1; }
+.automation-start strong { font-size: 14px; color: var(--color-text); }
+.automation-start p { color: var(--color-text-muted); font-size: 11px; margin-top: 6px; line-height: 1.6; }
+.automation-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.automation-steps li { display: flex; align-items: center; gap: 7px; padding: 9px 10px; border-radius: 9px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-muted); font-size: 11px; font-weight: 650; }
+.automation-steps .step-dot { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; background: var(--color-hover); color: var(--color-text-muted); font-size: 10px; }
+.automation-steps li.done { color: var(--color-success); border-color: var(--color-success); background: var(--color-success-soft); }
+.automation-steps li.done .step-dot { background: var(--color-success); color: var(--color-text-on-primary); }
+.automation-steps li.current { color: var(--color-primary); border-color: var(--color-primary); background: var(--color-primary-soft); }
+.automation-steps li.current .step-dot { background: var(--color-primary); color: var(--color-text-on-primary); }
+.automation-steps li.warn { color: var(--color-warning); border-color: var(--color-warning); background: var(--color-warning-soft); }
+.automation-steps li.error { color: var(--color-error); border-color: var(--color-error); background: var(--color-error-soft); }
+.automation-status { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border-radius: 9px; border: 1px solid var(--color-border); background: var(--color-surface-raised); font-size: 12px; color: var(--color-text-secondary); }
+.automation-status strong { color: var(--color-text); }
+.automation-status small { margin-left: auto; color: var(--color-text-disabled); font-size: 10px; font-family: ui-monospace, Consolas, monospace; }
+.automation-status.tone-success strong { color: var(--color-success); }
+.automation-status.tone-warning strong { color: var(--color-warning); }
+.automation-status.tone-danger strong { color: var(--color-error); }
+.automation-status.tone-accent strong { color: var(--color-primary); }
+.automation-notice { font-size: 11px; color: var(--color-text-muted); margin: 0; }
+.automation-guide { display: flex; gap: 10px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--color-warning); background: var(--color-warning-soft); color: var(--color-text); }
+.automation-guide > svg { flex: 0 0 auto; color: var(--color-warning); margin-top: 2px; }
+.automation-guide.is-error { border-color: var(--color-error); background: var(--color-error-soft); }
+.automation-guide.is-error > svg { color: var(--color-error); }
+.automation-guide strong { font-size: 12px; }
+.automation-guide p { font-size: 11px; line-height: 1.65; margin-top: 5px; color: var(--color-text-secondary); }
+.automation-guide small { display: block; font-size: 10px; margin-top: 5px; color: var(--color-text-muted); }
+.automation-result { padding: 18px 20px; border-radius: 12px; border: 1px solid var(--color-success); background: var(--color-success-soft); }
+.automation-result h3 { font-size: 15px; margin: 6px 0; color: var(--color-text); }
+.automation-result p { font-size: 12px; color: var(--color-text-secondary); }
+.automation-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.automation-choices > div { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 9px; padding: 11px 13px; }
+.automation-choices strong { font-size: 11px; color: var(--color-text-secondary); }
+.automation-choices ul { margin: 7px 0 0; padding-left: 17px; font-size: 12px; color: var(--color-text); line-height: 1.7; }
+.automation-cta { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 11px; color: var(--color-text-secondary); }
+.automation-cta > span { flex: 1; }
+.automation-details { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text-secondary); }
+.automation-details > summary { cursor: pointer; padding: 11px 14px; font-size: 12px; font-weight: 650; display: flex; align-items: center; gap: 7px; list-style: none; }
+.automation-details > summary::-webkit-details-marker { display: none; }
+.automation-details[open] > summary { border-bottom: 1px solid var(--color-divider); }
+.automation-details pre { margin: 0; padding: 12px 14px; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.65; color: var(--color-text-secondary); background: var(--color-input-bg); border-radius: 0 0 10px 10px; }
+.automation-details .details-actions { display: flex; justify-content: flex-end; padding: 8px 12px 0; }
+.automation-details .ai-columns { padding: 14px; }
+.analysis-job-banner { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0 0 16px; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--color-primary); background: var(--color-primary-soft); color: var(--color-text); text-align: left; font-size: 12px; }
+.analysis-job-banner span { flex: 1; color: var(--color-text-muted); font-size: 11px; }
+.analysis-job-banner.tone-warning { border-color: var(--color-warning); background: var(--color-warning-soft); }
+.analysis-job-banner.tone-danger { border-color: var(--color-error); background: var(--color-error-soft); }
+.analysis-job-banner.tone-success { border-color: var(--color-success); background: var(--color-success-soft); }
+@keyframes gomo-spin { to { transform: rotate(360deg); } }
+.spin { animation: gomo-spin 1s linear infinite; }
+@media (max-width: 1100px) { .automation-steps { grid-template-columns: repeat(3, 1fr); } }

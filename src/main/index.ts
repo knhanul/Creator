@@ -7,6 +7,8 @@ import { archiveProject, createProject, exportFolder, importAssets, listProjects
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
+import { createAnalysisService, type AnalysisService } from './gemini/analysis-service';
+import type { GeminiJobRecord } from '../shared/types';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
 let win:BrowserWindow|null=null;
@@ -27,10 +29,39 @@ function registerHandlers(){
   ipcMain.handle('gemini:submit',async(_event,job)=>geminiAdapter.submitPrompt(job));
   ipcMain.handle('gemini:jobs:list',async()=>jobQueue.list());
   ipcMain.handle('gemini:jobs:enqueue',async(_event,input)=>jobQueue.enqueue(input));
-  ipcMain.handle('gemini:jobs:retry',async(_event,jobId)=>jobQueue.retry(jobId));
+  // 재시도·재전송은 사용자가 버튼으로 명시적으로 고른 경우에만 호출되며, 호출 후 대기열을 실행합니다.
+  ipcMain.handle('gemini:jobs:retry',async(_event,jobId)=>{const j=await jobQueue.retry(jobId);if(j)void analysis.kick();return j;});
   ipcMain.handle('gemini:jobs:cancel',async(_event,jobId)=>jobQueue.cancel(jobId));
-  ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>jobQueue.confirmResend(jobId));
+  ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>{const j=await jobQueue.confirmResend(jobId);if(j)void analysis.kick();return j;});
   ipcMain.handle('gemini:jobs:continue',async(_event,jobId)=>jobQueue.continueWaiting(jobId));
+  ipcMain.handle('gemini:analysis:start',async(_event,projectId:string)=>analysis.start(String(projectId)));
+  ipcMain.handle('gemini:analysis:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'analysis')||null);
+  ipcMain.handle('gemini:analysis:fetch',async(_event,jobId:string)=>analysis.fetchResult(String(jobId)));
+  ipcMain.handle('gemini:analysis:apply',async(_event,jobId:string)=>analysis.applyResult(String(jobId)));
+  ipcMain.handle('gemini:probe',async()=>geminiAdapter.probe());
+}
+let analysis: AnalysisService;
+/** 바뀐 작업만 renderer에 알림 (모달을 닫아도 main의 큐가 상태를 계속 보관) */
+const lastBroadcast=new Map<string,string>();
+function broadcastJobs(){
+  if(!win||win.isDestroyed())return;
+  for(const job of jobQueue.list() as GeminiJobRecord[]){
+    if(lastBroadcast.get(job.jobId)===job.updatedAt+job.phase)continue;
+    lastBroadcast.set(job.jobId,job.updatedAt+job.phase);
+    win.webContents.send('gemini:job-update',job);
+  }
+}
+function setupGeminiAutomation(){
+  analysis=createAnalysisService({
+    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject
+    // 저장 결과는 job-update(outcome='applied', appliedRevision)로 renderer에 전달됩니다.
+  });
+  jobQueue.subscribe(broadcastJobs);
+  pipeClient.onMessage((msg)=>{void analysis.handleMessage(msg).catch(err=>console.error('gemini message',err));});
+  pipeClient.onDisconnect(()=>{void jobQueue.markConnectionLost();});
+  pipeClient.onConnect(()=>{void analysis.onReconnect();});
+  // 응답 소식이 10분 넘게 없으면 '사용자 확인 필요'로 (자동 재전송 없음)
+  setInterval(()=>{void jobQueue.expireStale(10*60*1000);},60*1000);
 }
 let jobQueue: InstanceType<typeof GeminiJobQueue>;
 async function createWindow(){
@@ -49,6 +80,7 @@ app.whenReady().then(async()=>{
   await mkdir(app.getPath('userData'),{recursive:true});
   jobQueue = new GeminiJobQueue(join(app.getPath('userData'), 'gemini-jobs.json'));
   await jobQueue.load();
+  setupGeminiAutomation();
   void pipeClient.ensureConnected();
   protocol.handle('gomo-asset', async(req)=>{
     try {
