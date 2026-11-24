@@ -63,7 +63,7 @@ React Editor → Workflow Engine → AIProviderAdapter → Windows Native Host
                                   Chrome Extension → Gemini Web UI
 ```
 
-먼저 연결 상태/프롬프트·JSON 왕복을 검증한 뒤 이미지/영상/음악 제어로 확장한다. 현재 `Gemini` 자동화 모듈은 **구현되지 않았다**. Google 서비스 약관 및 기능 제한을 확인해야 한다.
+먼저 연결 상태/프롬프트·JSON 왕복을 검증한 뒤 이미지/영상/음악 제어로 확장한다. 현재 **기획 분석 단계만** Gemini 자동 전송·응답 수집이 구현되어 있고(GEMINI.md), 실제 Gemini 화면에서의 검증은 docs/GEMINI_AUTOMATION_CHECKLIST.md 절차로 진행한다. Google 로그인·보안 확인·이용 제한은 우회하지 않는다.
 
 ## dubbing 출력
 

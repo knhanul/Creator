@@ -19,9 +19,14 @@
 | `src/shared/gemini-protocol.ts` | 공통 메시지 타입 |
 | `src/main/gemini/adapter.ts` | Gemini Provider Adapter |
 | `src/main/gemini/pipe-client.ts` | Electron ↔ Host Named Pipe 클라이언트 |
-| `src/main/index.ts` | `gemini:status`, `gemini:ping`, `gemini:submit` IPC |
-| `src/preload/index.ts` | `window.studio.gemini` 노출 |
-| `src/renderer/App.tsx` | 환경 설정 → AI 연결 UI |
+| `extension/gemini-selectors.js` | Gemini 화면 셀렉터 중앙 목록 (근거·검증 여부 표기) |
+| `extension/gemini-dom.js` | 입력·전송·전송 증거·신규 응답 분리·완료 판별·선택자 진단 |
+| `src/main/gemini/analysis-service.ts` | 「AI 기획 분석 시작」: 프롬프트 생성 → 큐 → 전송 → 응답 검증 → 작품 저장 |
+| `src/shared/gemini-analysis.ts` | JSON 후보 선택·덮어쓰기 방지 판단·UI 단계·오류 안내 |
+| `src/main/index.ts` | `gemini:status`, `gemini:ping`, `gemini:submit`, `gemini:analysis:*`, `gemini:probe` IPC |
+| `src/preload/index.ts` | `window.studio.gemini` 노출 (`analysis`, `probe`, `onJobUpdate`) |
+| `src/renderer/App.tsx` | 환경 설정 → AI 연결 UI(선택자 진단), 기획 분석 진행 배너 |
+| `src/renderer/components/AIDialog.tsx` | 기획 분석 자동화 모달 (수동 연결은 접힌 보조 기능) |
 
 ## 개발 환경 실행
 
@@ -69,17 +74,32 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 |-------|------|------|
 | 1 | Native Messaging 기반 (Host, Extension, Pipe, PING/PONG, UI) | 코드 구현 완료 |
 | 2 | Gemini 탭 검색 및 상태 전달 | 코드 구현 완료 (실탭 미검증) |
-| 3 | 프롬프트 자동 전송 / 응답 수집 | 실험적 구현 (DOM 셀렉터 미검증) |
+| 3 | 프롬프트 자동 전송 / 응답 수집 (기획 분석) | 구현 완료 · jsdom 모형 테스트 통과 · **실제 Gemini DOM 미검증** |
 | 4 | 작업 큐·복구·기존 저장 연동 | 구현 완료 (Mock Provider 테스트 12건 통과) |
 | 5 | 이미지/영상/음악 생성 | 미구현 (검증 후 확장) |
+
+## 기획 분석 자동화 흐름
+
+1. 「AI 기획 분석 시작」 → main이 작품을 읽어 `makeAIPrompt(project,'analysis')`로 프롬프트 생성
+2. Phase 4 작업 큐에 등록(jobId·requestId·projectId) → 같은 작품의 진행 중 작업이 있으면 새로 보내지 않음
+3. 연결 확인(Host·확장·Gemini 탭) → `PROMPT_SUBMIT_REQUEST`(요청 표식 포함) → 확장 → Gemini 탭 content script
+4. content script: 로그인/보안 확인/입력창 비어 있음 확인 → 입력 → 입력 확인 → 전송 → 전송 증거 확인(`sent`/`not_sent`/`uncertain`)
+5. 표식이 붙은 질문 바로 뒤의 **새** 응답 블록만 감시 → 중지 버튼 사라짐 + 텍스트 안정 + (동작 버튼 표시) → 완료
+6. `RESPONSE_RECEIVED` → jobId·requestId·projectId 모두 일치할 때만 수락 → 코드 블록/텍스트에서 JSON 후보 → `applyAIResponse`(creator.analysis.v1 검사)
+7. 작품 정보가 바뀌었거나 더 새로운 결과가 있으면 자동 적용 보류(사용자 확인) → 아니면 저장 → 화풍·연출안 선택으로 이동
+8. 전송 여부 불명·응답 시간 초과·연결 끊김·앱 재시작은 모두 `사용자 확인 필요`로 두고 **자동 재전송하지 않음**. 완료 응답은 확장 프로그램이 최근 5개를 보관해 「응답 다시 가져오기」로 재전송 없이 받을 수 있음
+
+실기 검증 절차: [docs/GEMINI_AUTOMATION_CHECKLIST.md](docs/GEMINI_AUTOMATION_CHECKLIST.md)
 
 ## 미검증 항목 (실환경 필요)
 
 - 실제 Chrome에서 Native Host 등록 및 `connectNative` 성공
 - PING/PONG 왕복이 Electron UI까지 도달하는지
 - Gemini 탭 실제 감지
-- 입력창 셀렉터 동작 여부 (실험적)
-- 응답 텍스트 추출
+- Gemini 셀렉터 42개 전부(입력창·전송·중지·질문/응답 블록·코드 블록·동작 버튼·로그인/보안 신호) — `선택자 진단`으로 확인
+- 입력 방식(execCommand insertText / 합성 paste / input 이벤트) 중 실제로 Gemini(Quill)가 받아들이는 방식
+- 응답 완료 판별 타이밍과 신규 응답 분리(요청 표식 방식)
+- 응답 텍스트·코드 블록 추출
 - Downloads API 연동
 - Windows 설치 프로그램에서의 Host 자동 등록
 

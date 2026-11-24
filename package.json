@@ -12,12 +12,14 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node scripts/run-tests.mjs && node scripts/test-job-queue.mjs",
+    "test": "node scripts/run-tests.mjs && node scripts/test-job-queue.mjs && node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs && node src/renderer/theme/theme.test.mjs",
     "dist:win": "npm run build && electron-builder --win nsis portable --x64",
     "dist:dir": "npm run build && electron-builder --dir",
     "native:register": "node native-host/register.mjs register",
     "native:unregister": "node native-host/register.mjs unregister",
-    "native:check": "node native-host/register.mjs check"
+    "native:check": "node native-host/register.mjs check",
+    "test:gemini": "node scripts/test-gemini-automation.mjs && node scripts/test-gemini-dom.mjs",
+    "check:extension": "node scripts/check-extension.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -32,6 +34,7 @@
     "electron": "^45.4.1",
     "electron-builder": "^26.18.1",
     "electron-vite": "^6.0.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.8"
   },

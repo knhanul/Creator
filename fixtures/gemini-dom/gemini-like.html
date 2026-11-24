@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  Gemini 웹 화면을 "본뜬" 테스트용 모형(fixture)입니다. 실제 gemini.google.com DOM이 아닙니다.
+  구조 근거: 공개 오픈소스 자료(extension/gemini-selectors.js 상단 [A][B][C])에 기록된
+  rich-textarea / .ql-editor[contenteditable][role=textbox] / button[aria-label="Send message"] /
+  user-query / model-response / message-content .markdown / code-block / model-thoughts.
+  실제 화면 검증은 docs/GEMINI_AUTOMATION_CHECKLIST.md 절차로 승희님 PC에서 진행합니다.
+-->
+<html lang="ko">
+<head><title>Gemini</title></head>
+<body>
+  <chat-app>
+    <div id="chat-history">
+      <div class="conversation-container">
+        <user-query><div class="query-text"><p>이전 대화의 질문입니다</p></div></user-query>
+        <model-response>
+          <message-content><div class="markdown markdown-main-panel"><p>이전 대화의 답변입니다.</p>
+            <code-block><div class="code-block-decoration"><span>JSON</span><button aria-label="Copy code"><mat-icon>content_copy</mat-icon></button></div>
+              <pre><code>{"schema":"creator.analysis.v1","summary":"이전 작품 요약","emotion":"x","keywords":["a"],"styles":[{"id":"old","label":"이전","description":""}],"directions":[{"id":"old","label":"이전","description":""}],"cautions":[]}</code></pre></code-block>
+          </div></message-content>
+          <message-actions><button aria-label="Copy"><mat-icon>content_copy</mat-icon></button></message-actions>
+        </model-response>
+      </div>
+    </div>
+    <div class="input-area">
+      <rich-textarea>
+        <div class="ql-editor ql-blank textarea" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini" data-placeholder="Ask Gemini"><p><br></p></div>
+      </rich-textarea>
+      <button class="send-button" data-test-id="send-button" aria-label="Send message" aria-disabled="true" disabled><mat-icon fonticon="send">send</mat-icon></button>
+      <button class="send-button stop" data-test-id="stop-button" aria-label="Stop response" hidden><mat-icon fonticon="stop">stop</mat-icon></button>
+      <button data-node-type="speech_dictation_mic_button" aria-label="Microphone"><mat-icon>mic</mat-icon></button>
+    </div>
+  </chat-app>
+</body>
+</html>
