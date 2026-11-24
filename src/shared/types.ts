@@ -27,6 +27,17 @@ export interface StudioProject {
 export interface ProjectSummary { id: string; title: string; genre: Genre; audience: Audience; updatedAt: string; createdAt: string; sceneCount: number; mediaCount: number; archived: boolean; }
 export interface AppInfo { version: string; dataRoot: string; platform: string; }
 export interface OperationResult { success: boolean; message?: string; }
+export interface GeminiStatus {
+  connected: boolean;
+  hostRegistered: boolean;
+  extensionConnected: boolean;
+  geminiTabFound: boolean;
+  loginState: 'unknown' | 'needed' | 'ready' | 'restricted';
+  message: string;
+}
+export interface GeminiPingResult { ok: boolean; roundtripMs: number; message: string; }
+export interface GeminiJob { jobId: string; projectId: string; stage: string; prompt: string; sceneId?: string; }
+export interface GeminiJobResult { success: boolean; jobId: string; errorCode?: string; message?: string; }
 export type StudioAPI = {
   app: { info(): Promise<AppInfo>; openFolder(projectId: string): Promise<OperationResult>; };
   projects: {
@@ -39,4 +50,9 @@ export type StudioAPI = {
   };
   assets: { import(projectId: string): Promise<StudioProject | null>; reveal(projectId: string, assetId: string): Promise<void>; };
   clipboard: { write(text: string): Promise<void> };
+  gemini: {
+    status(): Promise<GeminiStatus>;
+    ping(): Promise<GeminiPingResult>;
+    submit(job: GeminiJob): Promise<GeminiJobResult>;
+  };
 };

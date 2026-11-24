@@ -222,3 +222,6 @@
 .system-sync-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--color-text); cursor: pointer; }
 .system-sync-row input { width: auto; }
 @media (max-width: 1100px) { .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Gemini connection actions */
+.ai-connect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }

@@ -14,7 +14,10 @@
     "check": "npm run typecheck && npm run test && npm run build",
     "test": "node scripts/run-tests.mjs",
     "dist:win": "npm run build && electron-builder --win nsis portable --x64",
-    "dist:dir": "npm run build && electron-builder --dir"
+    "dist:dir": "npm run build && electron-builder --dir",
+    "native:register": "node native-host/register.mjs register",
+    "native:unregister": "node native-host/register.mjs unregister",
+    "native:check": "node native-host/register.mjs check"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

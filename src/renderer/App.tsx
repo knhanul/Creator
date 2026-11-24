@@ -167,7 +167,27 @@ function App(){
               </label>
               <p className="setting-note">켜면 Windows가 밝은 테마일 때 화이트 블루, 어두운 테마일 때 다크를 사용합니다. 끄면 마지막으로 직접 선택한 테마가 유지됩니다.</p>
             </Card>
-            <Card><div className="setting-head"><div className="setting-icon"><Sparkles size={21}/></div><div><h3>AI 연결</h3><p>AI Provider 어댑터를 독립 모듈로 관리합니다.</p></div></div><div className="setting-line"><div><strong>수동 JSON 워크벤치</strong><small>기획·장면·프롬프트·편집 구성</small></div><Tag tone="success">사용 가능</Tag></div><div className="setting-line"><div><strong>Gemini Chrome 연동</strong><small>정상 로그인된 Chrome 사용 예정 · 실환경 검증 필요</small></div><Tag tone="warning">미연결</Tag></div><p className="setting-note">이 초기 버전에는 Gemini 웹 자동 조작, 로그인 우회, 영상·음악 무인 생성 기능이 포함되어 있지 않습니다.</p></Card>
+            <Card>
+              <div className="setting-head"><div className="setting-icon"><Sparkles size={21}/></div><div><h3>AI 연결 · Google Gemini</h3><p>Chrome Native Messaging으로 일반 Chrome의 Gemini 탭과 연결합니다. API 키를 사용하지 않습니다.</p></div></div>
+              <div className="setting-line"><div><strong>연결 방식</strong><small>Chrome 웹 로그인 (Native Messaging)</small></div><Tag tone="muted">Chrome</Tag></div>
+              <div className="setting-line"><div><strong>수동 JSON 워크벤치</strong><small>기획·장면·프롬프트·편집 구성</small></div><Tag tone="success">사용 가능</Tag></div>
+              <div className="ai-connect-actions">
+                <Button size="sm" kind="secondary" onClick={async () => {
+                  try {
+                    const s = await window.studio.gemini.status();
+                    flash(s.message, s.connected ? 'success' : 'info');
+                  } catch (e) { flash(String(e), 'error'); }
+                }}>연결 상태 확인</Button>
+                <Button size="sm" kind="outline" onClick={async () => {
+                  try {
+                    const r = await window.studio.gemini.ping();
+                    flash(r.message, r.ok ? 'success' : 'error');
+                  } catch (e) { flash(String(e), 'error'); }
+                }}>테스트 요청 (PING)</Button>
+                <Button size="sm" kind="ghost" onClick={() => window.open('https://gemini.google.com/', '_blank')}>Gemini 열기</Button>
+              </div>
+              <p className="setting-note">Chrome 확장 프로그램과 Native Host가 설치·등록되어야 연결됩니다. 연결이 실패해도 기존 기능은 정상 작동합니다. 자동 입력은 실험적 구현이며 실환경 검증이 필요합니다.</p>
+            </Card>
             <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
             <Card><div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>브랜드 관리</h3><p>초기 GOMO 표시 → 향후 NUNI 변경을 위한 구조</p></div></div><div className="setting-line"><div><strong>제품군</strong><small>{BRAND.suiteKo}</small></div><Tag>{BRAND.companyMark}</Tag></div><div className="setting-line"><div><strong>제품</strong><small>{BRAND.productKo}</small></div></div><p className="setting-note">브랜드 표시 이름: src/shared/brand.ts · 테마: src/renderer/theme/ · 설치 표시 이름: package.json</p></Card>
           </div>

@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
 import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveProject } from './storage';
+import { geminiAdapter } from './gemini/adapter';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
 let win:BrowserWindow|null=null;
@@ -19,6 +20,9 @@ function registerHandlers(){
   ipcMain.handle('assets:import',async(_event,id:string)=>importAssets(id));
   ipcMain.handle('assets:reveal',async(_event,id:string,assetId:string)=>revealAsset(id,assetId));
   ipcMain.handle('clipboard:write',async(_event,text:string)=>clipboard.writeText(String(text)));
+  ipcMain.handle('gemini:status',async()=>geminiAdapter.getStatus());
+  ipcMain.handle('gemini:ping',async()=>geminiAdapter.ping());
+  ipcMain.handle('gemini:submit',async(_event,job)=>geminiAdapter.submitPrompt(job));
 }
 async function createWindow(){
   win=new BrowserWindow({width:1500,height:960,minWidth:1080,minHeight:720,show:false,title:BRAND.productKo,
