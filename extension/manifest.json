@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GOMO Gemini Connector",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Connects GOMO Create to Gemini web via Native Messaging",
   "permissions": [
     "nativeMessaging",
@@ -14,7 +14,7 @@
     "https://gemini.google.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "gomo-sw.js"
   },
   "content_scripts": [
     {

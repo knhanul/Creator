@@ -15,7 +15,7 @@ import { StringDecoder } from 'node:string_decoder';
 const HOST_NAME = 'com.gomo.create';
 /** 자동화 프로토콜 수준 (src/shared/gemini-protocol.ts AUTOMATION_PROTOCOL과 같아야 함) */
 const HOST_PROTOCOL = 2;
-const HOST_VERSION = '0.2.2';
+const HOST_VERSION = '0.2.3';
 const STARTED_AT = new Date().toISOString();
 // GOMO_CREATE_PIPE: 테스트에서만 사용(기본 경로는 그대로)
 const PIPE_NAME = process.env.GOMO_CREATE_PIPE || (process.platform === 'win32' ? `\\\\.\\pipe\\${HOST_NAME}` : `/tmp/${HOST_NAME}.sock`);

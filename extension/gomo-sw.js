@@ -1,19 +1,24 @@
 /**
- * GOMO Gemini Connector — Background Service Worker
+ * GOMO Gemini Connector — Background Service Worker (manifest의 유일한 background 진입점)
+ * 파일 이름을 background.js → gomo-sw.js로 바꾼 이유: Chrome이 0.1.0 background.js 서비스 워커를 계속 실행하는 사례가 있어,
+ * 새 스크립트 URL로 등록되게 해 이전 코드가 남을 수 없게 함. 버전은 항상 chrome.runtime.getManifest()에서 읽음.
  * Native Messaging ↔ content script 중계. 모든 요청/응답에 jobId·requestId·projectId를 그대로 실어 보냅니다.
  */
 const HOST_NAME = 'com.gomo.create';
 const PROTOCOL_VERSION = 1;
 /** 자동화 프로토콜 수준 — 이 파일 자체에 박혀 있으므로 서비스 워커가 실제로 새 코드로 돌고 있는지 앱이 확인할 수 있음 */
 const AUTOMATION_PROTOCOL = 2;
-/** 이 background.js 코드 자체의 빌드 표식 (manifest 버전과 별개: Chrome이 서비스 워커를 이전 코드로 돌리는지 구분) */
-const BG_BUILD = '0.2.2';
+/** 이 서비스 워커 코드 자체의 빌드 표식 (manifest 버전과 별개: Chrome이 서비스 워커를 이전 코드로 돌리는지 구분) */
+const BG_BUILD = '0.2.3';
+const SW_FILE = 'gomo-sw.js';
 const SW_STARTED_AT = new Date().toISOString();
 function selfInfo() {
   let version = '';
   try { version = chrome.runtime.getManifest().version; } catch { /* ignore */ }
-  return { protocol: AUTOMATION_PROTOCOL, version, build: BG_BUILD, id: chrome.runtime.id || '', swStartedAt: SW_STARTED_AT };
+  return { protocol: AUTOMATION_PROTOCOL, version, build: BG_BUILD, file: SW_FILE, id: chrome.runtime.id || '', swStartedAt: SW_STARTED_AT };
 }
+// 확장 카드 → 「서비스 워커」 콘솔에서 지금 실행 중인 코드를 바로 확인할 수 있게
+console.info(`GOMO background protocol ${AUTOMATION_PROTOCOL} build ${BG_BUILD} file ${SW_FILE} manifest ${selfInfo().version}`);
 const CONTENT_FILES = ['gemini-selectors.js', 'gemini-dom.js', 'content.js'];
 const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
@@ -242,6 +247,6 @@ chrome.downloads.onChanged.addListener((delta) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => connect());
-chrome.runtime.onStartup.addListener(() => connect());
+// 서비스 워커가 시작될 때마다 이 줄이 한 번 실행됨(설치·브라우저 시작 포함). connectNative는 여기 한 곳뿐.
+// (0.1.0은 onStartup + 최상위에서 두 번 연결해 브라우저 시작 때 Host가 2개씩 떴음)
 connect();

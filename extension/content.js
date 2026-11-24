@@ -7,7 +7,7 @@
   if (window.__gomoGeminiContentLoaded) return; // scripting 재주입 시 중복 방지
   window.__gomoGeminiContentLoaded = true;
 
-  /** 자동화 프로토콜 수준 (background.js·앱과 같아야 함) */
+  /** 자동화 프로토콜 수준 (gomo-sw.js·앱과 같아야 함) */
   const CONTENT_PROTOCOL = 2;
   const dom = window.GomoGeminiDom.createGeminiDom({ doc: document, win: window });
   let active = null; // { jobId, requestId, projectId }

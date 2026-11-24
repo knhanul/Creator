@@ -82,7 +82,7 @@ function background(file, tab, manifestVersion = '0.2.1') {
     scripting: { executeScript: async () => { throw new Error('not used in this test'); } },
     storage: { local: { get: async () => ({}), set: async () => {} } }
   };
-  vm.runInNewContext(read(file), { chrome, console: { log() {}, error() {} }, setTimeout, clearTimeout, Promise, JSON });
+  vm.runInNewContext(read(file), { chrome, console: { log() {}, info() {}, error() {} }, setTimeout, clearTimeout, Promise, JSON });
   return {
     toHost,
     send: (m) => nativeListeners.forEach(f => f(JSON.parse(JSON.stringify(m)))),
@@ -126,7 +126,7 @@ await test('연결 확인: 0.1.0 백그라운드는 버전을 보고하지 않�
   const issue = checkPeerVersions({ host: { protocol: 2, version: '0.2.1' }, extension: st.payload.extension ?? null, content: st.payload.content ?? null });
   assert.equal(issue.code, 'EXTENSION_OUTDATED');
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /chrome:\/\/extensions/);
-  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Gemini 탭 새로고침/);
+  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /서비스 워커/); assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /GOMO background protocol 2 build 0\.2\.3/);
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Chrome을 완전히 종료/);
 });
 
@@ -142,7 +142,7 @@ await test('이전 백그라운드 + 이전 content(둘 다 0.1.0): "성공"이�
 
 await test('새 백그라운드 + 이전 content(탭 새로고침 안 함) → CONTENT_OUTDATED', async () => {
   const tab = geminiTab('legacy');
-  const bg = background('extension/background.js', tab);
+  const bg = background('extension/gomo-sw.js', tab);
   bg.send(createMessage('GEMINI_STATUS_REQUEST', {}));
   const st = await bg.next('GEMINI_STATUS_RESULT');
   assert.equal(st.payload.extension.protocol, AUTOMATION_PROTOCOL);
@@ -153,7 +153,7 @@ await test('새 백그라운드 + 이전 content(탭 새로고침 안 함) → C
 
 await test('최신 백그라운드 + 최신 content: 버전 일치, ids·protocol 전달, 결과 봉투에 ids 회신', async () => {
   const tab = geminiTab('new');
-  const bg = background('extension/background.js', tab);
+  const bg = background('extension/gomo-sw.js', tab);
   bg.send(createMessage('GEMINI_STATUS_REQUEST', {}));
   const st = await bg.next('GEMINI_STATUS_RESULT');
   assert.deepEqual(st.payload.content, { state: 'ok', protocol: AUTOMATION_PROTOCOL });
@@ -171,7 +171,7 @@ await test('최신 백그라운드 + 최신 content: 버전 일치, ids·protoco
 
 await test('새 백그라운드: 앱 요청에 ids가 없으면 Gemini 탭에 보내지 않음', async () => {
   const tab = geminiTab('new');
-  const bg = background('extension/background.js', tab);
+  const bg = background('extension/gomo-sw.js', tab);
   bg.send(createMessage('PROMPT_SUBMIT_REQUEST', { prompt: 'x', stage: 'analysis', marker: 'm' }, { requestId: 'r-only' }));
   const res = await bg.next('PROMPT_SUBMIT_RESULT');
   assert.equal(res.payload.errorCode, 'BAD_REQUEST'); assert.equal(res.payload.sendState, 'not_sent');

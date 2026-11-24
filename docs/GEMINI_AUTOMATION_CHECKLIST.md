@@ -19,12 +19,17 @@
 2. **앱 완전히 종료 후 다시 실행** — 평소 실행 방식 그대로 (`npm run dev` 또는 `npm run preview`).
    설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드).
 3. **Chrome 확장 새로고침** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
-   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.2**인지 확인.
+   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.3**인지 확인.
+   - **「서비스 워커」 링크**(뷰 검사)를 눌러 열린 콘솔 첫 줄에
+     `GOMO background protocol 2 build 0.2.3 file gomo-sw.js manifest 0.2.3` 이 보여야 합니다.
+     안 보이거나 다른 내용이면(0.2.2까지는 서비스 워커 파일이 `background.js`였음): 확장을 **삭제** → 「압축해제된 확장 프로그램을 로드합니다」로
+     `E:\Pjt\creator\extension` 을 다시 로드 → 콘솔 다시 확인. 새 ID가 이전과 다르면 4번 아래 재등록 명령을 새 ID로 실행.
+   - 「세부정보」의 소스 경로가 `E:\Pjt\creator\extension` (git pull 한 저장소)인지 확인.
    - 다르면 다른 폴더를 불러온 것입니다 → 카드 「세부정보」의 「소스」 경로가 `<저장소>\extension` 인지 확인하고,
      아니면 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다(ID가 바뀌면 5번 필수).
    - 카드에 표시된 **ID**(32자)를 메모해 둡니다.
 4. **다른 Chrome 프로필 확인** — Chrome 오른쪽 위 프로필 아이콘에 프로필이 여러 개면, **각 프로필에서** `chrome://extensions` 를 열어
-   GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.2)하거나, 쓰지 않으면 **제거**합니다.
+   GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.3)하거나, 쓰지 않으면 **제거**합니다.
 5. **Chrome 완전히 종료 후 다시 켜기**
    - 모든 Chrome 창을 닫고, 작업 표시줄 오른쪽 트레이(^)에 Chrome 아이콘이 있으면 우클릭 → 종료.
    - (선택) 남은 Host 프로세스 확인 — PowerShell:
@@ -47,10 +52,10 @@
    판정: 정상 (버전 일치)
    앱: 자동화 프로토콜 2, 연결 통로 \\.\pipe\com.gomo.create
    Host 연결 1개:
-     #1 (사용 중) 연결 … · Host 0.2.2 프로토콜 2 pid 1234 시작 …
-         호출 확장: chrome-extension://<ID>/ · 확장 연결: 연결됨 · 확장 HELLO: 버전 0.2.2 프로토콜 2 (…)
-   Host 버전 확인 응답: 0.2.2 프로토콜 2 pid 1234 …
-   확장 상태 응답(120ms): 버전 0.2.2 프로토콜 2 빌드 0.2.2 ID <ID> 서비스 워커 시작 … · Gemini 탭 1개
+     #1 (사용 중) 연결 … · Host 0.2.3 프로토콜 2 pid 1234 시작 …
+         호출 확장: chrome-extension://<ID>/ · 확장 연결: 연결됨 · 확장 HELLO: 버전 0.2.3 프로토콜 2 (…)
+   Host 버전 확인 응답: 0.2.3 프로토콜 2 pid 1234 …
+   확장 상태 응답(120ms): 버전 0.2.3 프로토콜 2 빌드 0.2.3 파일 gomo-sw.js ID <ID> 서비스 워커 시작 … · Gemini 탭 1개
    Gemini 탭 스크립트: 최신 (프로토콜 2)      ← 또는 "아직 없음(전송 때 자동 주입)"
    Host 로그 파일: C:\Users\<이름>\.gomo-create\host.log
    ```
@@ -64,6 +69,9 @@
 | `CONTENT_OUTDATED` | Gemini 탭에 이전 스크립트 | 6 |
 | `HOST_OUTDATED` | Host가 이전 코드(버전 확인에 무응답) | 5 (재등록 포함) |
 | `EXTENSION_OUTDATED_UNCERTAIN` | 이전 확장이 실제로 입력·전송했을 수 있음 | Gemini 화면 확인 → 「응답 기다리기」 또는 「다시 보내기」 (자동 재전송 없음) |
+
+> 2026-11-24 16:42 진단(같은 ID의 Host 2개가 동시에, HELLO 0.1.0)은 Chrome이 카드 버전과 달리 **0.1.0 `background.js` 서비스 워커**를 실행한 결과입니다
+> (0.1.0 코드만 브라우저 시작 때 두 번 연결하고 HELLO에 0.1.0을 고정해 보냄). 0.2.3부터 서비스 워커 파일 이름을 `gomo-sw.js` 로 바꿔 새로 등록되게 했습니다.
 
 > 지금까지의 두 오류(`jobId/requestId/projectId 누락`, `보고된 프로토콜: 없음`)는 모두 **Gemini에 아무것도 입력·전송하지 않은 상태**에서 멈춘 것입니다.
 

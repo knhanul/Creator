@@ -39,7 +39,7 @@ export interface ConnectionDiagnostics {
   /** GEMINI_STATUS_RESULT 응답 (null = timeoutMs 안에 응답 없음) */
   status: {
     ms: number;
-    extension: { protocol?: number; version?: string; build?: string; id?: string; swStartedAt?: string } | null;
+    extension: { protocol?: number; version?: string; build?: string; file?: string; id?: string; swStartedAt?: string } | null;
     content: { state: string; protocol?: number; error?: string } | null;
     tabs: number;
     envelopeProtocol?: number;
@@ -59,9 +59,15 @@ export function diagnose(d: ConnectionDiagnostics): VersionIssue | null {
   const reported = Number(d.status.extension?.protocol) || Number(d.status.envelopeProtocol) || 0;
   if (reported < AUTOMATION_PROTOCOL) {
     const hello = d.hostInfo.extension;
-    const others = d.hosts.length > 1 ? ` 앱에 Host가 ${d.hosts.length}개 연결되어 있습니다(Chrome 프로필이나 확장 사본이 여럿일 수 있음).` : '';
+    const callers = new Set(d.hosts.map(h => h.host?.caller).filter(Boolean));
+    const sameId = d.hosts.length > 1 && callers.size === 1;
+    const others = d.hosts.length > 1
+      ? (sameId
+        ? ` 같은 확장 ID(${[...callers][0]})의 Host가 ${d.hosts.length}개 동시에 떠 있습니다 — 0.1.0 서비스 워커가 브라우저 시작 때 두 번 연결하던 특징입니다.`
+        : ` 앱에 Host가 ${d.hosts.length}개 연결되어 있고 호출한 확장 ID가 서로 다릅니다(다른 Chrome 프로필이나 다른 폴더의 사본).`)
+      : '';
     let why = '';
-    if (hello?.version === '0.1.0') why = ' 응답한 확장은 0.1.0입니다 — 다른 Chrome 프로필이나 다른 폴더에 설치된 이전 사본이 연결되어 있습니다.';
+    if (hello?.version === '0.1.0') why = ' 응답한 서비스 워커는 0.1.0 코드입니다(HELLO에 0.1.0이 고정된 이전 background.js) — 확장 카드의 버전과 상관없이 Chrome이 이전 서비스 워커 파일을 실행하고 있습니다.';
     else if (hello?.version) why = ` 응답한 확장의 카드 버전은 ${hello.version}인데 서비스 워커 코드가 버전을 보고하지 않습니다 — Chrome이 서비스 워커를 이전 코드로 실행 중입니다.`;
     return { code: 'EXTENSION_OUTDATED', message: `Chrome 확장 프로그램이 이전 버전으로 실행 중입니다(보고된 프로토콜: 없음, 필요: ${AUTOMATION_PROTOCOL}).${why}${others}` };
   }
@@ -85,7 +91,7 @@ export function formatDiagnostics(d: ConnectionDiagnostics, issue: VersionIssue 
   L.push(`[GOMO 연결 진단] ${t(d.at)}`);
   L.push(`판정: ${issue ? `${issue.code} — ${issue.message}` : '정상 (버전 일치)'}`);
   L.push(`앱: 자동화 프로토콜 ${d.app.protocol}, 연결 통로 ${d.pipe}${d.serverError ? ` (오류: ${d.serverError})` : ''}`);
-  L.push(`Host 연결 ${d.hosts.length}개${d.hosts.length > 1 ? ' ← 여러 개면 Chrome 프로필/확장 사본이 여럿이거나 이전 Host가 남아 있음' : ''}:`);
+  L.push(`Host 연결 ${d.hosts.length}개${d.hosts.length > 1 ? ' ← 같은 확장 ID면 0.1.0 서비스 워커(이중 연결), 다른 ID면 다른 프로필/사본' : ''}:`);
   for (const h of d.hosts) {
     const host = h.host;
     const hello = h.extensionHello;
@@ -98,7 +104,7 @@ export function formatDiagnostics(d: ConnectionDiagnostics, issue: VersionIssue 
   if (!s) L.push(`확장 상태 응답: ${d.statusTimeoutMs / 1000}초 안에 응답 없음`);
   else {
     const e = s.extension;
-    L.push(`확장 상태 응답(${s.ms}ms): ${e ? `버전 ${e.version || '?'} 프로토콜 ${e.protocol ?? '없음'} 빌드 ${e.build || '?'} ID ${e.id || '?'} 서비스 워커 시작 ${t(e.swStartedAt)}` : '버전 정보 없음 → 이전 서비스 워커 코드'} · Gemini 탭 ${s.tabs}개`);
+    L.push(`확장 상태 응답(${s.ms}ms): ${e ? `버전 ${e.version || '?'} 프로토콜 ${e.protocol ?? '없음'} 빌드 ${e.build || '?'} 파일 ${e.file || '?'} ID ${e.id || '?'} 서비스 워커 시작 ${t(e.swStartedAt)}` : '버전 정보 없음 → 이전 서비스 워커 코드'} · Gemini 탭 ${s.tabs}개`);
     L.push(`Gemini 탭 스크립트: ${s.content ? `${CONTENT_LABEL[s.content.state] || s.content.state}${s.content.protocol ? ` (프로토콜 ${s.content.protocol})` : ''}${s.content.error ? ` (${s.content.error})` : ''}` : '보고 없음'}`);
   }
   L.push(`Host 로그 파일: ${hi?.logFile || d.hosts.find(h => h.host?.logFile)?.host?.logFile || '%USERPROFILE%\\.gomo-create\\host.log'}`);
