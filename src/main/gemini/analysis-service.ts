@@ -52,14 +52,17 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     async submit(job: GeminiJobRecord): Promise<JobResult> {
       // 1) 연결 확인 — 실패는 "보내지 않음"이 확실하므로 failed(사용자가 명시적으로 재시도)
       const status = await adapter.getStatus();
-      if (!status.connected) return { success: false, jobId: job.jobId, sendState: 'not_sent', needsUser: true, errorCode: 'HOST_NOT_CONNECTED', message: status.message };
-      // 버전 확인: Host·확장·Gemini 탭 중 하나라도 이전 버전이면 보내지 않고 무엇을 갱신할지 안내
-      if (status.versionIssue) return { success: false, jobId: job.jobId, sendState: 'not_sent', needsUser: true, errorCode: status.versionIssue.code, message: status.versionIssue.message };
-      if (!status.extensionConnected) return { success: false, jobId: job.jobId, sendState: 'not_sent', needsUser: true, errorCode: 'EXTENSION_NOT_CONNECTED', message: status.message };
-      if (!status.geminiTabFound) return { success: false, jobId: job.jobId, sendState: 'not_sent', needsUser: true, errorCode: 'NO_GEMINI_TAB', message: status.message };
+      const diagnostics = status.diagnosticText;
+      const stop = (errorCode: string, message: string): JobResult => ({ success: false, jobId: job.jobId, sendState: 'not_sent', needsUser: true, errorCode, message, diagnostics });
+      if (!status.connected) return stop('HOST_NOT_CONNECTED', status.message);
+      // 버전·응답 확인: Host·확장·Gemini 탭 중 하나라도 이전 버전이거나 응답이 없으면 보내지 않고 무엇을 할지 안내
+      if (status.versionIssue) return stop(status.versionIssue.code, status.versionIssue.message);
+      if (!status.extensionConnected) return stop('EXTENSION_NOT_CONNECTED', status.message);
+      if (!status.geminiTabFound) return stop('NO_GEMINI_TAB', status.message);
       // 2) 프롬프트 전송 — requestId는 큐가 이번 시도에 부여한 값을 그대로 사용
       await queue.setPhase(job.jobId, job.requestId, 'sending');
-      return adapter.submitPrompt({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, stage: job.kind, prompt: job.prompt });
+      const r = await adapter.submitPrompt({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, stage: job.kind, prompt: job.prompt });
+      return diagnostics && !r.diagnostics ? { ...r, diagnostics } : r;
     }
   };
 

@@ -2,8 +2,9 @@
  * Gemini Provider Adapter — isolates all Gemini-specific logic.
  * Connection failures do not affect the rest of the app.
  */
-import { AUTOMATION_PROTOCOL, checkPeerVersions, classifySubmitResult, createMessage, makeRequestMarker, type MessageType, type PeerVersions, type ProtocolMessage, type SendState, type VersionIssue } from '../../shared/gemini-protocol';
+import { AUTOMATION_PROTOCOL, classifySubmitResult, createMessage, makeRequestMarker, type MessageType, type PeerVersions, type ProtocolMessage, type SendState, type VersionIssue } from '../../shared/gemini-protocol';
 import { pipeClient } from './pipe-client';
+import { diagnose, formatDiagnostics, type ConnectionDiagnostics } from '../../shared/gemini-diagnostics';
 
 export type ProviderStatus = {
   connected: boolean;
@@ -16,6 +17,10 @@ export type ProviderStatus = {
   versions?: PeerVersions & { app: number };
   /** 이전 버전 구성 요소가 있으면 무엇을 갱신해야 하는지. 있으면 전송하지 않음 */
   versionIssue?: VersionIssue | null;
+  /** 연결 확인 때 모은 사실 (Host 연결들, Host·확장·탭 버전, 응답 시간) */
+  diagnostics?: ConnectionDiagnostics;
+  /** 사용자에게 보여 주고 복사할 진단 텍스트 (본문 없음) */
+  diagnosticText?: string;
 };
 
 export interface PromptJob {
@@ -40,6 +45,8 @@ export interface JobResult {
   tab?: { id: number; title: string; url?: string };
   insertMethod?: string;
   evidence?: string;
+  /** 연결 확인 진단 텍스트 (작업에 남겨 모달의 '진단 정보'에 표시) */
+  diagnostics?: string;
 }
 
 /** content script가 입력·전송 버튼 확인·전송 증거 대기까지 하므로 넉넉히 */
@@ -60,59 +67,62 @@ export class GeminiAdapter {
   }
 
   async getStatus(): Promise<ProviderStatus> {
+    const HOST_INFO_TIMEOUT = 1500;
+    const STATUS_TIMEOUT = 5000;
+    const base = (): ConnectionDiagnostics => {
+      const c = pipeClient.connections();
+      return { at: new Date().toISOString(), app: { protocol: AUTOMATION_PROTOCOL }, pipe: c.pipe, serverError: c.serverError, activeConnId: c.activeConnId, hosts: c.hosts, hostInfo: null, hostInfoTimeoutMs: HOST_INFO_TIMEOUT, status: null, statusTimeoutMs: STATUS_TIMEOUT };
+    };
     try {
       const connected = await pipeClient.ensureConnected();
       if (!connected) {
+        const d = base();
         return {
-          connected: false,
-          hostRegistered: false,
-          extensionConnected: false,
-          geminiTabFound: false,
-          loginState: 'unknown',
-          message: 'Native Host에 연결되지 않았습니다. 연결 설정을 확인해 주세요.'
+          connected: false, hostRegistered: false, extensionConnected: false, geminiTabFound: false, loginState: 'unknown',
+          message: 'Native Host에 연결되지 않았습니다. Chrome이 켜져 있고 확장 프로그램이 사용 중인지 확인해 주세요.',
+          versionIssue: null, diagnostics: d, diagnosticText: formatDiagnostics(d, null)
         };
       }
       // 1) Host 버전 (Host가 직접 답함. 이전 Host는 이 요청을 Chrome으로 넘기고 아무도 답하지 않음)
-      const hostRes = await this.request(createMessage('HOST_INFO_REQUEST', {}), 1500, ['HOST_INFO_RESULT']);
-      const host = hostRes?.type === 'HOST_INFO_RESULT' ? { protocol: Number(hostRes.payload.protocol) || 0, version: String(hostRes.payload.version || '') } : null;
+      const hostRes = await this.request(createMessage('HOST_INFO_REQUEST', {}), HOST_INFO_TIMEOUT, ['HOST_INFO_RESULT']);
+      const hp = hostRes?.type === 'HOST_INFO_RESULT' ? (hostRes.payload as unknown as Record<string, unknown>) : null;
       // 2) 확장(백그라운드)·Gemini 탭(content script) 버전과 탭 상태
-      const req = createMessage('GEMINI_STATUS_REQUEST', {});
-      const result = await this.request(req, 5000, ['GEMINI_STATUS_RESULT']);
+      const t0 = Date.now();
+      const result = await this.request(createMessage('GEMINI_STATUS_REQUEST', {}), STATUS_TIMEOUT, ['GEMINI_STATUS_RESULT']);
+      const ms = Date.now() - t0;
+      const d = base(); // Host 정보는 위 응답으로 갱신된 뒤 다시 읽음
+      d.hostInfo = hp ? {
+        protocol: typeof hp.protocol === 'number' ? hp.protocol : null, version: String(hp.version ?? ''), pid: hp.pid as number | undefined, startedAt: hp.startedAt as string | undefined,
+        caller: hp.caller as string | undefined, logFile: hp.logFile as string | undefined, chromeConnected: hp.chromeConnected as boolean | undefined,
+        extension: (hp.extension as { version: string | null; protocol: number | null; at?: string } | null | undefined) ?? null
+      } : null;
       if (result?.type === 'GEMINI_STATUS_RESULT') {
         const p = result.payload;
-        const versions = { app: AUTOMATION_PROTOCOL, host, extension: p.extension ?? null, content: p.content ?? null };
-        const versionIssue = checkPeerVersions(versions);
-        const tabs = Array.isArray(p.tabs) && p.tabs.length > 0;
+        const env = result as unknown as { extensionProtocol?: number };
+        d.status = { ms, extension: p.extension ?? null, content: p.content ?? null, tabs: Array.isArray(p.tabs) ? p.tabs.length : 0, envelopeProtocol: env.extensionProtocol };
+      }
+      const issue = diagnose(d);
+      const text = formatDiagnostics(d, issue);
+      const versions = { app: AUTOMATION_PROTOCOL, host: d.hostInfo ? { protocol: Number(d.hostInfo.protocol) || 0, version: d.hostInfo.version } : null, extension: d.status?.extension ? { protocol: Number(d.status.extension.protocol) || 0, version: String(d.status.extension.version || '') } : null, content: (d.status?.content as PeerVersions['content']) ?? null };
+      if (d.status) {
+        const tabs = d.status.tabs > 0;
         return {
-          connected: true,
-          hostRegistered: true,
-          extensionConnected: true,
-          geminiTabFound: tabs,
-          loginState: (p.loginState as ProviderStatus['loginState']) || 'unknown',
-          message: versionIssue ? versionIssue.message : (tabs ? 'Gemini 탭이 감지되었습니다.' : 'Gemini 탭을 찾을 수 없습니다.'),
-          versions, versionIssue
+          connected: true, hostRegistered: true, extensionConnected: true, geminiTabFound: tabs,
+          loginState: ((result!.payload as { loginState?: string }).loginState as ProviderStatus['loginState']) || 'unknown',
+          message: issue ? issue.message : (tabs ? 'Gemini 탭이 감지되었습니다.' : 'Gemini 탭을 찾을 수 없습니다.'),
+          versions, versionIssue: issue, diagnostics: d, diagnosticText: text
         };
       }
-      const versions = { app: AUTOMATION_PROTOCOL, host, extension: null, content: null };
-      // 확장 응답이 없을 때도 Host가 이전 버전이면 그게 먼저 고칠 일
-      const hostIssue = host && host.protocol >= AUTOMATION_PROTOCOL ? null : checkPeerVersions(versions);
       return {
-        connected: true,
-        hostRegistered: true,
-        extensionConnected: false,
-        geminiTabFound: false,
-        loginState: 'unknown',
-        message: hostIssue ? hostIssue.message : '확장 프로그램 응답이 없습니다.',
-        versions, versionIssue: hostIssue
+        connected: true, hostRegistered: true, extensionConnected: false, geminiTabFound: false, loginState: 'unknown',
+        message: issue ? issue.message : '확장 프로그램 응답이 없습니다.',
+        versions, versionIssue: issue, diagnostics: d, diagnosticText: text
       };
     } catch (e) {
+      const d = base();
       return {
-        connected: false,
-        hostRegistered: false,
-        extensionConnected: false,
-        geminiTabFound: false,
-        loginState: 'unknown',
-        message: e instanceof Error ? e.message : '연결 확인 실패'
+        connected: false, hostRegistered: false, extensionConnected: false, geminiTabFound: false, loginState: 'unknown',
+        message: e instanceof Error ? e.message : '연결 확인 실패', diagnostics: d, diagnosticText: formatDiagnostics(d, null)
       };
     }
   }

@@ -150,6 +150,7 @@ export class GeminiJobQueue {
       if (result.tab) next.tab = result.tab;
       if (result.insertMethod) next.insertMethod = result.insertMethod;
       if (result.evidence) next.sendEvidence = result.evidence;
+      next.diagnostics = result.diagnostics || undefined;
       if (next.state !== 'dispatching') {
         // 전송 결과를 기다리는 동안 응답/오류가 먼저 반영된 경우(드묾) 그 상태를 유지
       } else if (result.success) {

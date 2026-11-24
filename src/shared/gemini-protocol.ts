@@ -211,7 +211,7 @@ export interface PeerVersions {
   extension?: { protocol: number; version: string } | null;
   content?: { state: 'ok' | 'outdated' | 'none' | 'unknown'; protocol?: number } | null;
 }
-export interface VersionIssue { code: 'HOST_OUTDATED' | 'EXTENSION_OUTDATED' | 'CONTENT_OUTDATED'; message: string }
+export interface VersionIssue { code: 'HOST_NOT_CONNECTED' | 'HOST_OUTDATED' | 'EXTENSION_NO_REPLY' | 'EXTENSION_OUTDATED' | 'CONTENT_OUTDATED'; message: string }
 
 /** 구성 요소 중 이전 버전이 있으면 무엇을 갱신해야 하는지 알려 줌. 없으면 null */
 export function checkPeerVersions(v: PeerVersions): VersionIssue | null {

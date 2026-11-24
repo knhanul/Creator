@@ -6,6 +6,14 @@ const HOST_NAME = 'com.gomo.create';
 const PROTOCOL_VERSION = 1;
 /** 자동화 프로토콜 수준 — 이 파일 자체에 박혀 있으므로 서비스 워커가 실제로 새 코드로 돌고 있는지 앱이 확인할 수 있음 */
 const AUTOMATION_PROTOCOL = 2;
+/** 이 background.js 코드 자체의 빌드 표식 (manifest 버전과 별개: Chrome이 서비스 워커를 이전 코드로 돌리는지 구분) */
+const BG_BUILD = '0.2.2';
+const SW_STARTED_AT = new Date().toISOString();
+function selfInfo() {
+  let version = '';
+  try { version = chrome.runtime.getManifest().version; } catch { /* ignore */ }
+  return { protocol: AUTOMATION_PROTOCOL, version, build: BG_BUILD, id: chrome.runtime.id || '', swStartedAt: SW_STARTED_AT };
+}
 const CONTENT_FILES = ['gemini-selectors.js', 'gemini-dom.js', 'content.js'];
 const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
@@ -28,7 +36,7 @@ function connect() {
         setTimeout(connect, 2000);
       }
     });
-    sendToHost({ type: 'HELLO', payload: { client: 'extension', version: chrome.runtime.getManifest().version, protocol: AUTOMATION_PROTOCOL } });
+    sendToHost({ protocolVersion: PROTOCOL_VERSION, requestId: 'hello-' + Date.now(), type: 'HELLO', timestamp: new Date().toISOString(), extensionProtocol: AUTOMATION_PROTOCOL, payload: { client: 'extension', ...selfInfo() } });
   } catch (e) {
     console.error('connectNative failed:', e);
   }
@@ -49,6 +57,9 @@ function envelope(type, base, payload) {
     jobId: base.jobId,
     projectId: base.projectId,
     timestamp: new Date().toISOString(),
+    // 모든 회신에 이 서비스 워커의 프로토콜·버전을 실어 보냄(앱 진단용)
+    extensionProtocol: AUTOMATION_PROTOCOL,
+    extensionVersion: selfInfo().version,
     payload
   };
 }
@@ -145,23 +156,12 @@ async function handleProbe(msg) {
 function onNativeMessage(msg) {
   if (!msg || !msg.type) return;
   if (msg.type === 'PING') {
-    sendToHost({
-      protocolVersion: 1,
-      requestId: msg.requestId || 'pong',
-      type: 'PONG',
-      timestamp: new Date().toISOString(),
-      payload: { nonce: msg.payload?.nonce || '', from: 'extension' }
-    });
+    sendToHost(envelope('PONG', { requestId: msg.requestId || 'pong' }, { nonce: msg.payload?.nonce || '', from: 'extension', extension: selfInfo() }));
     return;
   }
   if (msg.type === 'GEMINI_STATUS_REQUEST') {
-    statusWithVersions().then(result => sendToHost({
-      protocolVersion: 1,
-      requestId: msg.requestId,
-      type: 'GEMINI_STATUS_RESULT',
-      timestamp: new Date().toISOString(),
-      payload: result
-    }));
+    statusWithVersions().catch((e) => ({ tabs: [], selectedTabId: null, loginState: 'unknown', adapterReady: false, experimental: true, extension: selfInfo(), content: { state: 'unknown', error: String(e?.message || e) } }))
+      .then(result => sendToHost(envelope('GEMINI_STATUS_RESULT', { requestId: msg.requestId }, result)));
     return;
   }
   if (msg.type === 'PROMPT_SUBMIT_REQUEST') { void handleSubmit(msg); return; }
@@ -206,7 +206,7 @@ function pingContent(tabId, timeoutMs = 1500) {
 
 async function statusWithVersions() {
   const result = await queryGeminiTabs();
-  result.extension = { protocol: AUTOMATION_PROTOCOL, version: chrome.runtime.getManifest().version };
+  result.extension = selfInfo();
   try {
     const tab = await pickGeminiTab();
     result.content = tab?.id ? await pingContent(tab.id) : { state: 'none' };
