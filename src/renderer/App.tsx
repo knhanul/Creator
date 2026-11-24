@@ -11,7 +11,7 @@ import {
 import {BRAND} from '../shared/brand';
 import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
 import {makeAIPrompt} from '../shared/prompts';
-import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip} from '../shared/types';
+import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDialog} from './components/AIDialog';
 import {NewProjectModal} from './components/NewProjectModal';
@@ -51,6 +51,22 @@ function PromptCard({scene,onSave,onCopy}:{scene:Scene,onSave:(scene:Scene)=>voi
     <div className="prompt-card-actions"><Button kind="outline" size="sm" onClick={()=>onCopy(image)} disabled={!image}><Copy size={14}/> 이미지 요청 복사</Button></div>
     <details className="advanced-details"><summary>동영상 프롬프트 · 고급 설정</summary><textarea rows={4} value={video} onChange={e=>setVideo(e.target.value)} onBlur={()=>{if(video!==scene.videoPrompt)onSave({...scene,videoPrompt:video});}} placeholder="선택 사항: Gemini 등 동영상 생성 도구에 보낼 지시문"/><Button kind="outline" size="sm" onClick={()=>onCopy(video)} disabled={!video}><Copy size={14}/> 동영상 요청 복사</Button></details>
   </article>;
+}
+function JobQueueCard({flash}:{flash:(text:string,type?:'info'|'success'|'error')=>void}){
+  const [jobs,setJobs]=useState<GeminiJobRecord[]>([]);
+  const refresh=async()=>{try{setJobs(await window.studio.gemini.jobs.list());}catch{/* ignore */}};
+  useEffect(()=>{void refresh();},[]);
+  const label:Record<string,string>={queued:'대기',dispatching:'전송 중',waiting:'응답 대기',completed:'완료',failed:'실패',needs_confirmation:'확인 필요',cancelled:'취소됨',cancelling:'취소 중'};
+  return <Card className="theme-settings-card"><div className="setting-head"><div className="setting-icon"><ListOrdered size={21}/></div><div><h3>Gemini 작업 큐</h3><p>한 번에 하나의 작업만 실행합니다. 전송 여부가 불분명하면 자동 재전송하지 않습니다.</p></div></div>
+    <div className="ai-connect-actions"><Button size="sm" kind="secondary" onClick={()=>void refresh()}>목록 새로고침</Button></div>
+    {jobs.length===0?<p className="setting-note">등록된 작업이 없습니다.</p>:<div className="job-list">{jobs.slice().reverse().map(j=><div className="job-row" key={j.jobId}><div><strong>{j.kind}</strong> <Tag tone={j.state==='completed'?'success':j.state==='failed'?'warning':'muted'}>{label[j.state]||j.state}</Tag><small>{j.jobId.slice(0,8)} · {j.projectId.slice(0,8)}</small>{j.errorMessage&&<p className="setting-note">{j.errorMessage}</p>}</div>
+      <div className="ai-connect-actions">
+        {j.state==='failed'&&j.executable&&<Button size="sm" onClick={async()=>{await window.studio.gemini.jobs.retry(j.jobId);flash('실패 작업을 다시 대기열에 넣었습니다.','info');void refresh();}}>재시도</Button>}
+        {j.state==='needs_confirmation'&&<Button size="sm" kind="outline" onClick={async()=>{await window.studio.gemini.jobs.confirm(j.jobId);flash('사용자 확인 후 재전송 대기열에 넣었습니다.','info');void refresh();}}>확인 후 재전송</Button>}
+        {j.state==='needs_confirmation'&&j.sendConfirmed&&<Button size="sm" kind="secondary" onClick={async()=>{await window.studio.gemini.jobs.continue(j.jobId);flash('재전송 없이 응답 대기로 전환했습니다.','info');void refresh();}}>기다리기</Button>}
+        {j.state!=='completed'&&j.state!=='cancelled'&&<Button size="sm" kind="ghost" onClick={async()=>{await window.studio.gemini.jobs.cancel(j.jobId);flash('취소 요청을 보냈습니다. 외부 취소가 확인되지 않으면 완료로 표시하지 않습니다.','info');void refresh();}}>취소</Button>}
+      </div></div>)}</div>}
+  </Card>;
 }
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
@@ -188,6 +204,7 @@ function App(){
               </div>
               <p className="setting-note">Chrome 확장 프로그램과 Native Host가 설치·등록되어야 연결됩니다. 연결이 실패해도 기존 기능은 정상 작동합니다. 자동 입력은 실험적 구현이며 실환경 검증이 필요합니다.</p>
             </Card>
+            <JobQueueCard flash={flash}/>
             <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
             <Card><div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>브랜드 관리</h3><p>초기 GOMO 표시 → 향후 NUNI 변경을 위한 구조</p></div></div><div className="setting-line"><div><strong>제품군</strong><small>{BRAND.suiteKo}</small></div><Tag>{BRAND.companyMark}</Tag></div><div className="setting-line"><div><strong>제품</strong><small>{BRAND.productKo}</small></div></div><p className="setting-note">브랜드 표시 이름: src/shared/brand.ts · 테마: src/renderer/theme/ · 설치 표시 이름: package.json</p></Card>
           </div>

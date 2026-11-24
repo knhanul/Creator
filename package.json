@@ -2,7 +2,7 @@
   "name": "gomo-creation-studio",
   "private": true,
   "version": "0.1.0",
-  "description": "고모 미디어공방 — 고모 창작실 (AI 콘텐츠 기획 및 미디어 제작)",
+  "description": "\uace0\ubaa8 \ubbf8\ub514\uc5b4\uacf5\ubc29 \u2014 \uace0\ubaa8 \ucc3d\uc791\uc2e4 (AI \ucf58\ud150\uce20 \uae30\ud68d \ubc0f \ubbf8\ub514\uc5b4 \uc81c\uc791)",
   "main": "./out/main/index.js",
   "author": "GOMO Media Workshop",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node scripts/run-tests.mjs",
+    "test": "node scripts/run-tests.mjs && node scripts/test-job-queue.mjs",
     "dist:win": "npm run build && electron-builder --win nsis portable --x64",
     "dist:dir": "npm run build && electron-builder --dir",
     "native:register": "node native-host/register.mjs register",
@@ -37,7 +37,7 @@
   },
   "build": {
     "appId": "com.gomoworkshop.creator",
-    "productName": "고모 창작실",
+    "productName": "\uace0\ubaa8 \ucc3d\uc791\uc2e4",
     "directories": {
       "output": "release"
     },

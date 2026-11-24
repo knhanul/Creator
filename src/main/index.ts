@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
 import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
+import { GeminiJobQueue } from './gemini/job-queue.mjs';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
 let win:BrowserWindow|null=null;
@@ -23,7 +24,14 @@ function registerHandlers(){
   ipcMain.handle('gemini:status',async()=>geminiAdapter.getStatus());
   ipcMain.handle('gemini:ping',async()=>geminiAdapter.ping());
   ipcMain.handle('gemini:submit',async(_event,job)=>geminiAdapter.submitPrompt(job));
+  ipcMain.handle('gemini:jobs:list',async()=>jobQueue.list());
+  ipcMain.handle('gemini:jobs:enqueue',async(_event,input)=>jobQueue.enqueue(input));
+  ipcMain.handle('gemini:jobs:retry',async(_event,jobId)=>jobQueue.retry(jobId));
+  ipcMain.handle('gemini:jobs:cancel',async(_event,jobId)=>jobQueue.cancel(jobId));
+  ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>jobQueue.confirmResend(jobId));
+  ipcMain.handle('gemini:jobs:continue',async(_event,jobId)=>jobQueue.continueWaiting(jobId));
 }
+let jobQueue: InstanceType<typeof GeminiJobQueue>;
 async function createWindow(){
   win=new BrowserWindow({width:1500,height:960,minWidth:1080,minHeight:720,show:false,title:BRAND.productKo,
     backgroundColor: '#F8FAFC', // Default light-blue; renderer applies stored theme before paint
@@ -38,6 +46,8 @@ app.whenReady().then(async()=>{
   // Fixed data namespace survives future visible rebranding.
   app.setPath('userData',join(app.getPath('appData'),INTERNAL.storageNamespace));
   await mkdir(app.getPath('userData'),{recursive:true});
+  jobQueue = new GeminiJobQueue(join(app.getPath('userData'), 'gemini-jobs.json'));
+  await jobQueue.load();
   protocol.handle('gomo-asset', async(req)=>{
     try {
       const url=new URL(req.url);if(url.hostname!=='media')return new Response('Not found',{status:404});

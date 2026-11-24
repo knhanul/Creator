@@ -225,3 +225,8 @@
 
 /* Gemini connection actions */
 .ai-connect-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+
+/* Job queue */
+.job-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.job-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--color-border); }
+.job-row small { display: block; color: var(--color-text-muted); margin-top: 4px; }

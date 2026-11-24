@@ -38,6 +38,15 @@ export interface GeminiStatus {
 export interface GeminiPingResult { ok: boolean; roundtripMs: number; message: string; }
 export interface GeminiJob { jobId: string; projectId: string; stage: string; prompt: string; sceneId?: string; }
 export interface GeminiJobResult { success: boolean; jobId: string; errorCode?: string; message?: string; }
+export type GeminiJobKind = 'analysis' | 'storyboard' | 'prompt' | 'editplan' | 'image' | 'video' | 'music';
+export type GeminiJobState = 'queued' | 'dispatching' | 'waiting' | 'completed' | 'failed' | 'needs_confirmation' | 'cancelled' | 'cancelling';
+export interface GeminiJobRecord {
+  jobId: string; requestId: string; projectId: string; sceneId?: string; kind: GeminiJobKind;
+  executable: boolean; prompt: string; state: GeminiJobState; createdAt: string; updatedAt: string;
+  errorCode?: string; errorMessage?: string; resultText?: string; sendConfirmed: boolean;
+  cancelRequested: boolean; externalCancelConfirmed: boolean;
+}
+export interface GeminiEnqueueInput { projectId: string; kind: GeminiJobKind; prompt: string; sceneId?: string; }
 export type StudioAPI = {
   app: { info(): Promise<AppInfo>; openFolder(projectId: string): Promise<OperationResult>; };
   projects: {
@@ -54,5 +63,13 @@ export type StudioAPI = {
     status(): Promise<GeminiStatus>;
     ping(): Promise<GeminiPingResult>;
     submit(job: GeminiJob): Promise<GeminiJobResult>;
+    jobs: {
+      list(): Promise<GeminiJobRecord[]>;
+      enqueue(input: GeminiEnqueueInput): Promise<GeminiJobRecord>;
+      retry(jobId: string): Promise<GeminiJobRecord | null>;
+      cancel(jobId: string): Promise<GeminiJobRecord | null>;
+      confirm(jobId: string): Promise<GeminiJobRecord | null>;
+      continue(jobId: string): Promise<GeminiJobRecord | null>;
+    };
   };
 };

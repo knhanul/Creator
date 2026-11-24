@@ -8,7 +8,15 @@ const api:StudioAPI={
   gemini:{
     status:()=>ipcRenderer.invoke('gemini:status'),
     ping:()=>ipcRenderer.invoke('gemini:ping'),
-    submit:(job)=>ipcRenderer.invoke('gemini:submit',job)
+    submit:(job)=>ipcRenderer.invoke('gemini:submit',job),
+    jobs:{
+      list:()=>ipcRenderer.invoke('gemini:jobs:list'),
+      enqueue:(input)=>ipcRenderer.invoke('gemini:jobs:enqueue',input),
+      retry:(jobId)=>ipcRenderer.invoke('gemini:jobs:retry',jobId),
+      cancel:(jobId)=>ipcRenderer.invoke('gemini:jobs:cancel',jobId),
+      confirm:(jobId)=>ipcRenderer.invoke('gemini:jobs:confirm',jobId),
+      continue:(jobId)=>ipcRenderer.invoke('gemini:jobs:continue',jobId)
+    }
   }
 };
 contextBridge.exposeInMainWorld('studio',api);
