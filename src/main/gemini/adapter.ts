@@ -2,7 +2,7 @@
  * Gemini Provider Adapter — isolates all Gemini-specific logic.
  * Connection failures do not affect the rest of the app.
  */
-import { createMessage, makeRequestMarker, type MessageType, type ProtocolMessage, type SendState } from '../../shared/gemini-protocol';
+import { AUTOMATION_PROTOCOL, checkPeerVersions, classifySubmitResult, createMessage, makeRequestMarker, type MessageType, type PeerVersions, type ProtocolMessage, type SendState, type VersionIssue } from '../../shared/gemini-protocol';
 import { pipeClient } from './pipe-client';
 
 export type ProviderStatus = {
@@ -12,6 +12,10 @@ export type ProviderStatus = {
   geminiTabFound: boolean;
   loginState: 'unknown' | 'needed' | 'ready' | 'restricted';
   message: string;
+  /** 연결 확인 때 받은 각 구성 요소 버전 (앱 = AUTOMATION_PROTOCOL) */
+  versions?: PeerVersions & { app: number };
+  /** 이전 버전 구성 요소가 있으면 무엇을 갱신해야 하는지. 있으면 전송하지 않음 */
+  versionIssue?: VersionIssue | null;
 };
 
 export interface PromptJob {
@@ -68,27 +72,38 @@ export class GeminiAdapter {
           message: 'Native Host에 연결되지 않았습니다. 연결 설정을 확인해 주세요.'
         };
       }
-      // Request status from extension
+      // 1) Host 버전 (Host가 직접 답함. 이전 Host는 이 요청을 Chrome으로 넘기고 아무도 답하지 않음)
+      const hostRes = await this.request(createMessage('HOST_INFO_REQUEST', {}), 1500, ['HOST_INFO_RESULT']);
+      const host = hostRes?.type === 'HOST_INFO_RESULT' ? { protocol: Number(hostRes.payload.protocol) || 0, version: String(hostRes.payload.version || '') } : null;
+      // 2) 확장(백그라운드)·Gemini 탭(content script) 버전과 탭 상태
       const req = createMessage('GEMINI_STATUS_REQUEST', {});
       const result = await this.request(req, 5000, ['GEMINI_STATUS_RESULT']);
       if (result?.type === 'GEMINI_STATUS_RESULT') {
-        const p = result.payload as { tabs?: unknown[]; loginState?: string };
+        const p = result.payload;
+        const versions = { app: AUTOMATION_PROTOCOL, host, extension: p.extension ?? null, content: p.content ?? null };
+        const versionIssue = checkPeerVersions(versions);
+        const tabs = Array.isArray(p.tabs) && p.tabs.length > 0;
         return {
           connected: true,
           hostRegistered: true,
           extensionConnected: true,
-          geminiTabFound: Array.isArray(p.tabs) && p.tabs.length > 0,
+          geminiTabFound: tabs,
           loginState: (p.loginState as ProviderStatus['loginState']) || 'unknown',
-          message: Array.isArray(p.tabs) && p.tabs.length ? 'Gemini 탭이 감지되었습니다.' : 'Gemini 탭을 찾을 수 없습니다.'
+          message: versionIssue ? versionIssue.message : (tabs ? 'Gemini 탭이 감지되었습니다.' : 'Gemini 탭을 찾을 수 없습니다.'),
+          versions, versionIssue
         };
       }
+      const versions = { app: AUTOMATION_PROTOCOL, host, extension: null, content: null };
+      // 확장 응답이 없을 때도 Host가 이전 버전이면 그게 먼저 고칠 일
+      const hostIssue = host && host.protocol >= AUTOMATION_PROTOCOL ? null : checkPeerVersions(versions);
       return {
         connected: true,
         hostRegistered: true,
         extensionConnected: false,
         geminiTabFound: false,
         loginState: 'unknown',
-        message: '확장 프로그램 응답이 없습니다.'
+        message: hostIssue ? hostIssue.message : '확장 프로그램 응답이 없습니다.',
+        versions, versionIssue: hostIssue
       };
     } catch (e) {
       return {
@@ -132,8 +147,15 @@ export class GeminiAdapter {
       const res = await this.request(req, SUBMIT_TIMEOUT_MS, ['PROMPT_SUBMIT_RESULT'], () => { sent = true; });
       if (res?.type === 'PROMPT_SUBMIT_RESULT') {
         const p = res.payload as JobResult & { sendState?: SendState };
-        if (p.jobId && p.jobId !== job.jobId) {
-          return { success: false, uncertain: true, jobId: job.jobId, errorCode: 'MISMATCHED_RESULT', message: '다른 작업의 전송 결과가 도착했습니다. 전송 여부 불명.' };
+        const kind = classifySubmitResult(res, job);
+        if (kind.kind === 'mismatch') {
+          return { success: false, uncertain: true, sendState: 'uncertain', needsUser: true, jobId: job.jobId, errorCode: 'MISMATCHED_RESULT', message: '다른 작업의 전송 결과가 도착했습니다. 전송 여부 불명.' };
+        }
+        if (kind.kind === 'outdated') {
+          // 이전 버전 확장이 중계한 결과: "성공"이라도 믿지 않음. 명시적 not_sent가 아니면 사용자 확인(자동 재전송 금지)
+          return kind.sendState === 'not_sent'
+            ? { success: false, sendState: 'not_sent', needsUser: true, jobId: job.jobId, errorCode: 'EXTENSION_OUTDATED', message: p.message || 'Chrome 확장 프로그램이 이전 버전입니다. 전송하지 않았습니다.' }
+            : { success: false, uncertain: true, sendState: 'uncertain', needsUser: true, jobId: job.jobId, errorCode: 'EXTENSION_OUTDATED_UNCERTAIN', message: '이전 버전 확장 프로그램이 응답했습니다. Gemini에 입력·전송되었을 수 있습니다(전송 여부 불명). 자동 재전송하지 않습니다.' };
         }
         const sendState: SendState = p.sendState || (p.success ? 'sent' : 'not_sent');
         return {

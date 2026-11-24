@@ -12,7 +12,12 @@ import { homedir } from 'node:os';
 import { StringDecoder } from 'node:string_decoder';
 
 const HOST_NAME = 'com.gomo.create';
-const PIPE_NAME = process.platform === 'win32' ? `\\\\.\\pipe\\${HOST_NAME}` : `/tmp/${HOST_NAME}.sock`;
+/** 자동화 프로토콜 수준 (src/shared/gemini-protocol.ts AUTOMATION_PROTOCOL과 같아야 함) */
+const HOST_PROTOCOL = 2;
+const HOST_VERSION = '0.2.1';
+const STARTED_AT = new Date().toISOString();
+// GOMO_CREATE_PIPE: 테스트에서만 사용(기본 경로는 그대로)
+const PIPE_NAME = process.env.GOMO_CREATE_PIPE || (process.platform === 'win32' ? `\\\\.\\pipe\\${HOST_NAME}` : `/tmp/${HOST_NAME}.sock`);
 const LOG_DIR = join(homedir(), '.gomo-create');
 const LOG_FILE = join(LOG_DIR, 'native-host.log');
 
@@ -60,7 +65,7 @@ function connectToElectron() {
     sock.on('connect', () => {
       electronSocket = sock;
       debug('Connected to Electron pipe');
-      sock.write(JSON.stringify({ type: 'HOST_HELLO', from: 'native-host' }) + '\n');
+      sock.write(JSON.stringify({ type: 'HOST_HELLO', from: 'native-host', protocol: HOST_PROTOCOL, version: HOST_VERSION }) + '\n');
     });
     // 큰 프롬프트는 여러 data 청크로 나뉘어 올 수 있으므로 줄 단위로 버퍼링합니다.
     let pending = '';
@@ -71,7 +76,17 @@ function connectToElectron() {
       pending = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
-        try { sendToChrome(JSON.parse(line)); } catch (e) { debug('Bad line from Electron:', e.message); }
+        let msg;
+        try { msg = JSON.parse(line); } catch (e) { debug('Bad line from Electron:', e.message); continue; }
+        if (msg && msg.type === 'HOST_INFO_REQUEST') {
+          // 앱의 연결 확인(버전 확인)에 Host가 직접 답함 — Chrome으로 넘기지 않음
+          sock.write(JSON.stringify({
+            protocolVersion: 1, requestId: msg.requestId, type: 'HOST_INFO_RESULT', timestamp: new Date().toISOString(),
+            payload: { protocol: HOST_PROTOCOL, version: HOST_VERSION, script: import.meta.url, node: process.version, pid: process.pid, startedAt: STARTED_AT }
+          }) + '\n');
+          continue;
+        }
+        sendToChrome(msg);
       }
     });
     sock.on('error', (err) => {

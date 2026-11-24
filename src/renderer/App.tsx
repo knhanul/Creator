@@ -11,7 +11,7 @@ import {
 import {BRAND} from '../shared/brand';
 import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
 import {makeAIPrompt} from '../shared/prompts';
-import {PHASE_LABEL,phaseView} from '../shared/gemini-analysis';
+import {ERROR_GUIDE,PHASE_LABEL,phaseView} from '../shared/gemini-analysis';
 import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDialog} from './components/AIDialog';
@@ -214,7 +214,17 @@ function App(){
                 <Button size="sm" kind="secondary" onClick={async () => {
                   try {
                     const s = await window.studio.gemini.status();
-                    flash(s.message, s.connected ? 'success' : 'info');
+                    const v = s.versions;
+                    const contentLabel: Record<string, string> = { ok: '최신', outdated: '이전 버전', none: '아직 없음(전송 때 자동 주입)', unknown: '확인 못 함' };
+                    const lines = v ? [
+                      `앱 프로토콜 ${v.app}`,
+                      `Native Host: ${v.host ? `${v.host.version} (프로토콜 ${v.host.protocol})` : '응답 없음 → 이전 버전'}`,
+                      `Chrome 확장: ${v.extension ? `${v.extension.version} (프로토콜 ${v.extension.protocol})` : (s.extensionConnected ? '버전 보고 없음 → 이전 버전' : '응답 없음')}`,
+                      `Gemini 탭 스크립트: ${v.content ? contentLabel[v.content.state] || v.content.state : '확인 못 함'}`
+                    ] : [];
+                    const g = s.versionIssue ? ERROR_GUIDE[s.versionIssue.code] : undefined;
+                    setProbe([s.message, ...lines, ...(g ? ['', '해결 방법: ' + g.fix] : [])].join('\n'));
+                    flash(s.message, s.versionIssue ? 'error' : s.connected ? 'success' : 'info');
                   } catch (e) { flash(String(e), 'error'); }
                 }}>연결 상태 확인</Button>
                 <Button size="sm" kind="outline" onClick={async () => {
@@ -230,7 +240,7 @@ function App(){
                 }}>선택자 진단 (전송 없음)</Button>
                 <Button size="sm" kind="ghost" onClick={() => window.open('https://gemini.google.com/', '_blank')}>Gemini 열기</Button>
               </div>
-              {probe&&<details className="automation-details" open><summary>선택자 진단 결과</summary><div className="details-actions"><Button size="sm" kind="secondary" onClick={()=>void copy(probe)}><Copy size={14}/> 복사</Button></div><pre>{probe}</pre></details>}
+              {probe&&<details className="automation-details" open><summary>연결·진단 결과</summary><div className="details-actions"><Button size="sm" kind="secondary" onClick={()=>void copy(probe)}><Copy size={14}/> 복사</Button></div><pre>{probe}</pre></details>}
               <p className="setting-note">Chrome 확장 프로그램과 Native Host가 설치·등록되어야 연결됩니다. 연결이 실패해도 기존 기능은 정상 작동합니다. 기획 분석 자동 전송은 실제 Gemini 화면에서의 확인이 필요합니다. 먼저 「선택자 진단」으로 입력창·전송 버튼이 인식되는지 확인하세요.</p>
             </Card>
             <JobQueueCard flash={flash}/>

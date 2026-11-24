@@ -4,6 +4,8 @@
  */
 const HOST_NAME = 'com.gomo.create';
 const PROTOCOL_VERSION = 1;
+/** 자동화 프로토콜 수준 — 이 파일 자체에 박혀 있으므로 서비스 워커가 실제로 새 코드로 돌고 있는지 앱이 확인할 수 있음 */
+const AUTOMATION_PROTOCOL = 2;
 const CONTENT_FILES = ['gemini-selectors.js', 'gemini-dom.js', 'content.js'];
 const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
@@ -26,7 +28,7 @@ function connect() {
         setTimeout(connect, 2000);
       }
     });
-    sendToHost({ type: 'HELLO', payload: { client: 'extension', version: chrome.runtime.getManifest().version } });
+    sendToHost({ type: 'HELLO', payload: { client: 'extension', version: chrome.runtime.getManifest().version, protocol: AUTOMATION_PROTOCOL } });
   } catch (e) {
     console.error('connectNative failed:', e);
   }
@@ -92,12 +94,15 @@ async function deliver(tabId, message) {
 async function handleSubmit(msg) {
   const base = { requestId: msg.requestId, jobId: msg.payload?.jobId || msg.jobId, projectId: msg.payload?.projectId || msg.projectId };
   const reply = (payload) => sendToHost(envelope('PROMPT_SUBMIT_RESULT', base, { jobId: base.jobId, ...payload }));
+  if (!base.jobId || !base.requestId || !base.projectId) {
+    return reply({ success: false, sendState: 'not_sent', errorCode: 'BAD_REQUEST', needsUser: true, message: '앱이 보낸 요청에 jobId/requestId/projectId가 없습니다(앱이 이전 버전일 수 있음). 전송하지 않았습니다.' });
+  }
   const tab = await pickGeminiTab();
   if (!tab?.id) return reply({ success: false, sendState: 'not_sent', errorCode: 'NO_TAB', needsUser: true, message: 'Gemini 탭을 찾을 수 없습니다.' });
   // 사용자가 전송 내용을 바로 볼 수 있도록 Gemini 탭을 앞으로 가져옵니다(백그라운드 탭 타이머 제한도 피함).
   try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* ignore */ }
   const r = await deliver(tab.id, {
-    type: 'SUBMIT_PROMPT', prompt: msg.payload?.prompt, marker: msg.payload?.marker,
+    type: 'SUBMIT_PROMPT', protocol: AUTOMATION_PROTOCOL, prompt: msg.payload?.prompt, marker: msg.payload?.marker,
     jobId: base.jobId, requestId: base.requestId, projectId: base.projectId
   });
   const tabInfo = { id: tab.id, title: tab.title || '', url: tab.url || '' };
@@ -150,7 +155,7 @@ function onNativeMessage(msg) {
     return;
   }
   if (msg.type === 'GEMINI_STATUS_REQUEST') {
-    queryGeminiTabs().then(result => sendToHost({
+    statusWithVersions().then(result => sendToHost({
       protocolVersion: 1,
       requestId: msg.requestId,
       type: 'GEMINI_STATUS_RESULT',
@@ -178,6 +183,36 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     sendToHost(envelope('ERROR', base, { code: msg.errorCode || 'UNKNOWN', message: msg.message || '', recoverable: true, needsUser: !!msg.needsUser, jobId: msg.jobId, partialText: msg.partialText || '' }));
   }
 });
+
+/** 선택될 Gemini 탭의 content script 버전 확인. 주입하지 않음(읽기 전용). */
+function pingContent(tabId, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let done = false;
+    const t = setTimeout(() => { if (!done) { done = true; resolve({ state: 'unknown', error: 'timeout' }); } }, timeoutMs);
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'PING_CONTENT' }, (response) => {
+        if (done) return;
+        done = true; clearTimeout(t);
+        const err = chrome.runtime.lastError;
+        if (err) return resolve(NO_RECEIVER.test(err.message || '') ? { state: 'none' } : { state: 'unknown', error: err.message || String(err) });
+        if (!response) return resolve({ state: 'unknown', error: 'empty' });
+        // 0.1.x content script는 protocol 없이 { ok, hasInput }만 답함
+        if (!(Number(response.protocol) >= AUTOMATION_PROTOCOL)) return resolve({ state: 'outdated', protocol: response.protocol });
+        resolve({ state: 'ok', protocol: response.protocol });
+      });
+    } catch (e) { done = true; clearTimeout(t); resolve({ state: 'unknown', error: String(e?.message || e) }); }
+  });
+}
+
+async function statusWithVersions() {
+  const result = await queryGeminiTabs();
+  result.extension = { protocol: AUTOMATION_PROTOCOL, version: chrome.runtime.getManifest().version };
+  try {
+    const tab = await pickGeminiTab();
+    result.content = tab?.id ? await pingContent(tab.id) : { state: 'none' };
+  } catch (e) { result.content = { state: 'unknown', error: String(e?.message || e) }; }
+  return result;
+}
 
 async function queryGeminiTabs() {
   return new Promise((resolve) => {

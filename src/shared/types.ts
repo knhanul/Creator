@@ -34,6 +34,14 @@ export interface GeminiStatus {
   geminiTabFound: boolean;
   loginState: 'unknown' | 'needed' | 'ready' | 'restricted';
   message: string;
+  /** 연결 확인 때 받은 구성 요소별 자동화 프로토콜 (null = 보고 안 함 → 이전 버전) */
+  versions?: {
+    app: number;
+    host?: { protocol: number; version: string } | null;
+    extension?: { protocol: number; version: string } | null;
+    content?: { state: 'ok' | 'outdated' | 'none' | 'unknown'; protocol?: number } | null;
+  };
+  versionIssue?: { code: string; message: string } | null;
 }
 export interface GeminiPingResult { ok: boolean; roundtripMs: number; message: string; }
 export interface GeminiJob { jobId: string; projectId: string; stage: string; prompt: string; sceneId?: string; }

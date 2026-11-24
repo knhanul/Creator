@@ -7,6 +7,8 @@
   if (window.__gomoGeminiContentLoaded) return; // scripting 재주입 시 중복 방지
   window.__gomoGeminiContentLoaded = true;
 
+  /** 자동화 프로토콜 수준 (background.js·앱과 같아야 함) */
+  const CONTENT_PROTOCOL = 2;
   const dom = window.GomoGeminiDom.createGeminiDom({ doc: document, win: window });
   let active = null; // { jobId, requestId, projectId }
 
@@ -17,11 +19,16 @@
   }
 
   async function handleSubmit(msg) {
+    // 0.1.x 백그라운드(서비스 워커)는 protocol·requestId·projectId 없이 보냄 → 입력창을 건드리기 전에 중단
+    if (!(Number(msg.protocol) >= CONTENT_PROTOCOL) || !msg.jobId || !msg.requestId || !msg.projectId) {
+      return {
+        success: false, sendState: 'not_sent', errorCode: 'EXTENSION_OUTDATED', needsUser: true, contentProtocol: CONTENT_PROTOCOL,
+        message: 'Chrome 확장 프로그램 백그라운드가 이전 버전으로 실행 중입니다(요청에 protocol/requestId/projectId 없음). Gemini에 입력·전송하지 않았습니다.',
+        ...ids(msg)
+      };
+    }
     if (active) {
       return { success: false, sendState: 'not_sent', errorCode: 'EXTENSION_BUSY', needsUser: true, message: '이 Gemini 탭에서 다른 GOMO 요청을 처리 중입니다.', ...ids(msg) };
-    }
-    if (!msg.jobId || !msg.requestId || !msg.projectId) {
-      return { success: false, sendState: 'not_sent', errorCode: 'BAD_REQUEST', message: 'jobId/requestId/projectId 누락', ...ids(msg) };
     }
     active = ids(msg);
     let res;
@@ -58,7 +65,7 @@
     }
     if (msg.type === 'PING_CONTENT') {
       const p = dom.probe();
-      sendResponse({ ok: true, hasInput: !!p.summary.composer, active });
+      sendResponse({ ok: true, protocol: CONTENT_PROTOCOL, hasInput: !!p.summary.composer, active });
       return true;
     }
   });

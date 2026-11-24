@@ -4,6 +4,12 @@
  */
 export const PROTOCOL_VERSION = 1 as const;
 export const NATIVE_HOST_NAME = 'com.gomo.create';
+/**
+ * 자동화 기능 수준(봉투 형식 PROTOCOL_VERSION과 별개). 연결 확인 때 Host·확장(백그라운드)·Gemini 탭(content script)이
+ * 각자 자기 값을 보고합니다. 이 값보다 낮거나 보고하지 않는 쪽은 "이전 버전"으로 보고 전송하지 않습니다.
+ * 2 = jobId·requestId·projectId를 끝까지 전달·회신하는 첫 버전 (확장 0.2.x)
+ */
+export const AUTOMATION_PROTOCOL = 2 as const;
 
 export type MessageType =
   | 'HELLO'
@@ -21,6 +27,8 @@ export type MessageType =
   | 'RESULT_QUERY_REQUEST'
   | 'SELECTOR_PROBE_REQUEST'
   | 'SELECTOR_PROBE_RESULT'
+  | 'HOST_INFO_REQUEST'
+  | 'HOST_INFO_RESULT'
   | 'ERROR';
 
 export interface BaseMessage {
@@ -74,7 +82,21 @@ export interface GeminiStatusResult extends BaseMessage {
     loginState: 'unknown' | 'needed' | 'ready' | 'restricted';
     adapterReady: boolean;
     experimental: boolean;
+    /** 0.2.1+ 백그라운드만 보고. 없으면 이전 버전 확장(서비스 워커) */
+    extension?: { protocol: number; version: string };
+    /** 선택된 Gemini 탭의 content script 상태 (0.2.1+). none = 아직 없음(전송 때 주입), outdated = 이전 버전이 남아 있음 */
+    content?: { state: 'ok' | 'outdated' | 'none' | 'unknown'; protocol?: number; error?: string };
   };
+}
+
+/** Electron → Native Host: Host가 직접 답함(Chrome으로 넘기지 않음). 이전 Host는 답하지 않음 */
+export interface HostInfoRequest extends BaseMessage {
+  type: 'HOST_INFO_REQUEST';
+  payload: Record<string, never>;
+}
+export interface HostInfoResult extends BaseMessage {
+  type: 'HOST_INFO_RESULT';
+  payload: { protocol: number; version: string; script?: string; node?: string; pid?: number; startedAt?: string };
 }
 
 /**
@@ -143,7 +165,9 @@ export type ProtocolMessage =
   | ErrorMessage
   | ResultQueryRequest
   | SelectorProbeRequest
-  | SelectorProbeResult;
+  | SelectorProbeResult
+  | HostInfoRequest
+  | HostInfoResult;
 
 export function createMessage<T extends ProtocolMessage>(
   type: T['type'],
@@ -179,4 +203,41 @@ export function matchesJob(
   const p = (msg.payload && typeof msg.payload === 'object' ? msg.payload : {}) as { jobId?: string };
   const jobId = msg.jobId || p.jobId;
   return jobId === job.jobId && msg.requestId === job.requestId && msg.projectId === job.projectId;
+}
+
+/** 연결 확인 때 모은 각 구성 요소의 버전 정보. undefined = 보고하지 않음(이전 버전) */
+export interface PeerVersions {
+  host?: { protocol: number; version: string } | null;
+  extension?: { protocol: number; version: string } | null;
+  content?: { state: 'ok' | 'outdated' | 'none' | 'unknown'; protocol?: number } | null;
+}
+export interface VersionIssue { code: 'HOST_OUTDATED' | 'EXTENSION_OUTDATED' | 'CONTENT_OUTDATED'; message: string }
+
+/** 구성 요소 중 이전 버전이 있으면 무엇을 갱신해야 하는지 알려 줌. 없으면 null */
+export function checkPeerVersions(v: PeerVersions): VersionIssue | null {
+  if (!v.host || !(v.host.protocol >= AUTOMATION_PROTOCOL)) {
+    return { code: 'HOST_OUTDATED', message: `Native Host가 이전 버전입니다(보고된 프로토콜: ${v.host?.protocol ?? '없음'}, 필요: ${AUTOMATION_PROTOCOL}).` };
+  }
+  if (!v.extension || !(v.extension.protocol >= AUTOMATION_PROTOCOL)) {
+    return { code: 'EXTENSION_OUTDATED', message: `Chrome 확장 프로그램이 이전 버전으로 실행 중입니다(보고된 프로토콜: ${v.extension?.protocol ?? '없음'}, 필요: ${AUTOMATION_PROTOCOL}).` };
+  }
+  if (v.content && (v.content.state === 'outdated' || (v.content.state === 'ok' && !(Number(v.content.protocol) >= AUTOMATION_PROTOCOL)))) {
+    return { code: 'CONTENT_OUTDATED', message: 'Gemini 탭에 이전 버전의 확장 스크립트가 남아 있습니다.' };
+  }
+  return null;
+}
+
+/**
+ * PROMPT_SUBMIT_RESULT 해석. 0.2.x 백그라운드는 봉투에 jobId·projectId를 항상 되돌려 줍니다.
+ * 봉투에 둘 중 하나라도 없으면 이전 버전 확장이 중계한 결과 → 성공이라고 말해도 믿지 않고,
+ * content script가 명시적으로 not_sent라고 한 경우가 아니면 '전송 여부 불명'(사용자 확인, 자동 재전송 금지).
+ */
+export function classifySubmitResult(
+  res: { jobId?: string; projectId?: string; payload?: unknown },
+  job: { jobId: string; projectId: string }
+): { kind: 'ok' } | { kind: 'mismatch' } | { kind: 'outdated'; sendState: SendState } {
+  const p = (res.payload && typeof res.payload === 'object' ? res.payload : {}) as { jobId?: string; sendState?: SendState };
+  if ((res.jobId && res.jobId !== job.jobId) || (res.projectId && res.projectId !== job.projectId) || (p.jobId && p.jobId !== job.jobId)) return { kind: 'mismatch' };
+  if (!res.jobId || !res.projectId) return { kind: 'outdated', sendState: p.sendState === 'not_sent' ? 'not_sent' : 'uncertain' };
+  return { kind: 'ok' };
 }
