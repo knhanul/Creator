@@ -56,7 +56,7 @@ export interface QueueLike {
 export interface AdapterLike {
   getStatus(): Promise<ProviderStatus>;
   submitPrompt(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage: string; prompt: string }): Promise<JobResult>;
-  requestResult(job: { jobId: string; requestId: string; projectId: string; sceneId?: string }): Promise<{ ok: boolean; message: string }>;
+  requestResult(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage?: string }): Promise<{ ok: boolean; message: string }>;
 }
 export interface AnalysisServiceDeps {
   queue: QueueLike;
@@ -577,7 +577,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       return { success: true, message: '이미 응답을 받았습니다.' };
     }
     if (job.state !== 'needs_confirmation' && job.state !== 'waiting') return { success: false, message: '응답을 다시 받을 수 있는 상태가 아닙니다.' };
-    const r = await adapter.requestResult({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, ...(job.sceneId ? { sceneId: job.sceneId } : {}) });
+    const r = await adapter.requestResult({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, ...(job.sceneId ? { sceneId: job.sceneId } : {}), stage: job.kind });
     return { success: r.ok, message: r.message };
   }
 

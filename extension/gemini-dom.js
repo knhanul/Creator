@@ -1000,6 +1000,78 @@
     function watchVideo(ctx, onProgress) { return watchMedia(ctx, 'video', onProgress); }
     function watchMusic(ctx, onProgress) { return watchMedia(ctx, 'music', onProgress); }
 
+    /**
+     * 재전송 없이, 이미 대화에 있는 생성 미디어를 다시 찾아 받는다.
+     *  - 쓰는 곳: Gemini가 '다운로드됨'만 띄우고 파일이 오지 않을 때 탭을 새로고침한 뒤 다시 받기, 앱의 「다시 가져오기」
+     *  - marker가 있으면 그 표식이 들어간 질문 바로 뒤 응답만 본다(다른 장면 이미지를 잘못 가져오지 않게)
+     *  - allowLatest: 표식 질문을 못 찾으면 가장 최근 미디어 응답을 쓴다(같은 탭에서 방금 끝난 작업의 재시도일 때만)
+     *  - 프롬프트는 절대 입력·전송하지 않는다
+     */
+    async function collectMedia(params) {
+      const p = params || {};
+      const stage = p.stage === 'video' || p.stage === 'music' ? p.stage : 'image';
+      const kind = stage === 'music' ? 'music' : stage;
+      const timeoutMs = Number(p.timeoutMs) > 0 ? Number(p.timeoutMs) : (timing.recollectTimeoutMs || 20000);
+      const start = now();
+      let lastMissing = null;
+      for (;;) {
+        const all = findAll('modelResponse').els;
+        let candidates = [];
+        let isolation = 'latest';
+        const q = p.marker ? markerQuery(p.marker, null) : null;
+        if (q) {
+          const after = all.filter((r) => q.compareDocumentPosition(r) & 4 /* FOLLOWING */);
+          candidates = after.length ? [after[0]] : [];
+          isolation = 'marker';
+        } else if (!p.marker || p.allowLatest) {
+          candidates = all.slice().reverse();
+        }
+        for (const el of candidates) {
+          if (find('imageGenerating', el) || findStop()) continue; // 아직 만드는 중
+          const ex = extract(el);
+          if (kind === 'image') {
+            const imgs = findGeneratedImages(el);
+            const hasContainer = !!find('imageContainer', el);
+            if (!imgs.length && !hasContainer) continue;
+            const picked = imgs[0] || null;
+            const extracted = picked ? await extractImageData(picked.el, picked.src) : { imageDataUrl: undefined, imageUrl: '', mimeType: 'image/png', method: 'container-only' };
+            const dlBtn = findImageDownloadButton(el, picked && picked.el);
+            const base = { ok: true, text: ex.text, codeBlocks: ex.codeBlocks, isolation, imageUrl: extracted.imageUrl, mimeType: extracted.mimeType, recollected: true };
+            if (extracted.imageDataUrl && (!dlBtn || extracted.imageDataUrl.length <= 750 * 1024)) {
+              return { ...base, imageDataUrl: extracted.imageDataUrl, imageMethod: extracted.method, downloadClicked: false };
+            }
+            if (dlBtn && dlBtn.el) {
+              try { dlBtn.el.click(); return { ...base, imageMethod: 'download-button', downloadClicked: true, downloadButtonSelector: dlBtn.selector }; } catch { /* 아래 */ }
+            }
+            if (extracted.imageDataUrl) return { ...base, imageDataUrl: extracted.imageDataUrl, imageMethod: extracted.method, downloadClicked: false };
+            lastMissing = { ...base, imageMethod: 'manual-needed', downloadClicked: false, downloadButtonMissing: true };
+          } else {
+            const medias = findGeneratedMedia(el, kind);
+            const hasContainer = !!find(kind === 'video' ? 'videoContainer' : 'audioContainer', el);
+            if (!medias.length && !hasContainer) continue;
+            const picked = medias[0] || null;
+            const extracted = picked ? await extractMediaData(picked.src, kind) : { mediaDataUrl: undefined, mediaUrl: '', mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg', method: 'container-only' };
+            const dlBtn = findMediaDownloadButton(el, picked && picked.el);
+            const base = { ok: true, text: ex.text, codeBlocks: ex.codeBlocks, isolation, mediaUrl: extracted.mediaUrl, mimeType: extracted.mimeType, recollected: true };
+            if (extracted.mediaDataUrl && (!dlBtn || extracted.mediaDataUrl.length <= 750 * 1024)) {
+              return { ...base, mediaDataUrl: extracted.mediaDataUrl, mediaMethod: extracted.method, downloadClicked: false };
+            }
+            if (dlBtn && dlBtn.el) {
+              try { dlBtn.el.click(); return { ...base, mediaMethod: 'download-button', downloadClicked: true, downloadButtonSelector: dlBtn.selector }; } catch { /* 아래 */ }
+            }
+            if (extracted.mediaDataUrl) return { ...base, mediaDataUrl: extracted.mediaDataUrl, mediaMethod: extracted.method, downloadClicked: false };
+            lastMissing = { ...base, mediaMethod: 'manual-needed', downloadClicked: false, downloadButtonMissing: true };
+          }
+          break; // 표식 응답(또는 가장 최근 미디어 응답) 하나만 본다
+        }
+        if (now() - start >= timeoutMs) {
+          if (lastMissing) return lastMissing;
+          return { ok: false, errorCode: 'MEDIA_NOT_FOUND', needsUser: true, message: 'Gemini 대화에서 생성된 파일을 다시 찾지 못했습니다. Gemini에서 직접 받아 「가져와서 연결」을 눌러 주세요.' };
+        }
+        await sleep(Math.max(50, Math.min(timing.pollMs, 400)));
+      }
+    }
+
     /** 아무것도 입력·전송하지 않고 셀렉터 일치 현황만 보고 */
     function probe() {
       const groups = {};
@@ -1032,7 +1104,7 @@
       };
     }
 
-    return { submit, watch, watchImage, watchVideo, watchMusic, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
+    return { submit, watch, watchImage, watchVideo, watchMusic, collectMedia, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };

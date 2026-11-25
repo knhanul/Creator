@@ -15,6 +15,7 @@ const root = resolve(import.meta.dirname, '..');
 const { createAnalysisService } = loadTS(join(root, 'src/main/gemini/analysis-service.ts'));
 const { DEFAULT_BRIEF, makeProject, applyAIResponse } = loadTS(join(root, 'src/shared/workflow.ts'));
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
+const { bgmFileName, sceneAssetBase, versionedFileName } = loadTS(join(root, 'src/shared/asset-naming.ts'));
 const { getProjectBgmPrompt, makeVideoGenerationPrompt, makeMusicGenerationPrompt } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'gomo-phase5-media-'));
@@ -120,9 +121,10 @@ function makeEnv(tag) {
       throw new Error('미디어 데이터 없음');
     }
     const unique = randomUUID();
-    const prefix = kind === 'audio' ? 'bgm' : input.sceneId;
-    const name = `${prefix}_gemini_${unique.slice(0, 8)}.${ext}`;
-    const relative = `assets/${kind}/${unique}_${name}`;
+    // storage.ts와 같은 이름 규칙(S01_video.mp4 · BGM_01.mp3, 겹치면 _v2)
+    const taken = p.assets.filter(a => a.kind === kind).map(a => a.relativePath.split('/').pop());
+    const name = kind === 'audio' ? bgmFileName(ext, taken) : versionedFileName(sceneAssetBase(p.scenes[sceneIdx].id, sceneIdx, kind), ext, taken);
+    const relative = `assets/${kind}/${name}`;
     const projRoot = resolve(join(dir, projectId));
     const full = resolve(projRoot, relative);
     if (!full.startsWith(projRoot + sep)) throw new Error('프로젝트 외부 경로 차단');
@@ -237,6 +239,7 @@ await test('2. 장면 동영상 생성(video): 다운로드 경로 수신 → as
   assert.equal(proj.assets.length, 1);
   assert.equal(proj.assets[0].kind, 'video');
   assert.ok(proj.assets[0].relativePath.startsWith('assets/video/'));
+  assert.match(proj.assets[0].relativePath, /^assets\/video\/S01_video\.(mp4|webm|mov)$/);
   assert.equal(proj.scenes[0].assetId, proj.assets[0].id);
   assert.ok(existsSync(join(env.dir, env.p1.id, proj.assets[0].relativePath)));
 });
@@ -290,6 +293,7 @@ await test('3. 작품 배경음악 생성(music): assets/audio/ 저장, 장면�
   assert.equal(proj.assets.length, 1);
   assert.equal(proj.assets[0].kind, 'audio');
   assert.ok(proj.assets[0].relativePath.startsWith('assets/audio/'));
+  assert.match(proj.assets[0].name, /^BGM_01\.(mp3|wav|m4a|ogg|flac|aac)$/);
   // 장면 assetId에는 절대 연결하지 않음!
   assert.equal(proj.scenes[0].assetId, null);
   assert.equal(proj.scenes[1].assetId, null);

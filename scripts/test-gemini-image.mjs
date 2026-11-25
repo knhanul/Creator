@@ -15,6 +15,7 @@ const root = resolve(import.meta.dirname, '..');
 const { createAnalysisService } = loadTS(join(root, 'src/main/gemini/analysis-service.ts'));
 const { DEFAULT_BRIEF, makeProject } = loadTS(join(root, 'src/shared/workflow.ts'));
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
+const { sceneAssetBase, versionedFileName } = loadTS(join(root, 'src/shared/asset-naming.ts'));
 const { makeImageGenerationPrompt } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
 
 // 1x1 유효 PNG base64
@@ -146,8 +147,9 @@ function makeTestEnv(tag) {
       throw new Error('생성된 이미지 데이터가 없습니다.');
     }
     const unique = randomUUID();
-    const name = `${sceneId}_gemini_${unique.slice(0, 8)}.png`;
-    const relative = `assets/image/${unique}_${name}`;
+    const taken = p.assets.filter(a => a.kind === 'image').map(a => a.relativePath.split('/').pop());
+    const name = versionedFileName(sceneAssetBase(sceneId, sceneIdx, 'image'), 'png', taken);
+    const relative = `assets/image/${name}`;
     const projRoot = resolve(join(dir, projectId));
     const full = resolve(projRoot, relative);
     if (!full.startsWith(projRoot + sep)) throw new Error('프로젝트 외부 경로 차단');
@@ -241,6 +243,8 @@ await test('2. 장면 이미지 생성 시작 → 전송 → 이미지 응답 �
   assert.equal(savedProj.assets.length, 1);
   const asset = savedProj.assets[0];
   assert.equal(asset.kind, 'image');
+  assert.equal(asset.relativePath, 'assets/image/S01_image.png');
+  assert.equal(asset.name, 'S01_image.png');
   assert.equal(savedProj.scenes[0].assetId, asset.id);
   assert.equal(savedProj.scenes[0].status, 'complete');
   assert.ok(existsSync(join(env.dir, env.p1.id, asset.relativePath)));

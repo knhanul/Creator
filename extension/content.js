@@ -12,7 +12,7 @@
   const dom = window.GomoGeminiDom.createGeminiDom({ doc: document, win: window });
   let active = null; // { jobId, requestId, projectId }
 
-  const ids = (m) => ({ jobId: m.jobId, requestId: m.requestId, projectId: m.projectId, ...(m.sceneId ? { sceneId: m.sceneId } : {}), ...(m.stage ? { stage: m.stage } : {}) });
+  const ids = (m) => ({ jobId: m.jobId, requestId: m.requestId, projectId: m.projectId, ...(m.sceneId ? { sceneId: m.sceneId } : {}), ...(m.stage ? { stage: m.stage } : {}), ...(m.marker ? { marker: m.marker } : {}) });
   const strip = (r) => { const { ctx, ok, ...rest } = r; return rest; };
   function emit(kind, m, extra) {
     try { chrome.runtime.sendMessage(Object.assign({ type: 'GEMINI_EVENT', kind }, ids(m), extra || {})); } catch (e) { /* SW 재시작 중 */ }
@@ -87,6 +87,15 @@
     }
     if (msg.type === 'SELECTOR_PROBE') {
       try { sendResponse({ ok: true, report: dom.probe(), active }); } catch (e) { sendResponse({ ok: false, message: String(e) }); }
+      return true;
+    }
+    if (msg.type === 'COLLECT_MEDIA') {
+      // 재전송 없이 이미 생성된 미디어를 다시 받기(새로고침 뒤 다운로드 재시도 · 「다시 가져오기」)
+      if (active) { sendResponse({ ok: false, errorCode: 'EXTENSION_BUSY', needsUser: true, message: '이 Gemini 탭에서 다른 GOMO 요청을 처리 중입니다.' }); return true; }
+      typeof dom.collectMedia !== 'function'
+        ? sendResponse({ ok: false, errorCode: 'EXTENSION_OUTDATED', needsUser: true, message: '확장 프로그램을 새로고침해 주세요.' })
+        : dom.collectMedia({ stage: msg.stage, marker: msg.marker, allowLatest: !!msg.allowLatest, timeoutMs: msg.timeoutMs })
+          .then(sendResponse, (e) => sendResponse({ ok: false, errorCode: 'COLLECT_EXCEPTION', needsUser: true, message: String(e && e.message || e) }));
       return true;
     }
     if (msg.type === 'PING_CONTENT') {

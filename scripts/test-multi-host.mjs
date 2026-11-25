@@ -148,12 +148,12 @@ await test('2026-11-24 16:42 Windows 진단 재현: 카드 0.2.2인데 0.1.0 bac
 });
 
 await test('새 서비스 워커(gomo-sw.js)는 브라우저 시작 때도 Host를 1개만 띄움', async () => {
-  const ext = extensionInstance('extension/gomo-sw.js', { manifestVersion: '0.2.3', pipe, startup: true });
+  const ext = extensionInstance('extension/gomo-sw.js', { manifestVersion: '0.2.4', pipe, startup: true });
   await wait(2500);
   assert.equal(ext.hosts(), 1);
   const s = await geminiAdapter.getStatus();
   assert.equal(s.versionIssue, null, s.diagnosticText);
-  assert.match(s.diagnosticText, /빌드 0\.2\.3 파일 gomo-sw\.js/);
+  assert.match(s.diagnosticText, /빌드 0\.2\.4 파일 gomo-sw\.js/);
   ext.stop(); for (let i = 0; i < 100 && pipeClient.connections().hosts.length; i++) await wait(30);
 });
 

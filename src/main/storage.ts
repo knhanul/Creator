@@ -1,11 +1,13 @@
 import { app, dialog, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import { cp, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { AssetKind, Brief, StudioProject, ProjectSummary } from '../shared/types';
 import { isEmptyDraft, makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
 import { migrateProjectDocument } from '../shared/original-versioning';
 import { INTERNAL } from '../shared/brand';
+import { bgmFileName, sceneAssetBase, splitExt, versionedFileName } from '../shared/asset-naming';
 
 const projectRegex=/^[0-9a-f-]{36}$/i;
 const ensureId=(id:string)=> {if (!projectRegex.test(id)) throw Error('유효하지 않은 작품 ID입니다.');return id;};
@@ -83,16 +85,41 @@ function kindFromExtension(ext:string):AssetKind|null{
   if(['.mp4','.mov','.m4v','.webm','.mkv'].includes(e))return 'video';
   if(['.mp3','.wav','.m4a','.flac','.ogg','.aac'].includes(e))return 'audio';return null;
 }
+/** assets/<kind>/ 안에서 이미 쓰고 있는 파일 이름(디스크 + project.json 참조) */
+async function takenNames(p:StudioProject,kind:AssetKind):Promise<Set<string>>{
+  const names=new Set<string>();
+  for(const a of p.assets){const parts=a.relativePath.split(/[\\/]/);if(parts[1]===kind)names.add(parts.slice(2).join('/'));}
+  try{const { readdir }=await import('node:fs/promises');for(const f of await readdir(join(projectDir(p.id),'assets',kind)))names.add(f);}catch{/* 폴더 없음 */}
+  return names;
+}
+/** 겹치지 않는 이름을 골라 새 파일로 쓴다(덮어쓰기 없음: 'wx'). 동시에 같은 이름을 고르면 다음 번호로 다시 시도 */
+async function writeNewAssetFile(p:StudioProject,kind:AssetKind,pick:(taken:Set<string>)=>string,write:(destination:string)=>Promise<void>):Promise<{name:string;relative:string}>{
+  const taken=await takenNames(p,kind);
+  for(let attempt=0;attempt<50;attempt++){
+    const name=pick(taken);const relative=`assets/${kind}/${name}`;
+    const destination=resolveAssetPath(p.id,relative);await mkdir(dirname(destination),{recursive:true});
+    try{await write(destination);return {name,relative};}
+    catch(err){if((err as NodeJS.ErrnoException).code==='EEXIST'){taken.add(name);continue;}throw err;}
+  }
+  throw Error('저장할 파일 이름을 정하지 못했습니다.');
+}
 export async function importAssets(id:string,targetSceneId?:string):Promise<StudioProject|null>{
   const chosen=await dialog.showOpenDialog({title:'이미지·영상·음악 가져오기',properties:['openFile','multiSelections'],filters:[{name:'미디어 파일',extensions:['png','jpg','jpeg','webp','gif','bmp','mp4','mov','m4v','webm','mkv','mp3','wav','m4a','flac','ogg','aac']}]});
   if(chosen.canceled || !chosen.filePaths.length)return null;
   const p=await readProject(id);
+  const sceneIdx=targetSceneId?p.scenes.findIndex(sc=>sc.id===targetSceneId):-1;
+  // 장면에 연결할 파일(선택한 것 중 마지막 이미지·영상)만 S04_image.png 처럼 장면 이름을 붙이고, 나머지는 원래 이름 유지
+  const forScene=sceneIdx>=0?[...chosen.filePaths].reverse().find(f=>{const k=kindFromExtension(extname(f));return k==='image'||k==='video';}):undefined;
   let lastImportedForScene:string|null=null;
   for(const source of chosen.filePaths){const kind=kindFromExtension(extname(source));if(!kind)continue;
-    const unique=randomUUID();const name=basename(source);const relative=`assets/${kind}/${unique}_${safeName(name)}`;
-    const destination=resolveAssetPath(id,relative);await mkdir(dirname(destination),{recursive:true});await copyFile(source,destination);
-    const s=await stat(destination);p.assets.push({id:unique,kind,name,relativePath:relative,bytes:s.size,importedAt:new Date().toISOString()});
-    if(kind==='image'||kind==='video')lastImportedForScene=unique;
+    const unique=randomUUID();const original=basename(source);
+    const ext=extname(source).replace(/^\./,'').toLowerCase();
+    const pick=source===forScene
+      ?(taken:Set<string>)=>versionedFileName(sceneAssetBase(p.scenes[sceneIdx].id,sceneIdx,kind),ext,taken)
+      :(taken:Set<string>)=>{const {base,ext:e}=splitExt(safeName(original));return versionedFileName(base,e,taken);};
+    const {name,relative}=await writeNewAssetFile(p,kind,pick,async dest=>{await copyFile(source,dest,fsConstants.COPYFILE_EXCL);});
+    const s=await stat(resolveAssetPath(id,relative));p.assets.push({id:unique,kind,name,relativePath:relative,bytes:s.size,importedAt:new Date().toISOString()});
+    if(source===forScene)lastImportedForScene=unique;
   }
   if(targetSceneId&&lastImportedForScene){
     p.scenes=p.scenes.map(sc=>sc.id===targetSceneId?{...sc,assetId:lastImportedForScene,status:'complete' as const}:sc);
@@ -200,12 +227,13 @@ export async function saveGeneratedMediaAsset(
   }
 
   const unique = randomUUID();
-  const prefix = kind === 'audio' ? 'bgm' : safeName(input.sceneId || kind);
-  const name = `${prefix}_gemini_${unique.slice(0, 8)}.${ext}`;
-  const relative = `assets/${kind}/${unique}_${safeName(name)}`;
-  const destination = resolveAssetPath(projectId, relative);
-  await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, buffer);
+  // 다른 프로그램에서도 알아보도록: S04_image.png · S04_video.mp4 · BGM_01.mp3 (겹치면 _v2 — 기존 파일은 덮어쓰지 않음)
+  const { name, relative } = await writeNewAssetFile(
+    p,
+    kind,
+    (taken) => kind === 'audio' ? bgmFileName(ext, taken) : versionedFileName(sceneAssetBase(p.scenes[sceneIdx]?.id, sceneIdx, kind), ext, taken),
+    (destination) => writeFile(destination, buffer, { flag: 'wx' })
+  );
 
   const importedAt = new Date().toISOString();
   const asset: import('../shared/types').MediaAsset = {

@@ -70,3 +70,16 @@ test('기획 분석 단계: 화풍·연출 고르면 준비 완료',()=>{const g
 test('더빙 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
 
 console.log(`${checks} tests completed`);
+
+// ── 미디어 파일 이름 규칙 (다른 프로그램에서도 알아보게: 순서 + 종류, 무작위 문자 없음) ──
+{
+  const {sceneFileLabel,sceneAssetBase,versionedFileName,bgmFileName,splitExt}=loadTS(join(root,'src/shared/asset-naming.ts'));
+  test('장면 이미지·동영상 이름은 S04_image / S04_video',()=>{assert.equal(sceneAssetBase('S04',3,'image'),'S04_image');assert.equal(sceneAssetBase('S04',3,'video'),'S04_video');});
+  test('장면 ID가 파일 이름에 안전하지 않으면 순서로 S01…',()=>{assert.equal(sceneFileLabel('장면 1',0),'S01');assert.equal(sceneFileLabel('a/b',11),'S12');assert.equal(sceneFileLabel('',4),'S05');assert.equal(sceneFileLabel('S07',0),'S07');});
+  test('처음엔 그대로, 다시 만들면 _v2·_v3 (덮어쓰지 않음)',()=>{assert.equal(versionedFileName('S04_image','png',[]),'S04_image.png');assert.equal(versionedFileName('S04_image','png',['S04_image.png']),'S04_image_v2.png');assert.equal(versionedFileName('S04_image','png',['s04_IMAGE.PNG','S04_image_v2.png']),'S04_image_v3.png');});
+  test('확장자가 달라도 같은 장면 이름이면 _v2',()=>assert.equal(versionedFileName('S04_image','jpg',['S04_image.png']),'S04_image_v2.jpg'));
+  test('배경음악은 BGM_01, BGM_02 …',()=>{assert.equal(bgmFileName('mp3',[]),'BGM_01.mp3');assert.equal(bgmFileName('mp3',['BGM_01.mp3']),'BGM_02.mp3');assert.equal(bgmFileName('wav',['BGM_01.mp3']),'BGM_02.wav');});
+  test('이름에 무작위 문자가 없음',()=>assert.match(versionedFileName(sceneAssetBase('S02',1,'image'),'png',[]),/^S02_image\.png$/));
+  test('가져온 파일 이름 분리',()=>{assert.deepEqual(splitExt('내 사진.final.PNG'),{base:'내 사진.final',ext:'PNG'});assert.deepEqual(splitExt('noext'),{base:'noext',ext:''});});
+  console.log(`asset naming OK`);
+}

@@ -31,7 +31,7 @@ styles/directions는 각각 3개, keywords는 3~6개로 작성하세요.`;
   if(stage==='prompt') return `${intro}
 선택 화풍: ${p.analysis?.styles.find(x=>x.id===p.selection.styleId)?.label||''}
 승인 장면표(JSON): ${JSON.stringify(p.scenes.map(({id,title,narration,visual,kind})=>({id,title,narration,visual,kind})))}
-[임무] 각 장면별로 이미지 생성 영어 프롬프트와 (가능한 경우) 짧은 동영상 영어 프롬프트를 만드세요. 영상 동작은 하나씩, 카메라 움직임은 느리게, 화면의 텍스트를 금지합니다. 동일 화풍/캐릭터의 일관성을 위해 반복 공통 묘사를 넣으세요. 배경음악은 무보컬, 기존 저작물 모방 금지.
+[임무] 각 장면별로 이미지 생성 영어 프롬프트와 (가능한 경우) 짧은 동영상 영어 프롬프트를 만드세요. kind가 "video"인 장면은 videoPrompt를 반드시 채우세요. 영상 동작은 하나씩, 카메라 움직임은 느리게, 화면의 텍스트를 금지합니다. 동일 화풍/캐릭터의 일관성을 위해 반복 공통 묘사를 넣으세요. 배경음악은 무보컬, 기존 저작물 모방 금지.
 [출력 형식]
 { "schema":"creator.prompts.v1", "items":[{"sceneId":"S01","imagePrompt":"English prompt","videoPrompt":"English prompt","negativePrompt":"English negatives"}], "bgmPrompt":"English instrumental music prompt" }
 items는 장면 수와 동일해야 하고 모든 sceneId가 정확히 한 번 나타나야 합니다.`;

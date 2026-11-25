@@ -654,3 +654,17 @@ body{min-width:1280px;min-height:720px}
 .choice-title p{color:var(--color-text-muted);margin-bottom:10px}
 .choice-list{gap:8px}
 .choice-card{min-height:0}
+
+/* ── 장면 종류 배지 · 더 보기(…) 메뉴 · 수동 추가 안내 (미디어 보관함) ── */
+.kind-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; font-size: 10px; font-weight: 700; line-height: 1.5; vertical-align: middle; border: 1px solid transparent; }
+.kind-badge.kind-image { background: var(--color-info-soft); color: var(--color-info); border-color: var(--color-info-soft); }
+.kind-badge.kind-video { background: var(--color-warning-soft); color: var(--color-warning); border-color: var(--color-warning-soft); }
+.prompt-card-head .micro .kind-badge { margin-left: 6px; }
+.more-menu { position: relative; }
+.more-menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-secondary); cursor: pointer; }
+.more-menu > summary::-webkit-details-marker { display: none; }
+.more-menu > summary:hover, .more-menu[open] > summary { background: var(--color-hover); }
+.more-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 190px; padding: 5px; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-surface-overlay); box-shadow: 0 10px 28px rgba(15, 23, 42, .14); display: flex; flex-direction: column; }
+.more-menu-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--color-text); font-size: 12px; text-align: left; white-space: nowrap; }
+.more-menu-list button:hover:not(:disabled) { background: var(--color-hover); }
+.scene-image-gen-guide .guide-cause { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: 10.5px; line-height: 1.45; }

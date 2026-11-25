@@ -183,8 +183,15 @@ export class GeminiAdapter {
   }
 
   /** 확장 프로그램에 보관된 완료 응답을 다시 요청 (Gemini로 재전송하지 않음). 응답 본문은 RESPONSE_RECEIVED로 따로 도착 */
-  async requestResult(job: { jobId: string; requestId: string; projectId: string }): Promise<{ ok: boolean; message: string }> {
-    const req = createMessage('RESULT_QUERY_REQUEST', { jobId: job.jobId, requestId: job.requestId, projectId: job.projectId });
+  async requestResult(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage?: string }): Promise<{ ok: boolean; message: string }> {
+    // 미디어 작업(image·video·music)은 보관된 응답이 없으면 확장이 Gemini 대화에서 같은 파일을 다시 받는다(재전송 없음).
+    // 그 응답을 정확히 찾도록 장면·단계·요청 표식을 함께 보낸다(이전 확장은 이 칸을 무시하고 보관 응답만 찾음).
+    const media = job.stage === 'image' || job.stage === 'video' || job.stage === 'music';
+    const req = createMessage('RESULT_QUERY_REQUEST', {
+      jobId: job.jobId, requestId: job.requestId, projectId: job.projectId,
+      ...(job.sceneId ? { sceneId: job.sceneId } : {}),
+      ...(media ? { stage: job.stage, marker: makeRequestMarker(job.requestId) } : {})
+    });
     const res = await this.request(req, 5000, ['ERROR']);
     if (res?.type === 'ERROR') return { ok: false, message: (res.payload as { message?: string }).message || '보관된 응답이 없습니다.' };
     return { ok: true, message: '확장 프로그램에 응답을 요청했습니다.' };

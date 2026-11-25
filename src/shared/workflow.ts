@@ -93,11 +93,13 @@ export function applyAIResponse(project: StudioProject, stage: AIStage, answer: 
   p.reviewNeeded = clearStageReviewFlag(p, stage);
   return p;
 }
+/** 장면 종류(스토리보드에서 정한 이미지/영상)에 맞는 생성 프롬프트 — 영상 장면은 videoPrompt, 이미지 장면은 imagePrompt */
+export function scenePrimaryPrompt(s:Pick<Scene,'kind'|'imagePrompt'|'videoPrompt'>):string { return ((s.kind==='video'?s.videoPrompt:s.imagePrompt)||'').trim(); }
 export function stageComplete(p:StudioProject,stage: keyof typeof STAGE_NAMES): boolean {
   if(stage==='brief')return !!p.brief.title.trim() && !!p.brief.originalText.trim();
   if(stage==='analysis')return !!p.analysis && !!p.selection.styleId && !!p.selection.directionId;
   if(stage==='storyboard')return p.scenes.length>0;
-  if(stage==='prompt')return p.scenes.length>0 && p.scenes.every(x=>!!x.imagePrompt);
+  if(stage==='prompt')return p.scenes.length>0 && p.scenes.every(x=>!!scenePrimaryPrompt(x));
   if(stage==='media')return p.scenes.length>0 && p.scenes.every(s=>!!s.assetId && p.assets.some(a=>a.id===s.assetId));
   if(stage==='assembly')return p.assembly.clips.length>0;
   return stageComplete(p,'assembly') && stageComplete(p,'media');

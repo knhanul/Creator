@@ -9,7 +9,7 @@ const PROTOCOL_VERSION = 1;
 /** 자동화 프로토콜 수준 — 이 파일 자체에 박혀 있으므로 서비스 워커가 실제로 새 코드로 돌고 있는지 앱이 확인할 수 있음 */
 const AUTOMATION_PROTOCOL = 2;
 /** 이 서비스 워커 코드 자체의 빌드 표식 (manifest 버전과 별개: Chrome이 서비스 워커를 이전 코드로 돌리는지 구분) */
-const BG_BUILD = '0.2.3';
+const BG_BUILD = '0.2.4';
 const SW_FILE = 'gomo-sw.js';
 const SW_STARTED_AT = new Date().toISOString();
 function selfInfo() {
@@ -23,6 +23,14 @@ const CONTENT_FILES = ['gemini-selectors.js', 'gemini-dom.js', 'content.js'];
 const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
 const DEFAULT_DOWNLOAD_WAIT_MS = 20000;
+/** 다운로드 버튼을 눌렀는데 이 시간 안에 Chrome 다운로드 항목이 생기지 않으면 Gemini 페이지가 오래된 것으로 보고 새로고침 후 한 번 더 받음 */
+const DEFAULT_DOWNLOAD_START_MS = 8000;
+/** 새로고침 뒤 Gemini 탭과 content script가 준비될 때까지 기다리는 최대 시간 */
+const DEFAULT_RELOAD_READY_MS = 30000;
+/** 새로고침 뒤 대화에서 같은 생성 파일을 다시 찾는 최대 시간 */
+const DEFAULT_RECOLLECT_MS = 20000;
+const msSetting = (name, def) => (typeof globalThis[name] === 'number' ? globalThis[name] : def);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MANUAL_IMPORT_GUIDE = 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.';
 const MANUAL_MEDIA_GUIDE = 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.';
 const MEDIA_STAGES = new Set(['image', 'video', 'music']);
@@ -164,6 +172,13 @@ async function handleResultQuery(msg) {
   const cur = (await chrome.storage.local.get(RESULT_STORE_KEY))[RESULT_STORE_KEY] || [];
   const hit = cur.find(e => e.jobId === q.jobId && e.requestId === q.requestId && e.projectId === q.projectId);
   if (!hit) {
+    if (MEDIA_STAGES.has(q.stage) && q.marker && base.jobId && base.requestId && base.projectId) {
+      // 미디어: 보관된 파일이 없으면 Gemini 대화에서 같은 요청의 결과를 다시 받는다(재전송 없음)
+      const tab = await pickGeminiTab();
+      if (tab?.id) { void recollectMedia(base, q, tab.id); return; }
+      sendToHost(envelope('ERROR', { ...base, requestId: msg.requestId }, { code: 'NO_TAB', message: 'Gemini 탭을 찾을 수 없습니다. 생성했던 Gemini 대화를 열어 주세요.', recoverable: true, jobId: q.jobId, queryRequestId: msg.requestId }));
+      return;
+    }
     sendToHost(envelope('ERROR', { ...base, requestId: msg.requestId }, { code: 'RESULT_NOT_FOUND', message: '확장 프로그램에 보관된 응답이 없습니다.', recoverable: true, jobId: q.jobId, queryRequestId: msg.requestId }));
     return;
   }
@@ -182,6 +197,23 @@ async function handleResultQuery(msg) {
     ...(hit.downloadPath ? { downloadPath: hit.downloadPath } : {}),
     ...(hit.mimeType ? { mimeType: hit.mimeType } : {})
   }));
+}
+
+/** 「다시 가져오기」(미디어): 표식 질문 뒤 응답에서 파일을 다시 받음 → 안 되면 탭 새로고침 후 한 번 더 */
+async function recollectMedia(base, q, tabId) {
+  sendToHost(envelope('JOB_PROGRESS', base, { jobId: base.jobId, stage: 'collecting', message: 'Gemini 대화에서 파일을 다시 받는 중', info: { recollect: true } }));
+  const startedAt = Date.now();
+  let r = await collectFromTab(tabId, { stage: q.stage, marker: q.marker, allowLatest: false });
+  let reloaded = false;
+  if (!r || !r.ok || r.downloadButtonMissing) {
+    reloaded = true;
+    r = await reloadAndCollect(tabId, { stage: q.stage, marker: q.marker, allowLatest: false });
+  }
+  if (!r || !r.ok) {
+    sendToHost(envelope('ERROR', base, { code: (r && r.errorCode) || 'MEDIA_NOT_FOUND', message: (r && r.message) || MANUAL_MEDIA_GUIDE, recoverable: true, needsUser: true, jobId: base.jobId }));
+    return;
+  }
+  await finishMediaResult(base, q.stage, { ...r, marker: q.marker }, tabId, { reloaded, recollected: true, minTime: startedAt });
 }
 
 async function handleProbe(msg) {
@@ -270,8 +302,15 @@ function queryDownloadItem(downloadId) {
   });
 }
 
-function waitForImageDownload(jobMeta, timeoutMs) {
-  const minTime = (activeImageJob && activeImageJob.jobId === jobMeta.jobId) ? activeImageJob.submittedAt : (Date.now() - 30000);
+/**
+ * 미디어 다운로드 완료를 기다린다.
+ * startTimeoutMs 안에 다운로드 항목이 생기지 않으면 DOWNLOAD_NOT_STARTED — Gemini가 '다운로드됨'만 띄우고
+ * 실제로는 파일을 보내지 않은 경우(오래 열린 페이지). 이때는 탭을 새로고침하면 다시 받아진다.
+ */
+function waitForImageDownload(jobMeta, timeoutMs, startTimeoutMs = 0) {
+  const minTime = typeof jobMeta.minTime === 'number'
+    ? jobMeta.minTime
+    : (activeImageJob && activeImageJob.jobId === jobMeta.jobId) ? activeImageJob.submittedAt : (Date.now() - 30000);
   // 이미 직전에 완료된 다운로드가 있는지 먼저 확인
   const hitIdx = recentImageDownloads.findIndex(d => d.at >= minTime - 2000 && (!d.consumed));
   if (hitIdx >= 0) {
@@ -280,22 +319,175 @@ function waitForImageDownload(jobMeta, timeoutMs) {
     return Promise.resolve(hit);
   }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      if (pendingDownloadWaiter && pendingDownloadWaiter.jobId === jobMeta.jobId) {
-        pendingDownloadWaiter = null;
-      }
-      resolve({ ok: false, errorCode: 'DOWNLOAD_TIMEOUT', message: MANUAL_IMPORT_GUIDE });
-    }, timeoutMs);
-    pendingDownloadWaiter = {
-      ...jobMeta,
-      minTime,
-      resolve: (res) => {
-        clearTimeout(timer);
-        pendingDownloadWaiter = null;
-        resolve(res);
-      }
+    let startTimer = null;
+    const finish = (res) => {
+      clearTimeout(timer);
+      if (startTimer) clearTimeout(startTimer);
+      if (pendingDownloadWaiter === waiter) pendingDownloadWaiter = null;
+      resolve(res);
     };
+    const timer = setTimeout(() => {
+      finish({ ok: false, errorCode: waiter.started ? 'DOWNLOAD_TIMEOUT' : 'DOWNLOAD_NOT_STARTED', message: MANUAL_IMPORT_GUIDE });
+    }, timeoutMs);
+    const waiter = { ...jobMeta, minTime, started: false, resolve: finish };
+    if (startTimeoutMs > 0 && startTimeoutMs < timeoutMs) {
+      startTimer = setTimeout(() => {
+        if (!waiter.started) finish({ ok: false, errorCode: 'DOWNLOAD_NOT_STARTED', message: MANUAL_IMPORT_GUIDE });
+      }, startTimeoutMs);
+    }
+    pendingDownloadWaiter = waiter;
   });
+}
+
+// 다운로드 항목이 "생겼는지"만 확인 (완료는 onChanged에서). 이것이 없으면 Gemini 페이지가 파일을 보내지 않은 것.
+if (chrome.downloads && chrome.downloads.onCreated && typeof chrome.downloads.onCreated.addListener === 'function') {
+  chrome.downloads.onCreated.addListener((item) => {
+    const w = pendingDownloadWaiter;
+    if (!w) return;
+    if (isLikelyImageDownload(item, w.minTime, w.stage)) w.started = true;
+  });
+}
+
+/** 탭 새로고침 뒤 페이지 로드가 끝나고 새 content script가 답할 때까지 기다림 */
+async function waitContentReady(tabId, timeoutMs) {
+  const start = Date.now();
+  let sawLoading = false;
+  while (Date.now() - start < timeoutMs) {
+    let status = 'complete';
+    try { const t = await chrome.tabs.get(tabId); status = (t && t.status) || 'complete'; } catch { return false; }
+    if (status !== 'complete') sawLoading = true;
+    // 새로고침이 시작되기 전의 이전 페이지가 답하지 않도록, 로딩을 봤거나 1.5초가 지난 뒤에만 확인
+    if (status === 'complete' && (sawLoading || Date.now() - start > 1500)) {
+      const p = await pingContent(tabId, 1500);
+      if (p.state === 'ok') return true;
+    }
+    await sleep(300);
+  }
+  return false;
+}
+
+/** Gemini 탭을 새로고침(F5와 같음)하고, 대화에 이미 있는 같은 생성 파일을 다시 받는다. 프롬프트는 다시 보내지 않음 */
+async function reloadAndCollect(tabId, meta) {
+  try { await chrome.tabs.reload(tabId); }
+  catch (e) { return { ok: false, errorCode: 'RELOAD_FAILED', message: 'Gemini 탭을 새로고침하지 못했습니다: ' + (e?.message || e) }; }
+  if (!(await waitContentReady(tabId, msSetting('__GOMO_RELOAD_READY_MS', DEFAULT_RELOAD_READY_MS)))) {
+    return { ok: false, errorCode: 'RELOAD_NOT_READY', message: '새로고침한 Gemini 탭이 제시간에 준비되지 않았습니다.' };
+  }
+  return collectFromTab(tabId, meta);
+}
+
+/** content script에 「이미 생성된 미디어 다시 받기」 요청 */
+async function collectFromTab(tabId, meta) {
+  const r = await deliver(tabId, {
+    type: 'COLLECT_MEDIA', stage: meta.stage, marker: meta.marker, allowLatest: !!meta.allowLatest,
+    timeoutMs: msSetting('__GOMO_RECOLLECT_MS', DEFAULT_RECOLLECT_MS)
+  });
+  if (!r.delivered) return { ok: false, errorCode: 'NO_CONTENT_SCRIPT', message: 'Gemini 탭에 확장 스크립트가 없습니다. Gemini 탭을 새로고침해 주세요.' };
+  return r.response || { ok: false, errorCode: 'NO_RESPONSE', message: 'Gemini 탭 응답이 없습니다.' };
+}
+
+const hasMediaData = (o) => !!(o.imageDataUrl || o.mediaDataUrl || o.downloadPath);
+
+/**
+ * 미디어 작업 결과 마무리(최초 완료 · 「다시 가져오기」 공용):
+ *  1) 다운로드 버튼을 눌렀으면 chrome.downloads 완료를 기다림
+ *  2) 다운로드가 시작조차 안 되면(Gemini가 '다운로드됨'만 표시) 탭을 새로고침하고 같은 파일을 한 번만 다시 받음 — 재전송 없음
+ *  3) 그래도 없으면 이미지 주소 직접 받기를 시도하고, 끝내 없으면 사용자에게 수동 추가 안내
+ */
+async function finishMediaResult(base, stage, msg, tabId, opts = {}) {
+  const guideMsg = stage === 'image' ? MANUAL_IMPORT_GUIDE : MANUAL_MEDIA_GUIDE;
+  const out = {
+    imageDataUrl: msg.imageDataUrl, mediaDataUrl: msg.mediaDataUrl, mimeType: msg.mimeType, downloadPath: msg.downloadPath,
+    imageUrl: msg.imageUrl, mediaUrl: msg.mediaUrl
+  };
+  let failCode = null;
+  let reloaded = !!opts.reloaded;
+
+  if (!hasMediaData(out) && msg.downloadClicked) {
+    const waitMs = msSetting('__GOMO_DOWNLOAD_TIMEOUT_MS', DEFAULT_DOWNLOAD_WAIT_MS);
+    const startMs = msSetting('__GOMO_DOWNLOAD_START_MS', DEFAULT_DOWNLOAD_START_MS);
+    let dl = await waitForImageDownload({ ...base, stage, ...(opts.minTime ? { minTime: opts.minTime } : {}) }, waitMs, startMs);
+    if (!(dl && dl.ok) && !reloaded && tabId && (dl?.errorCode === 'DOWNLOAD_NOT_STARTED' || dl?.errorCode === 'DOWNLOAD_FAILED')) {
+      reloaded = true;
+      sendToHost(envelope('JOB_PROGRESS', base, { jobId: base.jobId, stage: 'collecting', message: 'Gemini 탭을 새로고침하고 다시 받는 중', info: { reloadRetry: true } }));
+      const retryStart = Date.now();
+      const again = await reloadAndCollect(tabId, { stage, marker: msg.marker, allowLatest: true });
+      if (again && again.ok) {
+        if (again.imageUrl) out.imageUrl = again.imageUrl;
+        if (again.mediaUrl) out.mediaUrl = again.mediaUrl;
+        if (again.mimeType) out.mimeType = again.mimeType;
+        if (again.imageDataUrl) out.imageDataUrl = again.imageDataUrl;
+        if (again.mediaDataUrl) out.mediaDataUrl = again.mediaDataUrl;
+        if (!hasMediaData(out) && again.downloadClicked) {
+          dl = await waitForImageDownload({ ...base, stage, minTime: retryStart }, waitMs, 0);
+        } else if (!hasMediaData(out)) {
+          dl = { ok: false, errorCode: again.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : (dl?.errorCode || 'DOWNLOAD_NOT_STARTED') };
+        }
+      } else {
+        dl = { ok: false, errorCode: (again && again.errorCode) || dl?.errorCode || 'DOWNLOAD_NOT_STARTED' };
+      }
+    }
+    if (dl && dl.ok && dl.downloadPath) {
+      out.downloadPath = dl.downloadPath;
+      if (dl.mimeType) out.mimeType = dl.mimeType;
+    } else if (!hasMediaData(out)) {
+      failCode = (dl && dl.errorCode) || 'DOWNLOAD_TIMEOUT';
+    }
+  }
+
+  // 이미지 주소 직접 받기(서비스 워커 fetch) — 권한상 되지 않을 수 있는 마지막 보조 수단
+  if (stage === 'image' && !hasMediaData(out) && out.imageUrl) {
+    const fetched = await tryFetchImageAsDataUrl(out.imageUrl);
+    if (fetched) { out.imageDataUrl = fetched.dataUrl; out.mimeType = fetched.mimeType; failCode = null; }
+  }
+
+  if (!hasMediaData(out)) {
+    const code = failCode || (msg.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : (stage === 'image' ? 'IMAGE_DATA_MISSING' : 'MEDIA_DATA_MISSING'));
+    sendToHost(envelope('ERROR', base, {
+      code,
+      message: guideMsg,
+      recoverable: true,
+      needsUser: true,
+      jobId: base.jobId,
+      partialText: msg.text || '',
+      ...(reloaded ? { reloadTried: true } : {})
+    }));
+    return false;
+  }
+
+  const entry = {
+    ...base,
+    text: msg.text,
+    codeBlocks: msg.codeBlocks || [],
+    isolation: msg.isolation,
+    ...(out.imageDataUrl ? { imageDataUrl: out.imageDataUrl } : {}),
+    ...(out.imageUrl ? { imageUrl: out.imageUrl } : {}),
+    ...(out.mediaDataUrl ? { mediaDataUrl: out.mediaDataUrl } : {}),
+    ...(out.mediaUrl ? { mediaUrl: out.mediaUrl } : {}),
+    ...(out.downloadPath ? { downloadPath: out.downloadPath } : {}),
+    ...(out.mimeType ? { mimeType: out.mimeType } : {}),
+    at: Date.now(),
+    tabId
+  };
+  void rememberResult(entry);
+  sendToHost(envelope('RESPONSE_RECEIVED', base, {
+    jobId: base.jobId,
+    ...(base.sceneId ? { sceneId: base.sceneId } : {}),
+    text: msg.text,
+    codeBlocks: msg.codeBlocks || [],
+    complete: true,
+    isolation: msg.isolation,
+    completion: msg.completion,
+    ...(msg.recollected || opts.recollected ? { recollected: true } : {}),
+    ...(reloaded ? { reloaded: true } : {}),
+    ...(out.imageDataUrl ? { imageDataUrl: out.imageDataUrl } : {}),
+    ...(out.imageUrl ? { imageUrl: out.imageUrl } : {}),
+    ...(out.mediaDataUrl ? { mediaDataUrl: out.mediaDataUrl } : {}),
+    ...(out.mediaUrl ? { mediaUrl: out.mediaUrl } : {}),
+    ...(out.downloadPath ? { downloadPath: out.downloadPath } : {}),
+    ...(out.mimeType ? { mimeType: out.mimeType } : {})
+  }));
+  return true;
 }
 
 /** content script → 앱: 진행/완료/오류 이벤트 */
@@ -307,66 +499,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   } else if (msg.kind === 'complete') {
     void (async () => {
       const stage = msg.stage || (msg.sceneId ? 'image' : '');
-      const isMediaJob = MEDIA_STAGES.has(stage);
-      const guideMsg = stage === 'image' ? MANUAL_IMPORT_GUIDE : MANUAL_MEDIA_GUIDE;
-      let imageDataUrl = msg.imageDataUrl;
-      let mediaDataUrl = msg.mediaDataUrl;
-      let mimeType = msg.mimeType;
-      let downloadPath = msg.downloadPath;
-
-      // 1) 미디어 작업이고 dataUrl이 아직 없으면: 다운로드 버튼이 클릭된 경우 chrome.downloads 완료를 대기
-      if (isMediaJob && !imageDataUrl && !mediaDataUrl && !downloadPath && msg.downloadClicked) {
-        const waitMs = typeof globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS === 'number' ? globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS : DEFAULT_DOWNLOAD_WAIT_MS;
-        const dl = await waitForImageDownload({ ...base, stage }, waitMs);
-        if (dl && dl.ok && dl.downloadPath) {
-          downloadPath = dl.downloadPath;
-          if (dl.mimeType) mimeType = dl.mimeType;
-        } else {
-          sendToHost(envelope('ERROR', base, {
-            code: (dl && dl.errorCode) || 'DOWNLOAD_TIMEOUT',
-            message: guideMsg,
-            recoverable: true,
-            needsUser: true,
-            jobId: msg.jobId,
-            partialText: msg.text || ''
-          }));
-          return;
-        }
-      }
-
-      // 2) 이미지 작업이고 dataUrl도 downloadPath도 없으면 서비스 워커 fetch 보조 시도
-      if (stage === 'image' && !imageDataUrl && !downloadPath && msg.imageUrl) {
-        const fetched = await tryFetchImageAsDataUrl(msg.imageUrl);
-        if (fetched) { imageDataUrl = fetched.dataUrl; mimeType = fetched.mimeType; }
-      }
-
-      // 3) 미디어 작업인데 다운로드 버튼도 못 찾고 파일도 확보하지 못했으면 즉시 needsUser 오류로 전환
-      if (isMediaJob && !imageDataUrl && !mediaDataUrl && !downloadPath) {
-        sendToHost(envelope('ERROR', base, {
-          code: msg.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : (stage === 'image' ? 'IMAGE_DATA_MISSING' : 'MEDIA_DATA_MISSING'),
-          message: guideMsg,
-          recoverable: true,
-          needsUser: true,
-          jobId: msg.jobId,
-          partialText: msg.text || ''
-        }));
+      if (MEDIA_STAGES.has(stage)) {
+        await finishMediaResult(base, stage, msg, sender?.tab?.id);
         return;
       }
-
-      const entry = {
-        ...base,
-        text: msg.text,
-        codeBlocks: msg.codeBlocks || [],
-        isolation: msg.isolation,
-        ...(imageDataUrl ? { imageDataUrl } : {}),
-        ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
-        ...(mediaDataUrl ? { mediaDataUrl } : {}),
-        ...(msg.mediaUrl ? { mediaUrl: msg.mediaUrl } : {}),
-        ...(downloadPath ? { downloadPath } : {}),
-        ...(mimeType ? { mimeType } : {}),
-        at: Date.now(),
-        tabId: sender?.tab?.id
-      };
+      const entry = { ...base, text: msg.text, codeBlocks: msg.codeBlocks || [], isolation: msg.isolation, at: Date.now(), tabId: sender?.tab?.id };
       void rememberResult(entry);
       sendToHost(envelope('RESPONSE_RECEIVED', base, {
         jobId: msg.jobId,
@@ -375,13 +512,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         codeBlocks: msg.codeBlocks || [],
         complete: true,
         isolation: msg.isolation,
-        completion: msg.completion,
-        ...(imageDataUrl ? { imageDataUrl } : {}),
-        ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
-        ...(mediaDataUrl ? { mediaDataUrl } : {}),
-        ...(msg.mediaUrl ? { mediaUrl: msg.mediaUrl } : {}),
-        ...(downloadPath ? { downloadPath } : {}),
-        ...(mimeType ? { mimeType } : {})
+        completion: msg.completion
       }));
     })();
   } else if (msg.kind === 'error') {

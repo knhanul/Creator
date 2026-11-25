@@ -1,5 +1,5 @@
 import type { Stage, StudioProject } from './types';
-import { STAGE_NAMES, STAGE_ORDER, readyForHandoff, stageComplete } from './workflow';
+import { STAGE_NAMES, STAGE_ORDER, readyForHandoff, scenePrimaryPrompt, stageComplete } from './workflow';
 
 /** 각 단계 화면 아래 고정 줄에 보여 줄 '지금 할 일'과 다음 단계 버튼 상태 */
 export interface StepGuide {
@@ -61,10 +61,14 @@ export function stepGuide(p: StudioProject, stage: Stage): StepGuide {
       todo = '「AI 장면 구성 시작」을 누르거나 「장면 추가」로 장면을 만들어 주세요';
       break;
     case 'prompt': {
-      const empty = p.scenes.filter(s => !s.imagePrompt.trim()).length;
+      const emptyImage = p.scenes.filter(s => s.kind !== 'video' && !scenePrimaryPrompt(s)).length;
+      const emptyVideo = p.scenes.filter(s => s.kind === 'video' && !scenePrimaryPrompt(s)).length;
       if (!p.scenes.length) missing.push('스토리보드 장면');
-      else if (empty) missing.push(`이미지 프롬프트 ${empty}개`);
-      todo = p.scenes.length ? '모든 장면의 이미지 프롬프트를 채우면 미디어 단계로 넘어갈 수 있어요' : '스토리보드에서 장면을 먼저 만들어 주세요';
+      else {
+        if (emptyImage) missing.push(`이미지 프롬프트 ${emptyImage}개`);
+        if (emptyVideo) missing.push(`동영상 프롬프트 ${emptyVideo}개`);
+      }
+      todo = p.scenes.length ? '장면마다 종류(이미지·영상)에 맞는 프롬프트를 채우면 미디어 단계로 넘어갈 수 있어요' : '스토리보드에서 장면을 먼저 만들어 주세요';
       break;
     }
     case 'media': {
