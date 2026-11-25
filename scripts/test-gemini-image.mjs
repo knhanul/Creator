@@ -129,14 +129,22 @@ function makeTestEnv(tag) {
     return structuredClone(saved);
   }
 
-  // 실제 storage.ts의 saveGeneratedImageAsset과 동일하게 프로젝트 폴더 아래 assets/image/에 파일 저장 및 연결
+  // 실제 storage.ts의 saveGeneratedImageAsset과 동일하게 dataUrl 또는 로컬 downloadPath에서 프로젝트 폴더 아래 assets/image/로 파일 복사 및 연결
   async function saveGeneratedImageAsset(projectId, sceneId, input) {
     const p = await readProject(projectId);
     const sceneIdx = p.scenes.findIndex(s => s.id === sceneId);
     if (sceneIdx < 0) throw new Error(`장면(${sceneId})을 찾을 수 없습니다.`);
-    const match = (input.imageDataUrl || '').match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
-    if (!match) throw new Error('유효한 base64 이미지 데이터가 아닙니다.');
-    const buffer = Buffer.from(match[2].trim(), 'base64');
+    let buffer;
+    if (input.imageDataUrl && input.imageDataUrl.startsWith('data:image/')) {
+      const match = input.imageDataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+      if (!match) throw new Error('유효한 base64 이미지 데이터가 아닙니다.');
+      buffer = Buffer.from(match[2].trim(), 'base64');
+    } else if (input.downloadPath) {
+      buffer = readFileSync(input.downloadPath);
+      if (!buffer.byteLength) throw new Error('다운로드된 파일이 비어 있습니다.');
+    } else {
+      throw new Error('생성된 이미지 데이터가 없습니다.');
+    }
     const unique = randomUUID();
     const name = `${sceneId}_gemini_${unique.slice(0, 8)}.png`;
     const relative = `assets/image/${unique}_${name}`;
@@ -440,6 +448,149 @@ await test('7. Extension DOM watchImage: 신규 응답 블록 안의 생성 이�
   assert.equal(out2.ok, false);
   assert.equal(out2.errorCode, 'NO_IMAGE_GENERATED');
   assert.equal(out2.needsUser, true);
+});
+
+await test('8. 반자동 다운로드 클릭: CORS 이미지(https://lh3.googleusercontent.com/...)일 때 다운로드 버튼을 찾아 자동 클릭', async () => {
+  const html = readFileSync(join(root, 'fixtures/gemini-dom/gemini-like.html'), 'utf8');
+  const selectorsSrc = readFileSync(join(root, 'extension/gemini-selectors.js'), 'utf8');
+  const domSrc = readFileSync(join(root, 'extension/gemini-dom.js'), 'utf8');
+  const FAST = { pollMs: 15, sendEnableWaitMs: 300, sendConfirmTimeoutMs: 400, firstResponseTimeoutMs: 1500, stableMs: 60, noImageIdleMs: 180, maxWaitMs: 2500, progressThrottleMs: 30 };
+
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://gemini.google.com/app' });
+  const win = dom.window;
+  win.eval(selectorsSrc);
+  win.eval(domSrc);
+  // 텍스트 없이 이미지만 렌더링되는 실제 Gemini 응답 시뮬레이션
+  installGeminiSimulator(win, { intro: '', chunkMs: 10, firstDelayMs: 20 });
+  const g = win.GomoGeminiDom.createGeminiDom({ doc: win.document, win, timing: FAST });
+
+  let dlClicked = 0;
+  const marker = makeRequestMarker('abcdef12-1234-1234-1234-1234567890ab');
+  const sub = await g.submit({ prompt: 'Generate a watercolor garden', marker });
+
+  win.setTimeout(() => {
+    const responses = win.document.querySelectorAll('model-response');
+    const latest = responses[responses.length - 1];
+    const singleImg = win.document.createElement('single-image');
+    singleImg.className = 'generated-image';
+    const realImg = win.document.createElement('img');
+    realImg.setAttribute('src', 'https://lh3.googleusercontent.com/rd-gg/fake-generated-image');
+    realImg.setAttribute('width', '1024');
+    realImg.setAttribute('height', '1024');
+    singleImg.appendChild(realImg);
+
+    const dlWrap = win.document.createElement('download-generated-image-button');
+    const dlBtn = win.document.createElement('button');
+    dlBtn.setAttribute('data-test-id', 'image-download-button');
+    dlBtn.setAttribute('aria-label', 'Download full size');
+    dlBtn.addEventListener('click', () => { dlClicked++; });
+    dlWrap.appendChild(dlBtn);
+    singleImg.appendChild(dlWrap);
+    latest.appendChild(singleImg);
+  }, 30);
+
+  const out = await g.watchImage(sub.ctx);
+  assert.equal(out.ok, true);
+  assert.equal(out.downloadClicked, true);
+  assert.equal(dlClicked, 1);
+  assert.equal(out.imageMethod, 'download-button');
+});
+
+await test('9. chrome.downloads 로컬 파일 경로(downloadPath) 수신 시 프로젝트 assets/image/로 복사 및 장면 자동 연결', async () => {
+  const env = makeTestEnv('t9');
+  const queue = new GeminiJobQueue(join(env.dir, 'jobs.json'));
+  await queue.load();
+  const service = createAnalysisService({
+    queue,
+    adapter: env.adapter,
+    readProject: env.readProject,
+    saveProject: env.saveProject,
+    saveGeneratedImageAsset: env.saveGeneratedImageAsset
+  });
+
+  // 모의 다운로드 폴더에 Chrome이 내려받은 PNG 파일 생성
+  const downloadedFile = join(env.dir, 'Gemini_Generated_Image_S01.png');
+  const rawPng = Buffer.from(SAMPLE_PNG_DATA_URL.split(',')[1], 'base64');
+  writeFileSync(downloadedFile, rawPng);
+
+  const started = await service.startImage(env.p1.id, 'S01');
+  await service.kick();
+  const job = queue.get(started.job.jobId);
+
+  const r = await service.handleMessage({
+    protocolVersion: 1,
+    requestId: job.requestId,
+    jobId: job.jobId,
+    projectId: env.p1.id,
+    sceneId: 'S01',
+    type: 'DOWNLOAD_EVENT',
+    timestamp: new Date().toISOString(),
+    payload: {
+      downloadId: 77,
+      state: 'complete',
+      downloadPath: downloadedFile,
+      mimeType: 'image/png',
+      jobId: job.jobId,
+      sceneId: 'S01'
+    }
+  });
+  assert.equal(r, 'applied');
+  const doneJob = queue.get(job.jobId);
+  assert.equal(doneJob.state, 'completed');
+  assert.equal(doneJob.outcome, 'applied');
+  assert.equal(doneJob.phase, 'done');
+
+  const proj = await env.readProject(env.p1.id);
+  assert.equal(proj.assets.length, 1);
+  assert.equal(proj.scenes[0].assetId, proj.assets[0].id);
+  assert.ok(existsSync(join(env.dir, env.p1.id, proj.assets[0].relativePath)));
+});
+
+await test('10. 다운로드 버튼 미발견 및 셀렉터 불일치(빈 응답) 시 무한 대기하지 않고 needs_user + 수동 안내로 즉시 전환', async () => {
+  const html = readFileSync(join(root, 'fixtures/gemini-dom/gemini-like.html'), 'utf8');
+  const selectorsSrc = readFileSync(join(root, 'extension/gemini-selectors.js'), 'utf8');
+  const domSrc = readFileSync(join(root, 'extension/gemini-dom.js'), 'utf8');
+  const FAST = { pollMs: 15, sendEnableWaitMs: 300, sendConfirmTimeoutMs: 400, firstResponseTimeoutMs: 1500, stableMs: 50, noImageIdleMs: 150, maxWaitMs: 2000, progressThrottleMs: 30 };
+
+  // 10-A) 이미지는 있으나 CORS이고 다운로드 버튼이 없는 경우 -> downloadButtonMissing: true
+  const domA = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://gemini.google.com/app' });
+  const winA = domA.window;
+  winA.eval(selectorsSrc);
+  winA.eval(domSrc);
+  installGeminiSimulator(winA, { intro: '', chunkMs: 10, firstDelayMs: 20 });
+  const gA = winA.GomoGeminiDom.createGeminiDom({ doc: winA.document, win: winA, timing: FAST });
+  const markerA = makeRequestMarker('11112222-3333-4444-5555-666677778888');
+  const subA = await gA.submit({ prompt: 'Generate image', marker: markerA });
+  winA.setTimeout(() => {
+    const responses = winA.document.querySelectorAll('model-response');
+    const latest = responses[responses.length - 1];
+    const wrap = winA.document.createElement('generated-image');
+    const img = winA.document.createElement('img');
+    img.setAttribute('src', 'https://lh3.googleusercontent.com/rd-gg/no-dl-btn');
+    img.setAttribute('width', '512');
+    img.setAttribute('height', '512');
+    wrap.appendChild(img);
+    latest.appendChild(wrap);
+  }, 25);
+  const outA = await gA.watchImage(subA.ctx);
+  assert.equal(outA.ok, true);
+  assert.equal(outA.downloadClicked, false);
+  assert.equal(outA.downloadButtonMissing, true);
+
+  // 10-B) 텍스트도 없고 이미지 셀렉터도 전혀 매칭되지 않는 빈 응답 블록 -> noImageIdleMs 경과 후 즉시 IMAGE_DETECT_FAILED 반환 (무한 대기 안 함)
+  const domB = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://gemini.google.com/app' });
+  const winB = domB.window;
+  winB.eval(selectorsSrc);
+  winB.eval(domSrc);
+  installGeminiSimulator(winB, { intro: '', chunkMs: 10, firstDelayMs: 20 });
+  const gB = winB.GomoGeminiDom.createGeminiDom({ doc: winB.document, win: winB, timing: FAST });
+  const markerB = makeRequestMarker('99998888-7777-6666-5555-444433332222');
+  const subB = await gB.submit({ prompt: 'Generate image', marker: markerB });
+  const outB = await gB.watchImage(subB.ctx);
+  assert.equal(outB.ok, false);
+  assert.equal(outB.errorCode, 'IMAGE_DETECT_FAILED');
+  assert.equal(outB.needsUser, true);
+  assert.ok(outB.message.includes('미디어 가져오기'));
 });
 
 console.log(`\n${passed} phase5-gemini-image checks passed`);

@@ -110,7 +110,7 @@ export type StudioAPI = {
     archive(projectId: string, archive: boolean): Promise<StudioProject>;
     exportFolder(projectId: string): Promise<string | null>;
   };
-  assets: { import(projectId: string): Promise<StudioProject | null>; reveal(projectId: string, assetId: string): Promise<void>; };
+  assets: { import(projectId: string, targetSceneId?: string): Promise<StudioProject | null>; reveal(projectId: string, assetId: string): Promise<void>; };
   clipboard: { write(text: string): Promise<void> };
   sources: {
     providers(): Promise<SourceProviderInfo[]>;

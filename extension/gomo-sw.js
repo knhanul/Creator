@@ -22,9 +22,17 @@ console.info(`GOMO background protocol ${AUTOMATION_PROTOCOL} build ${BG_BUILD} 
 const CONTENT_FILES = ['gemini-selectors.js', 'gemini-dom.js', 'content.js'];
 const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
+const DEFAULT_DOWNLOAD_WAIT_MS = 20000;
+const MANUAL_IMPORT_GUIDE = 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.';
 let port = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 3;
+/** 현재 진행 중인 이미지 생성 작업 메타데이터 (chrome.downloads 매칭용) */
+let activeImageJob = null;
+/** 최근 완료/중단된 이미지 다운로드 캐시 (클릭 직후 이벤트가 complete 메시지보다 먼저 도착하는 경합 대비) */
+const recentImageDownloads = [];
+/** 다운로드 완료를 기다리는 대기자 */
+let pendingDownloadWaiter = null;
 
 function connect() {
   if (port) return;
@@ -123,6 +131,9 @@ async function handleSubmit(msg) {
   if (!tab?.id) return reply({ success: false, sendState: 'not_sent', errorCode: 'NO_TAB', needsUser: true, message: 'Gemini 탭을 찾을 수 없습니다.' });
   // 사용자가 전송 내용을 바로 볼 수 있도록 Gemini 탭을 앞으로 가져옵니다(백그라운드 탭 타이머 제한도 피함).
   try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* ignore */ }
+  if (msg.payload?.stage === 'image') {
+    activeImageJob = { ...base, stage: 'image', submittedAt: Date.now() };
+  }
   const r = await deliver(tab.id, {
     type: 'SUBMIT_PROMPT', protocol: AUTOMATION_PROTOCOL, prompt: msg.payload?.prompt, marker: msg.payload?.marker,
     stage: msg.payload?.stage, sceneId: base.sceneId,
@@ -164,6 +175,7 @@ async function handleResultQuery(msg) {
     isolation: hit.isolation,
     ...(hit.imageDataUrl ? { imageDataUrl: hit.imageDataUrl } : {}),
     ...(hit.imageUrl ? { imageUrl: hit.imageUrl } : {}),
+    ...(hit.downloadPath ? { downloadPath: hit.downloadPath } : {}),
     ...(hit.mimeType ? { mimeType: hit.mimeType } : {})
   }));
 }
@@ -213,6 +225,66 @@ async function tryFetchImageAsDataUrl(imageUrl) {
   }
 }
 
+/** 다운로드 항목이 Gemini 이미지 다운로드인지 판별 (확장자·MIME·출처 URL·시간 윈도우) */
+function isLikelyImageDownload(item, minTimeMs) {
+  if (!item) return false;
+  if (item.startTime) {
+    const started = Date.parse(item.startTime);
+    if (Number.isFinite(started) && started < minTimeMs - 3000) return false;
+  }
+  const mime = String(item.mime || '').toLowerCase();
+  const filename = String(item.filename || '').toLowerCase();
+  const url = String(item.url || item.finalUrl || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  if (/\.(png|jpe?g|webp|gif)$/i.test(filename)) return true;
+  if (url.includes('googleusercontent.com') || url.includes('ggpht.com') || url.includes('gemini.google.com') || url.startsWith('blob:') || url.startsWith('data:image/')) {
+    return true;
+  }
+  return false;
+}
+
+function queryDownloadItem(downloadId) {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.downloads || typeof chrome.downloads.search !== 'function') return resolve(null);
+      chrome.downloads.search({ id: downloadId }, (items) => {
+        if (chrome.runtime.lastError || !Array.isArray(items) || !items.length) return resolve(null);
+        resolve(items[0]);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function waitForImageDownload(jobMeta, timeoutMs) {
+  const minTime = (activeImageJob && activeImageJob.jobId === jobMeta.jobId) ? activeImageJob.submittedAt : (Date.now() - 30000);
+  // 이미 직전에 완료된 다운로드가 있는지 먼저 확인
+  const hitIdx = recentImageDownloads.findIndex(d => d.at >= minTime - 2000 && (!d.consumed));
+  if (hitIdx >= 0) {
+    const hit = recentImageDownloads[hitIdx];
+    hit.consumed = true;
+    return Promise.resolve(hit);
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingDownloadWaiter && pendingDownloadWaiter.jobId === jobMeta.jobId) {
+        pendingDownloadWaiter = null;
+      }
+      resolve({ ok: false, errorCode: 'DOWNLOAD_TIMEOUT', message: MANUAL_IMPORT_GUIDE });
+    }, timeoutMs);
+    pendingDownloadWaiter = {
+      ...jobMeta,
+      minTime,
+      resolve: (res) => {
+        clearTimeout(timer);
+        pendingDownloadWaiter = null;
+        resolve(res);
+      }
+    };
+  });
+}
+
 /** content script → 앱: 진행/완료/오류 이벤트 */
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (!msg || msg.type !== 'GEMINI_EVENT') return;
@@ -221,12 +293,50 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     sendToHost(envelope('JOB_PROGRESS', base, { jobId: msg.jobId, stage: msg.phase, message: '', info: msg.info || {} }));
   } else if (msg.kind === 'complete') {
     void (async () => {
+      const isImageJob = msg.stage === 'image' || Boolean(msg.sceneId);
       let imageDataUrl = msg.imageDataUrl;
       let mimeType = msg.mimeType;
-      if (!imageDataUrl && msg.imageUrl) {
+      let downloadPath = msg.downloadPath;
+
+      // 1) 이미지 작업이고 dataUrl이 아직 없으면: 다운로드 버튼이 클릭된 경우 chrome.downloads 완료를 대기
+      if (isImageJob && !imageDataUrl && !downloadPath && msg.downloadClicked) {
+        const waitMs = typeof globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS === 'number' ? globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS : DEFAULT_DOWNLOAD_WAIT_MS;
+        const dl = await waitForImageDownload(base, waitMs);
+        if (dl && dl.ok && dl.downloadPath) {
+          downloadPath = dl.downloadPath;
+          if (dl.mimeType) mimeType = dl.mimeType;
+        } else {
+          sendToHost(envelope('ERROR', base, {
+            code: (dl && dl.errorCode) || 'DOWNLOAD_TIMEOUT',
+            message: (dl && dl.message) || MANUAL_IMPORT_GUIDE,
+            recoverable: true,
+            needsUser: true,
+            jobId: msg.jobId,
+            partialText: msg.text || ''
+          }));
+          return;
+        }
+      }
+
+      // 2) dataUrl도 downloadPath도 없으면 서비스 워커 fetch 보조 시도
+      if (isImageJob && !imageDataUrl && !downloadPath && msg.imageUrl) {
         const fetched = await tryFetchImageAsDataUrl(msg.imageUrl);
         if (fetched) { imageDataUrl = fetched.dataUrl; mimeType = fetched.mimeType; }
       }
+
+      // 3) 이미지 작업인데 다운로드 버튼도 못 찾고 파일도 확보하지 못했으면 즉시 needsUser 오류로 전환
+      if (isImageJob && !imageDataUrl && !downloadPath) {
+        sendToHost(envelope('ERROR', base, {
+          code: msg.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : 'IMAGE_DATA_MISSING',
+          message: MANUAL_IMPORT_GUIDE,
+          recoverable: true,
+          needsUser: true,
+          jobId: msg.jobId,
+          partialText: msg.text || ''
+        }));
+        return;
+      }
+
       const entry = {
         ...base,
         text: msg.text,
@@ -234,6 +344,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         isolation: msg.isolation,
         ...(imageDataUrl ? { imageDataUrl } : {}),
         ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(downloadPath ? { downloadPath } : {}),
         ...(mimeType ? { mimeType } : {}),
         at: Date.now(),
         tabId: sender?.tab?.id
@@ -249,6 +360,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         completion: msg.completion,
         ...(imageDataUrl ? { imageDataUrl } : {}),
         ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(downloadPath ? { downloadPath } : {}),
         ...(mimeType ? { mimeType } : {})
       }));
     })();
@@ -302,17 +414,57 @@ async function queryGeminiTabs() {
   });
 }
 
-// Downloads monitoring (limited)
+// Downloads monitoring (Phase 5 반자동 이미지 다운로드 수신)
 chrome.downloads.onChanged.addListener((delta) => {
-  if (delta.state?.current === 'complete' || delta.state?.current === 'interrupted') {
-    sendToHost({
-      protocolVersion: 1,
-      requestId: `dl-${delta.id}`,
-      type: 'DOWNLOAD_EVENT',
-      timestamp: new Date().toISOString(),
-      payload: { downloadId: delta.id, state: delta.state.current }
-    });
-  }
+  const state = delta.state?.current;
+  if (state !== 'complete' && state !== 'interrupted') return;
+  void (async () => {
+    const item = await queryDownloadItem(delta.id);
+    const minTime = pendingDownloadWaiter ? pendingDownloadWaiter.minTime : (activeImageJob ? activeImageJob.submittedAt : Date.now() - 30000);
+    const isImg = isLikelyImageDownload(item, minTime);
+    const filename = item && typeof item.filename === 'string' ? item.filename.trim() : '';
+    const mimeType = item && typeof item.mime === 'string' ? item.mime : undefined;
+
+    if (state === 'complete') {
+      const outcome = filename
+        ? { ok: true, downloadId: delta.id, downloadPath: filename, mimeType, at: Date.now(), consumed: false }
+        : { ok: false, downloadId: delta.id, errorCode: 'DOWNLOAD_PATH_MISSING', message: MANUAL_IMPORT_GUIDE, at: Date.now(), consumed: false };
+      if (isImg) {
+        recentImageDownloads.unshift(outcome);
+        if (recentImageDownloads.length > 10) recentImageDownloads.length = 10;
+        if (pendingDownloadWaiter) {
+          outcome.consumed = true;
+          pendingDownloadWaiter.resolve(outcome);
+        }
+      }
+      const targetJob = pendingDownloadWaiter || activeImageJob;
+      sendToHost(envelope('DOWNLOAD_EVENT', targetJob || { requestId: `dl-${delta.id}` }, {
+        downloadId: delta.id,
+        state: 'complete',
+        ...(filename ? { downloadPath: filename } : {}),
+        ...(mimeType ? { mimeType } : {}),
+        ...(targetJob?.jobId ? { jobId: targetJob.jobId } : {}),
+        ...(targetJob?.sceneId ? { sceneId: targetJob.sceneId } : {})
+      }));
+    } else if (state === 'interrupted') {
+      const failOutcome = { ok: false, downloadId: delta.id, errorCode: 'DOWNLOAD_FAILED', message: MANUAL_IMPORT_GUIDE, at: Date.now(), consumed: false };
+      if (isImg) {
+        recentImageDownloads.unshift(failOutcome);
+        if (recentImageDownloads.length > 10) recentImageDownloads.length = 10;
+        if (pendingDownloadWaiter) {
+          failOutcome.consumed = true;
+          pendingDownloadWaiter.resolve(failOutcome);
+        }
+      }
+      const targetJob = pendingDownloadWaiter || activeImageJob;
+      sendToHost(envelope('DOWNLOAD_EVENT', targetJob || { requestId: `dl-${delta.id}` }, {
+        downloadId: delta.id,
+        state: 'interrupted',
+        ...(targetJob?.jobId ? { jobId: targetJob.jobId } : {}),
+        ...(targetJob?.sceneId ? { sceneId: targetJob.sceneId } : {})
+      }));
+    }
+  })();
 });
 
 // 서비스 워커가 시작될 때마다 이 줄이 한 번 실행됨(설치·브라우저 시작 포함). connectNative는 여기 한 곳뿐.

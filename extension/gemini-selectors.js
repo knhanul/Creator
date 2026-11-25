@@ -90,28 +90,53 @@
     ],
     /** Phase 5: 응답 블록 안에 생성된 이미지 요소 */
     generatedImage: [
+      S('single-image.generated-image img', 'Gemini single-image.generated-image 커스텀 요소 안의 img (진단 필요)'),
       S('generated-image img', 'Gemini 생성 이미지 커스텀 요소 안의 img (진단 필요)'),
       S('single-image img', 'Gemini 단일 생성 이미지 커스텀 요소 안의 img (진단 필요)'),
-      S('image-preview img', '이미지 미리보기 커스텀 요소 안의 img (진단 필요)'),
+      S('[data-test-id="generated-image"] img', 'data-test-id="generated-image" 안의 img (진단 필요)'),
       S('[data-test-id*="generated-image"] img', 'data-test-id 생성 이미지 (진단 필요)'),
+      S('image-preview img', '이미지 미리보기 커스텀 요소 안의 img (진단 필요)'),
+      S('message-content img.image', '응답 본문 안의 img.image (진단 필요)'),
       S('message-content img[src^="data:image/"]', '응답 본문 안의 data:image 이미지'),
       S('message-content img[src^="blob:"]', '응답 본문 안의 blob: 이미지'),
       S('message-content img[src*="googleusercontent.com"]', '응답 본문 안의 Google 호스팅 이미지'),
+      S('message-content img[src*="ggpht.com"]', '응답 본문 안의 Google 이미지'),
       S('model-response img[src]', '모델 응답 안의 일반 img (아이콘 제외 필터와 함께 사용)')
+    ],
+    /** Phase 5: 생성 이미지 컨테이너 (img 태그가 지연 로드되거나 래퍼 안에 있을 때 감지 보조) */
+    imageContainer: [
+      S('single-image.generated-image', 'Gemini single-image.generated-image 컨테이너 (진단 필요)'),
+      S('generated-image', 'Gemini generated-image 컨테이너 (진단 필요)'),
+      S('single-image', 'Gemini single-image 컨테이너 (진단 필요)'),
+      S('[data-test-id*="generated-image"]', 'data-test-id 생성 이미지 컨테이너 (진단 필요)')
     ],
     /** Phase 5: 이미지 생성 진행 중 표시(로딩 스피너·플레이스홀더) */
     imageGenerating: [
       S('generated-image [role="progressbar"]', '이미지 생성 진행 표시줄 (진단 필요)'),
+      S('single-image [role="progressbar"]', 'single-image 생성 진행 표시줄 (진단 필요)'),
       S('model-response mat-progress-spinner', '응답 내 로딩 스피너 (진단 필요)'),
       S('[data-test-id*="image-loading"]', 'data-test-id 이미지 로딩 (진단 필요)'),
       S('.image-generation-loading', '이미지 로딩 클래스 대체 수단')
     ],
-    /** Phase 5: 생성 이미지 다운로드 버튼 (보조 수단) */
+    /** Phase 5: 생성 이미지 다운로드 버튼 (dataUrl 추출 불가 시 클릭하여 chrome.downloads로 수신) */
     imageDownloadButton: [
+      S('download-generated-image-button button', 'Gemini 전용 다운로드 커스텀 요소 내부 버튼 (진단 필요)'),
+      S('download-generated-image-button', 'Gemini 전용 다운로드 커스텀 요소 (진단 필요)'),
+      S('button[data-test-id="image-download-button"]', 'data-test-id="image-download-button" (진단 필요)'),
+      S('button[data-test-id="generated-image-button"]', 'data-test-id="generated-image-button" (진단 필요)'),
+      S('button[data-test-id*="download-image"]', 'data-test-id 이미지 다운로드 버튼 (진단 필요)'),
+      S('generated-image button[data-test-id*="download"]', 'generated-image 안의 download data-test-id (진단 필요)'),
+      S('single-image button[data-test-id*="download"]', 'single-image 안의 download data-test-id (진단 필요)'),
       S('generated-image button[aria-label*="Download" i]', '생성 이미지 다운로드 버튼 영문'),
       S('generated-image button[aria-label*="다운로드"]', '생성 이미지 다운로드 버튼 한국어'),
-      S('button[data-test-id*="download-image"]', 'data-test-id 이미지 다운로드 버튼'),
+      S('single-image button[aria-label*="Download" i]', 'single-image 다운로드 버튼 영문'),
+      S('single-image button[aria-label*="다운로드"]', 'single-image 다운로드 버튼 한국어'),
       S('model-response button[aria-label*="Download full size" i]', '원본 크기 다운로드 영문'),
+      S('model-response button[aria-label*="Download image" i]', '이미지 다운로드 영문'),
+      S('model-response button[aria-label*="원본 크기"]', '원본 크기 다운로드 한국어'),
+      S('model-response button[aria-label*="전체 크기"]', '전체 크기 다운로드 한국어'),
+      S('model-response button[aria-label*="이미지 다운로드"]', '이미지 다운로드 한국어'),
+      S('model-response button[aria-label*="Download" i]', '모델 응답 내 Download 버튼 영문'),
       S('model-response button[aria-label*="다운로드"]', '모델 응답 내 다운로드 버튼 한국어')
     ],
     /** 로그인 필요 신호 (입력창이 없을 때만 의미 있음) */

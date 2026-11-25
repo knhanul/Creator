@@ -67,7 +67,8 @@ function readMessages() {
   const messages = [];
   while (inputBuffer.length >= 4) {
     const length = inputBuffer.readUInt32LE(0);
-    if (length > 1024 * 1024) { log('message too large, exiting'); process.exit(1); }
+    // Chrome → Host 방향은 최대 64MB 허용 (Phase 5 이미지 dataUrl 전달 대비 32MB까지 허용)
+    if (length > 32 * 1024 * 1024) { log('message too large, exiting'); process.exit(1); }
     if (inputBuffer.length < 4 + length) break;
     const json = inputBuffer.subarray(4, 4 + length).toString('utf8');
     inputBuffer = inputBuffer.subarray(4 + length);

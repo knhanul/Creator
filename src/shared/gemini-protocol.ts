@@ -144,6 +144,18 @@ export interface JobProgress extends BaseMessage {
   payload: { jobId: string; stage: string; message: string; info?: Record<string, unknown> };
 }
 
+export interface DownloadEventMessage extends BaseMessage {
+  type: 'DOWNLOAD_EVENT';
+  payload: {
+    downloadId: number;
+    state: 'complete' | 'interrupted';
+    downloadPath?: string;
+    mimeType?: string;
+    jobId?: string;
+    sceneId?: string;
+  };
+}
+
 export interface ErrorMessage extends BaseMessage {
   type: 'ERROR';
   payload: { code: string; message: string; recoverable: boolean; jobId?: string; needsUser?: boolean; partialText?: string; queryRequestId?: string };
@@ -175,6 +187,7 @@ export type ProtocolMessage =
   | PromptSubmitResult
   | ResponseReceived
   | JobProgress
+  | DownloadEventMessage
   | ErrorMessage
   | ResultQueryRequest
   | SelectorProbeRequest

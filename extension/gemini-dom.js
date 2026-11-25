@@ -18,6 +18,7 @@
     sendConfirmTimeoutMs: 8000, // 클릭 후 "전송됨" 증거 대기
     firstResponseTimeoutMs: 120000, // 응답 블록이 나타나기까지
     stableMs: 2500,             // 텍스트 변화 없음 유지 시간
+    noImageIdleMs: 12000,       // 이미지 응답 생성 종료 후 이미지/텍스트가 모두 없을 때 대기 상한
     maxWaitMs: 8 * 60 * 1000,   // 전체 응답 대기 상한
     progressThrottleMs: 1500
   };
@@ -343,12 +344,19 @@
           seen.add(img);
           if (!isVisible(img)) continue;
           if (img.closest && img.closest('model-thoughts')) continue;
-          const src = (img.getAttribute('src') || img.src || '').trim();
+          let src = (img.getAttribute('src') || img.src || '').trim();
+          if (!src) {
+            const srcset = (img.getAttribute('srcset') || '').trim();
+            if (srcset) src = srcset.split(',')[0].trim().split(/\s+/)[0] || '';
+          }
           if (!src || src === 'about:blank') continue;
-          // 명시적 크기가 64px 미만인 작은 아이콘·아바타는 제외
+          // 아바타·아이콘 제외
+          const altOrClass = ((img.getAttribute('alt') || '') + ' ' + (img.className || '')).toLowerCase();
+          if (/\b(?:avatar|profile-icon|favicon)\b/.test(altOrClass)) continue;
+          // 명시적 크기가 48px 미만인 작은 아이콘은 제외
           const w = Number(img.naturalWidth || img.width || img.getAttribute('width') || 0);
           const h = Number(img.naturalHeight || img.height || img.getAttribute('height') || 0);
-          if ((w > 0 && w < 64) || (h > 0 && h < 64)) continue;
+          if ((w > 0 && w < 48) || (h > 0 && h < 48)) continue;
           if (img.complete === false && !src.startsWith('data:image/') && !img.getAttribute('width')) continue;
           out.push({ el: img, src, selector: list[i].sel });
         }
@@ -356,8 +364,68 @@
       return out;
     }
 
+    /** 마우스 호버 시에만 다운로드 오버레이 버튼을 활성화하는 UI에 대응 */
+    function revealImageActions(responseEl, imgEl) {
+      const targets = [];
+      if (imgEl) {
+        targets.push(imgEl);
+        if (imgEl.parentElement) targets.push(imgEl.parentElement);
+      }
+      const container = find('imageContainer', responseEl);
+      if (container && container.el) targets.push(container.el);
+      if (responseEl) targets.push(responseEl);
+      for (const t of targets) {
+        try {
+          t.dispatchEvent(new win.Event('mouseenter', { bubbles: true }));
+          t.dispatchEvent(new win.Event('mouseover', { bubbles: true }));
+        } catch { /* ignore */ }
+      }
+    }
+
+    /**
+     * 응답 블록 안에서 생성 이미지 다운로드 버튼을 찾는다.
+     * 1) 보이는(isVisible) 활성 버튼 우선
+     * 2) 호버 전 opacity:0 / visibility:hidden 상태인 다운로드 전용 버튼도 DOM에 연결되어 있으면 허용
+     * 3) generated-image / single-image 내부의 mat-icon="download" 버튼 대체 탐색
+     */
+    function findImageDownloadButton(responseEl, imgEl) {
+      if (!responseEl) return null;
+      revealImageActions(responseEl, imgEl);
+      const visibleBtn = find('imageDownloadButton', responseEl, (el) => isEnabled(el) && !(el.closest && el.closest('model-thoughts')));
+      if (visibleBtn) return visibleBtn;
+
+      const list = SEL.imageDownloadButton || [];
+      for (let i = 0; i < list.length; i++) {
+        let nodes;
+        try { nodes = responseEl.querySelectorAll(list[i].sel); } catch { continue; }
+        for (const el of nodes) {
+          if (!el || !el.isConnected) continue;
+          if (el.closest && el.closest('model-thoughts')) continue;
+          const target = el.tagName === 'BUTTON' ? el : (el.querySelector && el.querySelector('button')) || el;
+          if (!isEnabled(target)) continue;
+          return { el: target, selector: list[i].sel, index: i };
+        }
+      }
+
+      // mat-icon 텍스트 또는 fonticon이 download인 버튼 보조 탐색
+      try {
+        const icons = responseEl.querySelectorAll('generated-image mat-icon, single-image mat-icon, model-response mat-icon');
+        for (const icon of icons) {
+          const iconName = ((icon.getAttribute('fonticon') || '') + ' ' + (icon.textContent || '')).trim().toLowerCase();
+          if (/\b(?:download|file_download|save_alt)\b/.test(iconName)) {
+            const btn = icon.closest && icon.closest('button');
+            if (btn && isEnabled(btn) && !(btn.closest && btn.closest('model-thoughts'))) {
+              return { el: btn, selector: 'mat-icon[download]', index: -1 };
+            }
+          }
+        }
+      } catch { /* ignore */ }
+      return null;
+    }
+
     /** 생성된 <img>에서 base64 dataUrl 또는 원본 URL을 추출 */
     async function extractImageData(imgEl, src) {
+      if (!src) return { imageDataUrl: undefined, imageUrl: '', mimeType: 'image/png', method: 'none' };
       if (src.startsWith('data:image/')) {
         const mimeMatch = src.match(/^data:(image\/[a-z0-9.+-]+);/i);
         return { imageDataUrl: src, imageUrl: src, mimeType: mimeMatch ? mimeMatch[1] : 'image/png', method: 'data-url' };
@@ -368,7 +436,7 @@
           const res = await win.fetch(src, { credentials: 'include' });
           if (res && res.ok) {
             const blob = await res.blob();
-            if (blob && blob.size > 0) {
+            if (blob && blob.size > 0 && (!blob.type || blob.type.startsWith('image/'))) {
               const dataUrl = await new Promise((resolve, reject) => {
                 const reader = new win.FileReader();
                 reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
@@ -386,7 +454,7 @@
       try {
         const w = Number(imgEl.naturalWidth || imgEl.width || 0);
         const h = Number(imgEl.naturalHeight || imgEl.height || 0);
-        if (w >= 64 && h >= 64 && typeof doc.createElement === 'function') {
+        if (w >= 48 && h >= 48 && typeof doc.createElement === 'function') {
           const canvas = doc.createElement('canvas');
           canvas.width = w;
           canvas.height = h;
@@ -399,18 +467,21 @@
             }
           }
         }
-      } catch { /* cross-origin canvas tainted; fallback to url-only */ }
+      } catch { /* cross-origin canvas tainted; fallback to download button */ }
       return { imageDataUrl: undefined, imageUrl: src, mimeType: 'image/png', method: 'url-only' };
     }
 
     /**
-     * Phase 5: 이미지 생성 응답 감시 (기존 텍스트 watch와 분리).
-     * - 이번 요청의 응답 블록(locateResponse) 안에서만 생성 이미지를 찾음
-     * - 중지 버튼과 이미지 로딩 표시가 사라지고 이미지가 안정되면 이미지 데이터를 추출해 반환
-     * - 이미지가 전혀 생성되지 않고 텍스트 답변만 끝났으면 NO_IMAGE_GENERATED 반환
+     * Phase 5 개선(반자동 이미지 수신):
+     * 1) 이번 요청의 응답 블록(locateResponse) 안에서 생성 이미지(또는 이미지 컨테이너/다운로드 버튼) 감지
+     * 2) dataUrl 직접 추출 시도 → 성공 시 즉시 반환
+     * 3) dataUrl 추출 실패/CORS 차단 시 다운로드 버튼(findImageDownloadButton)을 찾아 클릭하고 downloadClicked: true 반환
+     * 4) 다운로드 버튼도 찾지 못하면 무한 대기하지 않고 downloadButtonMissing: true로 즉시 보고
+     * 5) 생성이 끝났으나 이미지가 전혀 없으면 NO_IMAGE_GENERATED 또는 IMAGE_DETECT_FAILED로 즉시 전환 (응답 대기 멈춤 방지)
      */
     async function watchImage(ctx, onProgress) {
       const start = now();
+      const noImageIdleLimit = timing.noImageIdleMs || Math.max(timing.stableMs * 4, 800);
       let lastSig = null; let lastChange = now(); let stopSeen = false; let lastProgress = 0; let found = null;
       for (;;) {
         await sleep(timing.pollMs);
@@ -431,42 +502,143 @@
 
         const ex = extract(loc.el);
         const imgs = findGeneratedImages(loc.el);
-        const sig = `${ex.text}::${imgs.map((x) => x.src).join('|')}`;
+        const hasContainer = !!find('imageContainer', loc.el);
+        const dlBtnCandidate = (!generating && (imgs.length > 0 || hasContainer)) ? findImageDownloadButton(loc.el, imgs[0] && imgs[0].el) : null;
+        const sig = `${ex.text}::${imgs.map((x) => x.src).join('|')}::${hasContainer ? 'C' : ''}`;
         if (sig !== lastSig) { lastSig = sig; lastChange = t; }
 
         if (onProgress && t - lastProgress >= timing.progressThrottleMs) {
           lastProgress = t;
-          onProgress(imgs.length > 0 ? 'collecting' : 'waiting', { chars: ex.text.length, images: imgs.length, generating, isolation: loc.isolation });
+          onProgress((imgs.length > 0 || hasContainer) ? 'collecting' : 'waiting', {
+            chars: ex.text.length,
+            images: imgs.length,
+            hasContainer,
+            generating,
+            isolation: loc.isolation
+          });
         }
 
         const stableFor = t - lastChange;
-        const actions = !!find('responseActions', loc.el) || !!find('imageDownloadButton', loc.el);
+        const actions = !!find('responseActions', loc.el) || !!dlBtnCandidate;
         const needStable = actions ? timing.stableMs : (stopSeen ? timing.stableMs * 2 : timing.stableMs * 3);
 
-        if (!generating && imgs.length > 0 && stableFor >= timing.stableMs) {
-          const picked = imgs[0];
-          const extracted = await extractImageData(picked.el, picked.src);
+        // 1) 이미지(또는 이미지 컨테이너)가 생성 완료되어 안정화된 경우
+        if (!generating && (imgs.length > 0 || (hasContainer && dlBtnCandidate)) && stableFor >= timing.stableMs) {
+          const picked = imgs[0] || null;
+          const extracted = picked
+            ? await extractImageData(picked.el, picked.src)
+            : { imageDataUrl: undefined, imageUrl: '', mimeType: 'image/png', method: 'container-only' };
+
+          // 1-A) dataUrl 직접 추출에 성공했고 크기가 안전한 경우(750KB 이하) 그대로 반환
+          // 고해상도 이미지(>750KB)는 Native Messaging 부하를 피하고 원본 화질 확보를 위해 다운로드 버튼 경로를 우선 시도
+          const dlBtn = dlBtnCandidate || findImageDownloadButton(loc.el, picked && picked.el);
+          const preferDownloadBtn = Boolean(dlBtn && dlBtn.el && extracted.imageDataUrl && extracted.imageDataUrl.length > 750 * 1024);
+
+          if (extracted.imageDataUrl && !preferDownloadBtn) {
+            return {
+              ok: true,
+              text: ex.text,
+              codeBlocks: ex.codeBlocks,
+              isolation: loc.isolation,
+              imageDataUrl: extracted.imageDataUrl,
+              imageUrl: extracted.imageUrl,
+              mimeType: extracted.mimeType,
+              imageMethod: extracted.method,
+              imageSelector: picked ? picked.selector : 'imageContainer',
+              downloadClicked: false,
+              completion: { stopSeen, actions, stableMs: stableFor }
+            };
+          }
+
+          // 1-B) dataUrl 추출 실패(CORS 등) 또는 고해상도 대용량 → 다운로드 버튼을 찾아 클릭 시도
+          if (dlBtn && dlBtn.el) {
+            try {
+              dlBtn.el.click();
+              return {
+                ok: true,
+                text: ex.text,
+                codeBlocks: ex.codeBlocks,
+                isolation: loc.isolation,
+                imageUrl: extracted.imageUrl,
+                mimeType: extracted.mimeType,
+                imageMethod: 'download-button',
+                imageSelector: picked ? picked.selector : 'imageContainer',
+                downloadClicked: true,
+                downloadButtonSelector: dlBtn.selector,
+                completion: { stopSeen, actions, stableMs: stableFor }
+              };
+            } catch { /* 클릭 예외 시 아래 대체 경로 */ }
+          }
+
+          // 1-B-2) 다운로드 버튼 클릭 실패 시 추출해 둔 dataUrl이라도 있으면 반환
+          if (extracted.imageDataUrl) {
+            return {
+              ok: true,
+              text: ex.text,
+              codeBlocks: ex.codeBlocks,
+              isolation: loc.isolation,
+              imageDataUrl: extracted.imageDataUrl,
+              imageUrl: extracted.imageUrl,
+              mimeType: extracted.mimeType,
+              imageMethod: extracted.method,
+              imageSelector: picked ? picked.selector : 'imageContainer',
+              downloadClicked: false,
+              completion: { stopSeen, actions, stableMs: stableFor }
+            };
+          }
+
+          // 1-C) 이미지는 감지되었으나 dataUrl도 안 되고 다운로드 버튼도 찾지 못한 경우 → 즉시 보고하여 수동 안내로 전환
           return {
             ok: true,
             text: ex.text,
             codeBlocks: ex.codeBlocks,
             isolation: loc.isolation,
-            imageDataUrl: extracted.imageDataUrl,
             imageUrl: extracted.imageUrl,
             mimeType: extracted.mimeType,
-            imageMethod: extracted.method,
-            imageSelector: picked.selector,
+            imageMethod: 'manual-needed',
+            imageSelector: picked ? picked.selector : 'imageContainer',
+            downloadClicked: false,
+            downloadButtonMissing: true,
             completion: { stopSeen, actions, stableMs: stableFor }
           };
         }
 
-        if (!generating && imgs.length === 0 && ex.text && stableFor >= needStable) {
+        // 2) 이미지 없이 텍스트 응답만 완료된 경우 (정책 거부·설명 응답 등)
+        if (!generating && imgs.length === 0 && !hasContainer && ex.text && stableFor >= needStable) {
           return {
             ok: false,
             errorCode: 'NO_IMAGE_GENERATED',
             needsUser: true,
             message: 'Gemini가 이미지를 생성하지 않고 텍스트로만 응답했습니다. 프롬프트 정책 제한 또는 모델 상태를 확인해 주세요.',
             partialText: ex.text
+          };
+        }
+
+        // 3) 생성이 멈췄는데(텍스트도 없고 이미지 셀렉터도 안 맞음) 일정 시간 이상 변화가 없는 경우 → 무한 대기 방지!
+        if (!generating && imgs.length === 0 && !hasContainer && !ex.text && stableFor >= noImageIdleLimit) {
+          // 혹시 다운로드 버튼만이라도 응답 블록에 존재하는지 마지막으로 확인
+          const fallbackDl = findImageDownloadButton(loc.el, null);
+          if (fallbackDl && fallbackDl.el) {
+            try {
+              fallbackDl.el.click();
+              return {
+                ok: true,
+                text: '',
+                codeBlocks: [],
+                isolation: loc.isolation,
+                imageMethod: 'download-button-fallback',
+                downloadClicked: true,
+                downloadButtonSelector: fallbackDl.selector,
+                completion: { stopSeen, actions: true, stableMs: stableFor }
+              };
+            } catch { /* ignore */ }
+          }
+          return {
+            ok: false,
+            errorCode: 'IMAGE_DETECT_FAILED',
+            needsUser: true,
+            message: 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.',
+            partialText: ''
           };
         }
 
@@ -508,7 +680,7 @@
       };
     }
 
-    return { submit, watch, watchImage, findGeneratedImages, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
+    return { submit, watch, watchImage, findGeneratedImages, findImageDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };

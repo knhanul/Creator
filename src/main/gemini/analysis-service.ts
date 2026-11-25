@@ -204,7 +204,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
         phase: 'needs_user',
         needsUser: true,
         errorCode: 'IMAGE_DATA_MISSING',
-        errorMessage: 'Gemini에서 생성된 이미지 데이터를 가져오지 못했습니다. Gemini 탭에서 이미지를 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.'
+        errorMessage: 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.'
       });
     }
 
@@ -333,6 +333,48 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       const r = await queue.onRemoteError(jobId, msg.requestId, msg.projectId, String(payload.code || 'REMOTE_ERROR'), String(payload.message || ''), payload.partialText ? String(payload.partialText) : undefined);
       if (r === 'applied') void kick();
       return r;
+    }
+    if (msg.type === 'DOWNLOAD_EVENT') {
+      const targetJob = queue.get(jobId);
+      if (!targetJob || targetJob.kind !== 'image') return 'ignored';
+      const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
+      if (!msgSceneId || msgSceneId !== targetJob.sceneId) return 'ignored';
+      if (payload.state === 'complete' && typeof payload.downloadPath === 'string' && payload.downloadPath.trim()) {
+        // RESPONSE_RECEIVED보다 DOWNLOAD_EVENT가 먼저 또는 늦게 도착한 경우에도 파일이 확보되면 반영
+        if (targetJob.outcome === 'applied') return 'ignored';
+        if (targetJob.state === 'completed') {
+          await queue.setOutcome(targetJob.jobId, targetJob.requestId, {
+            downloadPath: payload.downloadPath.trim(),
+            ...(typeof payload.mimeType === 'string' ? { imageMimeType: payload.mimeType } : {})
+          });
+          await applyCompletedImage(targetJob.jobId);
+          void kick();
+          return 'applied';
+        }
+        const r = await queue.onResponse(targetJob.jobId, msg.requestId, targetJob.resultText || '', true, {
+          projectId: msg.projectId,
+          sceneId: msgSceneId,
+          downloadPath: payload.downloadPath.trim(),
+          mimeType: typeof payload.mimeType === 'string' ? payload.mimeType : undefined
+        });
+        if (r === 'applied') {
+          await applyCompletedImage(targetJob.jobId);
+          void kick();
+        }
+        return r;
+      }
+      if (payload.state === 'interrupted') {
+        const r = await queue.onRemoteError(
+          targetJob.jobId,
+          msg.requestId,
+          msg.projectId,
+          'DOWNLOAD_FAILED',
+          'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.'
+        );
+        if (r === 'applied') void kick();
+        return r;
+      }
+      return 'ignored';
     }
     if (msg.type === 'PROMPT_SUBMIT_RESULT') {
       // 시간 초과 후 늦게 도착한 전송 결과: '전송됨'이면 재전송 없이 응답 대기로 전환

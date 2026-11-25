@@ -63,14 +63,19 @@ function kindFromExtension(ext:string):AssetKind|null{
   if(['.mp4','.mov','.m4v','.webm','.mkv'].includes(e))return 'video';
   if(['.mp3','.wav','.m4a','.flac','.ogg','.aac'].includes(e))return 'audio';return null;
 }
-export async function importAssets(id:string):Promise<StudioProject|null>{
+export async function importAssets(id:string,targetSceneId?:string):Promise<StudioProject|null>{
   const chosen=await dialog.showOpenDialog({title:'이미지·영상·음악 가져오기',properties:['openFile','multiSelections'],filters:[{name:'미디어 파일',extensions:['png','jpg','jpeg','webp','gif','bmp','mp4','mov','m4v','webm','mkv','mp3','wav','m4a','flac','ogg','aac']}]});
   if(chosen.canceled || !chosen.filePaths.length)return null;
   const p=await readProject(id);
+  let lastImportedForScene:string|null=null;
   for(const source of chosen.filePaths){const kind=kindFromExtension(extname(source));if(!kind)continue;
     const unique=randomUUID();const name=basename(source);const relative=`assets/${kind}/${unique}_${safeName(name)}`;
     const destination=resolveAssetPath(id,relative);await mkdir(dirname(destination),{recursive:true});await copyFile(source,destination);
     const s=await stat(destination);p.assets.push({id:unique,kind,name,relativePath:relative,bytes:s.size,importedAt:new Date().toISOString()});
+    if(kind==='image'||kind==='video')lastImportedForScene=unique;
+  }
+  if(targetSceneId&&lastImportedForScene){
+    p.scenes=p.scenes.map(sc=>sc.id===targetSceneId?{...sc,assetId:lastImportedForScene,status:'complete' as const}:sc);
   }
   const next={...p,revision:p.revision+1,updatedAt:new Date().toISOString()};
   await persist(next);return next;
@@ -119,8 +124,24 @@ export async function saveGeneratedImageAsset(
     buffer = decoded.buffer;
     ext = decoded.ext;
   } else if (input.downloadPath) {
-    buffer = await readFile(input.downloadPath);
-    if (!buffer.byteLength) throw new Error('다운로드된 이미지 파일이 비어 있습니다.');
+    // Chrome 다운로드 완료 직후 Windows 파일 잠금(.crdownload 이름 변경 등)이 잠깐 남을 수 있어 짧게 재시도
+    let readBuf: Buffer | null = null;
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        readBuf = await readFile(input.downloadPath);
+        if (readBuf.byteLength > 0) break;
+      } catch (e) {
+        lastErr = e;
+      }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    if (!readBuf || !readBuf.byteLength) {
+      throw new Error(
+        `다운로드된 이미지 파일을 읽지 못했습니다: ${lastErr instanceof Error ? lastErr.message : '파일이 비어 있거나 접근할 수 없습니다.'}`
+      );
+    }
+    buffer = readBuf;
     const pathExt = extname(input.downloadPath).replace(/^\./, '').toLowerCase();
     if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(pathExt)) {
       ext = pathExt === 'jpeg' ? 'jpg' : pathExt;

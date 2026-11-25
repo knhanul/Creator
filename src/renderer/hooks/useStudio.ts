@@ -27,8 +27,8 @@ export function useStudio(){
     queue.current=task.catch(err=>{flash(err instanceof Error?err.message:String(err),'error');}).finally(()=>setBusy(false));
     return task.catch(()=>null);
   },[flash,refresh]);
-  const importAssets=useCallback(async()=>{
-    const task=queue.current.then(async()=>{const p=projectRef.current;if(!p)return null;setBusy(true);const result=await window.studio.assets.import(p.id);if(result){projectRef.current=result;setProject(result);await refresh();flash('미디어를 가져왔습니다.','success');}return result;});
+  const importAssets=useCallback(async(targetSceneId?:string)=>{
+    const task=queue.current.then(async()=>{const p=projectRef.current;if(!p)return null;setBusy(true);const result=await window.studio.assets.import(p.id,targetSceneId);if(result){projectRef.current=result;setProject(result);await refresh();flash(targetSceneId?`미디어를 가져와 ${targetSceneId} 장면에 연결했습니다.`:'미디어를 가져왔습니다.','success');}return result;});
     queue.current=task.catch(err=>flash(String(err),'error')).finally(()=>setBusy(false));
     return task.catch(()=>null);
   },[flash,refresh]);

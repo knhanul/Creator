@@ -11,7 +11,7 @@ import {
 import {BRAND} from '../shared/brand';
 import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
 import {makeAIPrompt} from '../shared/prompts';
-import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,guideFor,isAIStage,phaseView} from '../shared/gemini-analysis';
+import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,guideFor,isAIStage,makeImageGenerationPrompt,phaseView} from '../shared/gemini-analysis';
 import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDialog,type AINavTarget} from './components/AIDialog';
@@ -152,6 +152,17 @@ function App(){
       if(r.job&&r.job.sceneId)setImageJobs(o=>({...o,[r.job!.sceneId!]:r.job!}));
       flash(r.reused?(r.message||`${sceneId} 이미지 생성 작업이 이미 진행 중입니다.`):`${sceneId} 장면 이미지 생성 요청을 Gemini 작업 큐에 등록했습니다.`,'info');
     }catch(e){flash(String(e),'error');}
+  };
+  const copySceneImagePrompt=async(sceneId:string)=>{
+    if(!project)return;
+    try{
+      const text=makeImageGenerationPrompt(project,sceneId);
+      await copy(text);
+    }catch(e){
+      const sc=project.scenes.find(x=>x.id===sceneId);
+      if(sc?.imagePrompt?.trim())await copy(sc.imagePrompt.trim());
+      else flash(e instanceof Error?e.message:String(e),'error');
+    }
   };
   const analysisJob=stageJobs.analysis;
   const analysisView=phaseView(analysisJob);
@@ -297,9 +308,11 @@ function App(){
                       {job&&(pv?.phase==='needs_user'||pv?.phase==='error')&&<div className="scene-image-gen-guide">
                         <ShieldAlert size={14}/>
                         <div>
-                          <strong>{job.errorMessage||guide?.cause||'확인이 필요합니다.'}</strong>
-                          {guide&&<p>{guide.fix}</p>}
+                          <strong>수동으로 추가하기 안내 · {guide?.cause||job.errorMessage||'자동 이미지 수신이 완료되지 않았습니다.'}</strong>
+                          <p>{guide?.fix||job.errorMessage||'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.'}</p>
                           <div className="scene-image-gen-recovery">
+                            <Button size="sm" onClick={async()=>{const res=await studio.importAssets(s.id);if(res){const linkedNow=res.scenes.find(x=>x.id===s.id)?.assetId;if(linkedNow)setActiveAsset(linkedNow);}}}><Upload size={13}/> 미디어 가져와서 {s.id}에 연결</Button>
+                            {hasPrompt&&<Button size="sm" kind="outline" onClick={()=>void copySceneImagePrompt(s.id)}><Copy size={13}/> 프롬프트 복사</Button>}
                             {job.state==='needs_confirmation'&&job.sendConfirmed&&<Button size="sm" kind="secondary" onClick={async()=>{const u=await window.studio.gemini.analysis.fetchResult(job.jobId);flash(u.message||'응답을 다시 요청했습니다.',u.success?'info':'error');}}>응답 다시 가져오기</Button>}
                             {job.state==='needs_confirmation'&&<Button size="sm" kind="outline" onClick={async()=>{const u=await window.studio.gemini.jobs.confirm(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('사용자 확인 후 재전송 대기열에 넣었습니다.','info');}}>확인 후 재전송</Button>}
                             {job.state==='needs_confirmation'&&<Button size="sm" kind="secondary" onClick={async()=>{const u=await window.studio.gemini.jobs.continue(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('재전송 없이 응답 대기로 전환했습니다.','info');}}>응답 기다리기</Button>}
@@ -311,6 +324,7 @@ function App(){
                     </div>
                     <div className="scene-image-gen-actions">
                       {!hasPrompt?<Button size="sm" kind="outline" onClick={()=>go('prompt')}>프롬프트 작성</Button>:isBusy?<Button size="sm" kind="secondary" disabled><Sparkles size={14}/> {pv?.label||'생성 중…'}</Button>:<Button size="sm" onClick={()=>void startSceneImage(s.id)}><Sparkles size={14}/> {linked?'Gemini로 다시 생성':'Gemini로 이미지 생성'}</Button>}
+                      {hasPrompt&&<Button size="sm" kind="outline" onClick={()=>void copySceneImagePrompt(s.id)}><Copy size={13}/> 프롬프트 복사</Button>}
                       {isBusy&&job&&<Button size="sm" kind="ghost" onClick={async()=>{const u=await window.studio.gemini.jobs.cancel(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('작업 취소를 요청했습니다.','info');}}>취소</Button>}
                     </div>
                   </div>;

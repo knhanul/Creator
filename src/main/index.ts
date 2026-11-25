@@ -29,7 +29,7 @@ function registerHandlers(){
   ipcMain.handle('projects:save',async(_event,p)=>saveProject(p));
   ipcMain.handle('projects:archive',async(_event,id:string,archive:boolean)=>archiveProject(id,archive));
   ipcMain.handle('projects:export',async(_event,id:string)=>exportFolder(id));
-  ipcMain.handle('assets:import',async(_event,id:string)=>importAssets(id));
+  ipcMain.handle('assets:import',async(_event,id:string,targetSceneId?:string)=>importAssets(id,targetSceneId?String(targetSceneId):undefined));
   ipcMain.handle('assets:reveal',async(_event,id:string,assetId:string)=>revealAsset(id,assetId));
   ipcMain.handle('clipboard:write',async(_event,text:string)=>clipboard.writeText(String(text)));
   ipcMain.handle('sources:providers',async()=>sourceService.listProviders());

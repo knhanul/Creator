@@ -47,6 +47,9 @@
         const watcher = isImageStage && typeof dom.watchImage === 'function' ? dom.watchImage : dom.watch;
         const out = await watcher(ctx, (phase, info) => emit('progress', msg, { phase, info }));
         if (out.ok) {
+          if (out.downloadClicked) {
+            emit('progress', msg, { phase: 'collecting', info: { downloadClicked: true, downloadButtonSelector: out.downloadButtonSelector } });
+          }
           emit('complete', msg, {
             text: out.text || '',
             codeBlocks: out.codeBlocks || [],
@@ -54,7 +57,10 @@
             completion: out.completion,
             ...(out.imageDataUrl ? { imageDataUrl: out.imageDataUrl } : {}),
             ...(out.imageUrl ? { imageUrl: out.imageUrl } : {}),
-            ...(out.mimeType ? { mimeType: out.mimeType } : {})
+            ...(out.mimeType ? { mimeType: out.mimeType } : {}),
+            ...(out.imageMethod ? { imageMethod: out.imageMethod } : {}),
+            ...(out.downloadClicked ? { downloadClicked: true, downloadButtonSelector: out.downloadButtonSelector } : {}),
+            ...(out.downloadButtonMissing ? { downloadButtonMissing: true } : {})
           });
         } else {
           emit('error', msg, { errorCode: out.errorCode, message: out.message, needsUser: out.needsUser, partialText: out.partialText || '' });
