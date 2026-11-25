@@ -125,6 +125,13 @@ function StageAutomation({project,stage,onClose,onApply,onCopy,autoStart,onNavig
   </>;
 }
 
+/** 오른쪽에 붙는 AI 작업 창 (팝업 대신: 화면을 가리지 않고 진행 상황·수동 연결을 함께 봄) */
+export function AIDock(props:Props){
+  return <aside className="side-panel ai-dock" role="complementary" aria-label="AI 작업 창">
+    <StageAutomation {...props}/>
+  </aside>;
+}
+
 export function AIDialog(props:Props){
   const {onClose}=props;
   return <div className="modal-backdrop ai-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="modal ai-modal" role="dialog" aria-modal="true" aria-label="AI 연결 워크벤치">

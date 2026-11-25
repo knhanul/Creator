@@ -1,20 +1,29 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {useTheme} from './theme/useTheme';
 import {THEME_META, THEMES, type ThemeId} from './theme/themes';
 import {
-  AppWindow, Archive, ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, CheckCircle2,
-  ChevronDown, ChevronRight, Clapperboard, Clock3, Copy, Download, Film, Folder, FolderOpen, HardDriveDownload, Home, Image as ImageIcon, Info,
-  Layers3, LayoutGrid, ListOrdered, Mic2, MonitorPlay, Music2, Palette,
-  PenLine, Plus, RotateCcw, Search, Settings2, ShieldAlert, Sparkles, Trash2, Upload,
+  Archive, ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, CheckCircle2,
+  ChevronDown, Clapperboard, Clock3, Copy, Feather, Film, FolderOpen, HardDriveDownload, Home, Image as ImageIcon, Info,
+  Landmark, Layers3, LayoutGrid, ListOrdered, Mic2, MonitorPlay, Music2, NotebookPen, Palette,
+  PenLine, Plus, RotateCcw, ScrollText, Search, Settings2, ShieldAlert, Sparkles, Trash2, Upload,
   WandSparkles, X
 } from 'lucide-react';
 import {BRAND} from '../shared/brand';
-import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
-import {makeAIPrompt} from '../shared/prompts';
+import {AUDIENCES,GENRES,NEW_DRAFT_BRIEF,STAGE_ORDER,UNTITLED,isEmptyDraft,readyForHandoff,stageComplete} from '../shared/workflow';
 import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,getProjectBgmPrompt,guideFor,isAIStage,makeImageGenerationPrompt,makeMusicGenerationPrompt,makeVideoGenerationPrompt,phaseView} from '../shared/gemini-analysis';
-import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
+import type {AIStage,Brief,Genre,MediaAsset,ProjectSummary,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
-import {AIDialog,type AINavTarget} from './components/AIDialog';
+import {AIDock,type AINavTarget} from './components/AIDialog';
+import {type ApprovedOriginalPayload} from './components/OriginalSourcePanel';
+import {RIGHTS_STATUS_META} from '../shared/copyright';
+import {approveOriginalInProject} from '../shared/original-versioning';
+import {applyBriefAutosave} from '../shared/brief-edit';
+import {STEP_TITLES,TOTAL_STEPS,completedSteps,stepGuide} from '../shared/step-guide';
+import {Button,Card,Empty,Field,IconButton,Tag} from './components/UI';
+import {ActionBar,DocHeader,SAVE_LABEL,StepLayout,type SaveState} from './components/Shell';
+import {ProjectPropsPanel} from './components/ProjectPanel';
+import {BriefPage,type BriefFlush} from './pages/BriefPage';
+
 const EMPTY_STAGE_JOBS:Record<AIStage,GeminiJobRecord|null>={analysis:null,storyboard:null,prompt:null,editplan:null};
 const STAGE_DONE_FLASH:Record<AIStage,string>={
   analysis:'Gemini 기획 분석 결과를 검사하고 작품에 저장했습니다. 화풍과 연출안을 선택하세요.',
@@ -23,19 +32,34 @@ const STAGE_DONE_FLASH:Record<AIStage,string>={
   editplan:'Gemini 최종 편집 구성을 검사하고 편집안에 저장했습니다.'
 };
 const stageHasResult=(p:StudioProject,st:AIStage)=>st==='analysis'?!!p.analysis:st==='storyboard'?p.scenes.length>0:st==='prompt'?p.scenes.some(s=>!!s.imagePrompt):p.assembly.clips.length>0;
-import {NewProjectModal} from './components/NewProjectModal';
-import {OriginalSourcePanel,type ApprovedOriginalPayload} from './components/OriginalSourcePanel';
-import {RIGHTS_STATUS_META,evaluateRightsEvidence,fromLegacyRightsStatus} from '../shared/copyright';
-import {approveOriginalInProject,assessOriginalChangeImpact} from '../shared/original-versioning';
-import {Button,Card,Empty,Field,IconButton,Kpi,SectionHeading,Tag} from './components/UI';
 
 type View = 'home'|'projects'|'brief'|'analysis'|'storyboard'|'prompt'|'media'|'assembly'|'handoff'|'settings';
+const STEP_VIEWS:Stage[]=['brief','analysis','storyboard','prompt','media','assembly','handoff'];
+const isStepView=(v:View):v is Stage=>(STEP_VIEWS as string[]).includes(v);
 const iconFor:Record<string,typeof Home>={home:Home,projects:Layers3,brief:BookOpen,analysis:Sparkles,storyboard:LayoutGrid,prompt:WandSparkles,media:ImageIcon,assembly:Clapperboard,handoff:HardDriveDownload,settings:Settings2};
+const STAGE_HINTS:Record<Stage,string>={
+  brief:'원문을 찾아 채우거나 직접 입력해 제작 기준 원문을 정합니다.',
+  analysis:'작품의 분위기와 시각적 방향을 정합니다. 원하는 화풍과 연출안을 직접 선택하세요.',
+  storyboard:'장면별 원문과 시각 연출을 구성하고, 개별 장면을 수정할 수 있습니다.',
+  prompt:'이미지와 동영상 생성 지시문을 장면별로 관리합니다. 내용은 직접 수정할 수도 있습니다.',
+  media:'장면별 이미지·동영상과 배경음악을 Gemini로 만들거나 파일을 가져와 연결합니다.',
+  assembly:'미디어 배치, 재생 시간, 전환과 자막을 설계합니다. 녹음은 더빙 프로그램에서 합니다.',
+  handoff:'미디어·기획·편집안이 들어 있는 제작 패키지를 내보냅니다.'
+};
+const GENRE_TILES:{genre:Genre,icon:typeof Home,desc:string}[]=[
+  {genre:'poetry',icon:Feather,desc:'시 한 편을 낭독 영상으로'},
+  {genre:'bible',icon:BookOpen,desc:'성경 범위를 골라 바로 본문 채우기'},
+  {genre:'essay',icon:NotebookPen,desc:'에세이·수필'},
+  {genre:'novel',icon:ScrollText,desc:'소설의 한 장면'},
+  {genre:'classic',icon:Landmark,desc:'고전 작품'}
+];
+const PANEL_KEYS={brief:'creator-props-panel-brief',steps:'creator-props-panel-steps'} as const;
+const readPanel=(k:string,def:boolean)=>{try{const v=localStorage.getItem(k);return v===null?def:v==='open';}catch{return def;}};
 const formatDate=(d:string)=>new Date(d).toLocaleDateString('ko-KR',{month:'short',day:'numeric'});
+const formatTime=(d:string)=>new Date(d).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
 const fileSize=(n:number)=>n<1024*1024?`${(n/1024).toFixed(0)} KB`:`${(n/1024/1024).toFixed(1)} MB`;
 const mediaUrl=(p:StudioProject,a:MediaAsset)=>`gomo-asset://media/${p.id}/${a.id}`;
 const sceneAsset=(p:StudioProject,s:Scene)=>p.assets.find(a=>a.id===s.assetId);
-const describeScene=(s:Scene)=>s.kind==='video'?'영상 장면':'이미지 장면';
 function BrandIcon({size=34}:{size?:number}){return <div className="brand-icon" style={{width:size,height:size}}><span>g</span><i/></div>;}
 function Photo({project,asset}:{project:StudioProject,asset?:MediaAsset}){
   if(!asset)return <div className="media-placeholder"><ImageIcon size={23}/><span>미디어 미연결</span></div>;
@@ -43,18 +67,20 @@ function Photo({project,asset}:{project:StudioProject,asset?:MediaAsset}){
   if(asset.kind==='video')return <video className="media-image" src={mediaUrl(project,asset)} controls preload="metadata"/>;
   return <div className="media-placeholder audio-placeholder"><Music2 size={27}/><span>오디오 파일</span></div>;
 }
-function StageProgress({project,onSelect}:{project:StudioProject,onSelect:(v:View)=>void}){
-  return <div className="stage-progress">{STAGE_ORDER.map((s,i)=>{const complete=stageComplete(project,s);const Icon=iconFor[s];return <button key={s} className={`stage-item ${complete?'complete':''}`} onClick={()=>onSelect(s as View)} title={STAGE_NAMES[s]}><span className="stage-dot">{complete?<Check size={13}/>:String(i+1).padStart(2,'0')}</span><span className="stage-label">{STAGE_NAMES[s]}</span></button>;})}</div>;
-}
-function SceneModal({scene,onClose,onSave}:{scene:Scene,onClose:()=>void,onSave:(s:Scene)=>void}){
+/** 스토리보드 카드 안에서 바로 고치는 장면 편집 (팝업 없음) */
+function SceneEditor({scene,isNew,onCancel,onSave}:{scene:Scene,isNew:boolean,onCancel:()=>void,onSave:(s:Scene)=>void}){
   const [draft,setDraft]=useState(scene);const update=<K extends keyof Scene>(k:K,v:Scene[K])=>setDraft(old=>({...old,[k]:v}));
-  return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><section className="modal scene-modal" role="dialog" aria-modal="true" aria-label="장면 편집">
-    <div className="modal-head"><div className="modal-head-icon"><Clapperboard size={21}/></div><div><div className="eyebrow">SCENE EDITOR</div><h2>{scene.id} · 장면 편집</h2><p>편집한 내용은 프로젝트에 저장됩니다.</p></div><IconButton label="닫기" onClick={onClose}><X size={20}/></IconButton></div>
-    <div className="modal-form"><div className="form-row"><Field label="장면 제목"><input value={draft.title} onChange={e=>update('title',e.target.value)}/></Field><Field label="권장 유형"><select value={draft.kind} onChange={e=>update('kind',e.target.value as Scene['kind'])}><option value="image">이미지</option><option value="video">동영상</option></select></Field></div>
-    <div className="form-row"><Field label="장면 식별자"><input value={draft.id} disabled/></Field><Field label="예상 재생 시간 (초)"><input type="number" min={2} max={300} value={draft.durationSec} onChange={e=>update('durationSec',Math.max(2,Number(e.target.value)||2))}/></Field></div>
-    <Field label="낭독 원문"><textarea rows={4} value={draft.narration} onChange={e=>update('narration',e.target.value)}/></Field><Field label="장면 묘사"><textarea rows={4} value={draft.visual} onChange={e=>update('visual',e.target.value)}/></Field>
-    <div className="modal-actions"><Button kind="secondary" onClick={onClose}>취소</Button><Button onClick={()=>{onSave(draft);onClose();}}>장면 저장</Button></div></div></section></div>;
+  const firstRef=useRef<HTMLInputElement>(null);useEffect(()=>{firstRef.current?.focus();firstRef.current?.select();},[]);
+  return <div className="scene-editor" onKeyDown={e=>{if(e.key==='Escape')onCancel();}}>
+    <div className="form-row"><Field label="장면 제목"><input ref={firstRef} value={draft.title} onChange={e=>update('title',e.target.value)}/></Field><Field label="권장 유형"><select value={draft.kind} onChange={e=>update('kind',e.target.value as Scene['kind'])}><option value="image">이미지</option><option value="video">동영상</option></select></Field></div>
+    <Field label="예상 재생 시간 (초)"><input type="number" min={2} max={300} value={draft.durationSec} onChange={e=>update('durationSec',Math.max(2,Number(e.target.value)||2))}/></Field>
+    <Field label="낭독 원문"><textarea rows={3} value={draft.narration} onChange={e=>update('narration',e.target.value)} placeholder="이 장면에서 읽을 원문"/></Field>
+    <Field label="장면 묘사"><textarea rows={3} value={draft.visual} onChange={e=>update('visual',e.target.value)} placeholder="화면에 보일 모습"/></Field>
+    {!isNew&&<p className="muted-text scene-editor-note">원문·묘사·유형을 바꾸면 이 장면의 프롬프트와 연결된 미디어를 다시 만들어야 해요.</p>}
+    <div className="scene-editor-actions"><Button kind="secondary" size="sm" onClick={onCancel}>취소</Button><Button size="sm" onClick={()=>onSave(draft)} disabled={!draft.title.trim()}><Check size={14}/> {isNew?'장면 추가':'저장'}</Button></div>
+  </div>;
 }
+
 function PromptCard({scene,onSave,onCopy}:{scene:Scene,onSave:(scene:Scene)=>void,onCopy:(str:string)=>void}){
   const [image,setImage]=useState(scene.imagePrompt);const [video,setVideo]=useState(scene.videoPrompt);
   useEffect(()=>{setImage(scene.imagePrompt);setVideo(scene.videoPrompt);},[scene.id,scene.imagePrompt,scene.videoPrompt]);
@@ -80,21 +106,38 @@ function JobQueueCard({flash}:{flash:(text:string,type?:'info'|'success'|'error'
       </div></div>)}</div>}
   </Card>;
 }
+function ProjectRow({p,onOpen,onArchive}:{p:ProjectSummary,onOpen:()=>void,onArchive?:()=>void}){
+  return <article className={`project-row ${p.draft?'is-draft':''}`} onDoubleClick={onOpen}>
+    <div className="row-icon"><BookOpen size={18}/></div>
+    <div className="row-primary"><h3>{p.title}{p.draft&&<Tag tone="warning">작성 중</Tag>}</h3><p>{GENRES[p.genre]} · {AUDIENCES[p.audience]} · 마지막 수정 {formatDate(p.updatedAt)}</p></div>
+    <span className="row-muted">{p.sceneCount} 장면</span><span className="row-muted">{p.mediaCount} 미디어</span>
+    <Button size="sm" kind="secondary" onClick={onOpen}>열기 <ArrowRight size={14}/></Button>
+    {onArchive&&<IconButton label="작품 보관 (지우지 않고 보관 목록으로)" onClick={onArchive}><Archive size={16}/></IconButton>}
+  </article>;
+}
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
   const themeApi = useTheme();
-  const [view,setView]=useState<View>('home');const [newOpen,setNewOpen]=useState(false);const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiAuto,setAiAuto]=useState(false);
+  const [view,setView]=useState<View>('home');const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiAuto,setAiAuto]=useState(false);
   const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);
   const [imageJobs,setImageJobs]=useState<Record<string,GeminiJobRecord>>({});
   const [videoJobs,setVideoJobs]=useState<Record<string,GeminiJobRecord>>({});
   const [musicJob,setMusicJob]=useState<GeminiJobRecord|null>(null);
   const [probe,setProbe]=useState('');
   const projectRef=useRef(project);projectRef.current=project;const handledJobs=useRef(new Set<string>());
-  const [search,setSearch]=useState('');const [editingScene,setEditingScene]=useState<Scene|null>(null);
+  const [search,setSearch]=useState('');
+  const [editingSceneId,setEditingSceneId]=useState<string|null>(null);const [newScene,setNewScene]=useState<Scene|null>(null);
   const [activeAsset,setActiveAsset]=useState<string|null>(null);const [showArchived,setShowArchived]=useState(false);
-  const [infoPath,setInfoPath]=useState('');
-  useEffect(()=>{void window.studio.app.info().then(i=>setInfoPath(i.dataRoot)).catch(()=>{});},[]);
+  const [infoPath,setInfoPath]=useState('');const [appVersion,setAppVersion]=useState('0.1.0');
+  const [briefPanel,setBriefPanel]=useState(()=>readPanel(PANEL_KEYS.brief,true));
+  const [stepPanel,setStepPanel]=useState(()=>readPanel(PANEL_KEYS.steps,false));
+  const [briefPending,setBriefPending]=useState(false);
+  const flushRef=useRef<BriefFlush|null>(null);
+  const saveState:SaveState=busy?'saving':briefPending?'pending':'saved';
+  useEffect(()=>{void window.studio.app.info().then(i=>{setInfoPath(i.dataRoot);if(i.version)setAppVersion(i.version);}).catch(()=>{});},[]);
   useEffect(()=>{if(project&&!activeAsset&&project.assets.length)setActiveAsset(project.assets[0].id);},[project?.id]);
+  const toggleBriefPanel=()=>setBriefPanel(v=>{try{localStorage.setItem(PANEL_KEYS.brief,v?'closed':'open');}catch{/* ignore */}return !v;});
+  const toggleStepPanel=()=>{setAiStage(null);setStepPanel(v=>{try{localStorage.setItem(PANEL_KEYS.steps,v?'closed':'open');}catch{/* ignore */}return !v;});};
   // Gemini AI 단계(기획 분석·스토리보드·생성 프롬프트·최종 편집 구성) 및 장면별 이미지·동영상·배경음악 생성 작업 상태 구독
   useEffect(()=>{
     const id=project?.id;let alive=true;setStageJobs(EMPTY_STAGE_JOBS);setImageJobs({});setVideoJobs({});setMusicJob(null);
@@ -215,93 +258,108 @@ function App(){
   const openStage=(st:AIStage,auto:boolean)=>{setAiAuto(auto&&!busyOf(st));setAiStage(st);};
   const openAnalysis=(auto:boolean)=>openStage('analysis',auto);
   /** 단계 페이지 상단 버튼: 진행 중이면 「진행 상황 보기」, 아니면 「AI … 시작」 */
-  const stageButton=(st:AIStage,disabled=false)=>busyOf(st)?<Button onClick={()=>openStage(st,false)}><Sparkles size={16}/> 진행 상황 보기</Button>:<Button onClick={()=>openStage(st,true)} disabled={disabled}><Sparkles size={16}/> {project&&stageHasResult(project,st)?STAGE_META[st].restartLabel:STAGE_META[st].startLabel}</Button>;
+  const stageButton=(st:AIStage,disabled=false)=>busyOf(st)?<Button size="sm" onClick={()=>openStage(st,false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openStage(st,true)} disabled={disabled}><Sparkles size={15}/> {project&&stageHasResult(project,st)?STAGE_META[st].restartLabel:STAGE_META[st].startLabel}</Button>;
   /** 진행 중·확인 필요 작업 배너 (모달을 닫아도 표시) */
   const stageBanner=(st:AIStage)=>{const j=stageJobs[st];const v=phaseView(j);if(!j||!v||!(v.active||v.phase==='needs_user'||v.phase==='error'))return null;return <button className={`analysis-job-banner tone-${v.tone}`} onClick={()=>openStage(st,false)}><Sparkles size={16}/><strong>Gemini {STAGE_META[st].name} · {v.label}</strong><span>{v.active?'창을 닫아도 계속 진행됩니다.':'확인이 필요합니다.'} 눌러서 자세히 보기</span><ArrowRight size={15}/></button>;};
-  const onNavigate=(t:AINavTarget)=>{if(t==='select'){goSelect();return;}setView(t);};
+  const onNavigate=(t:AINavTarget)=>{if(t==='select'){goSelect();return;}void go(t);};
   const goSelect=()=>{setView('analysis');setTimeout(()=>document.querySelector('.choice-layout')?.scrollIntoView({behavior:'smooth',block:'start'}),120);};
-  const go=(next:View)=>{if(next!=='projects'&&next!=='home'&&next!=='settings'&&!project){setView('projects');return;}setView(next);};
-  const open=async(id:string)=>{const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);}};
-  const start=async(brief:Brief)=>{const p=await studio.create(brief);if(p){setNewOpen(false);setView('brief');}};
+  /** 작성 중인 입력을 먼저 저장하고, 아무것도 입력하지 않은 빈 작품이면 지운다 */
+  const leaveProject=async()=>{
+    await flushRef.current?.();
+    const cur=studio.current();
+    if(cur&&isEmptyDraft(cur))await studio.discardDraft(cur.id);
+  };
+  const go=async(next:View)=>{
+    if(next!=='projects'&&next!=='home'&&next!=='settings'&&!studio.current()){setView('projects');return;}
+    if(next==='home'||next==='projects')await leaveProject();else await flushRef.current?.();
+    setView(next);
+  };
+  const open=async(id:string)=>{if(studio.current()?.id!==id)await leaveProject();const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}};
+  /** 「새 작품」: 입력 창 없이 바로 빈 작품을 만들고 작품 정보 화면을 연다 */
+  const newProject=async(genre?:Genre)=>{
+    await leaveProject();
+    const p=await studio.create({...NEW_DRAFT_BRIEF,genre:genre??NEW_DRAFT_BRIEF.genre});
+    if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}
+  };
+  const onBriefAutosave=async(projectId:string,brief:Brief,continueSession:boolean)=>{
+    let started=false;
+    await mutate(p=>{const r=applyBriefAutosave(p,brief,{continueSession});started=r.startedSession;return r.project;},projectId);
+    return started;
+  };
+  const onApproveOriginal=async(projectId:string,payload:ApprovedOriginalPayload,base:Brief)=>{
+    const saved=await mutate(p=>approveOriginalInProject(p,{briefPatch:{...base,originalMeta:undefined},meta:payload.meta,reason:`${payload.meta.providerName}에서 기준 원문 확정`}),projectId);
+    if(saved)flash('원문을 채우고 기준 원문으로 확정했어요. 이제 기획 분석으로 넘어갈 수 있어요.','success');
+    return !!saved;
+  };
   const saveScene=(s:Scene)=>{void mutate(p=>{const old=p.scenes.find(x=>x.id===s.id);const changed=old&&(old.narration!==s.narration||old.visual!==s.visual||old.kind!==s.kind);
     const next=changed?{...s,imagePrompt:'',videoPrompt:'',negativePrompt:'',assetId:null,status:'draft' as const}:s;
     const empty={status:'idle' as const,raw:'',updatedAt:null};
     return {...p,scenes:p.scenes.map(x=>x.id===s.id?next:x),...(changed?{ai:{...p.ai,prompt:empty,editplan:empty},assembly:{...p.assembly,clips:[]}}:{})};
   });};
-  const selectedScene=project?.scenes.find(s=>s.id===editingScene?.id);
-  const exportAssets=project?.assets||[];
+  const addScene=()=>{if(!project)return;const n=Math.max(0,...project.scenes.map(s=>Number(s.id.slice(1))||0))+1;const id='S'+String(n).padStart(2,'0');setEditingSceneId(null);setNewScene({id,title:`새 장면 ${n}`,narration:'',visual:'',durationSec:10,kind:'image',imagePrompt:'',videoPrompt:'',negativePrompt:'',assetId:null,status:'draft'});setTimeout(()=>document.querySelector('.scene-card.is-new')?.scrollIntoView({behavior:'smooth',block:'center'}),60);};
   const activeMedia=project?.assets.find(a=>a.id===activeAsset);
-  const completed=project?STAGE_ORDER.filter(s=>stageComplete(project,s)).length:0;
+  const completed=project?completedSteps(project):0;
+  const activeJob=AI_STAGES.map(st=>({st,v:phaseView(stageJobs[st])})).find(x=>x.v&&(x.v.active||x.v.phase==='needs_user'));
+
+  /** 단계 화면 공통 틀: 한 줄 머리 + 본문 + (오른쪽 창) + 아래 고정 줄 */
+  const renderStep=(stage:Stage,opts:{actions?:ReactNode,body:ReactNode,primaryLabel?:string,onPrimary?:()=>void}):ReactNode=>{
+    if(!project)return null;
+    const guide=stepGuide(project,stage);
+    const Icon=iconFor[stage];
+    const panel=aiStage?<AIDock key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>
+      :stepPanel?<ProjectPropsPanel project={project} brief={project.brief} onChange={patch=>void mutate(p=>({...p,brief:{...p.brief,...patch}}))} onClose={toggleStepPanel}/>:null;
+    return <StepLayout key={stage} focusKey={`${stage}-${project.id}`}
+      header={<DocHeader icon={<Icon size={16}/>} title={STEP_TITLES[stage]} description={STAGE_HINTS[stage]} project={project} saveState={saveState} actions={opts.actions} panelOpen={stepPanel&&!aiStage} onTogglePanel={toggleStepPanel}/>}
+      panel={panel}
+      actionBar={<ActionBar guide={guide} primaryLabel={opts.primaryLabel} onNext={opts.onPrimary||(()=>{if(guide.next)void go(guide.next);})}/>}>
+      {opts.body}
+    </StepLayout>;
+  };
+  const pageLayout=(icon:ReactNode,title:string,actions:ReactNode,body:ReactNode)=><div className="step-layout"><DocHeader icon={icon} title={title} actions={actions}/><div className="workspace"><div className="workspace-main page-scroll">{body}</div></div></div>;
 
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand-area"><BrandIcon/><div><strong>{BRAND.productKo}</strong><small>{BRAND.productEn}</small></div></div>
-      <button className="workspace-selector" onClick={()=>go('home')}><div className="workspace-avatar">G</div><div><strong>{BRAND.suiteKo}</strong><span>개인 작업 공간</span></div><ChevronDown size={15}/></button>
-      <div className="nav-groups"><div className="nav-label">WORKSPACE</div>
-        {[['home','대시보드'],['projects','내 작품']].map(([id,label])=>{const Icon=iconFor[id];return <button key={id} className={`nav-link ${view===id?'active':''}`} onClick={()=>go(id as View)}><Icon size={18}/><span>{label}</span>{id==='projects'&&<small>{projects.length}</small>}</button>;})}
-        <div className="nav-label nav-separator">PRODUCTION</div>
-        {([['brief','작품 정보'],['analysis','기획 분석'],['storyboard','스토리보드'],['prompt','생성 프롬프트'],['media','미디어 보관함'],['assembly','최종 편집안'],['handoff','더빙 전달']] as const).map(([id,label])=>{const Icon=iconFor[id];return <button key={id} className={`nav-link ${view===id?'active':''} ${!project?'disabled-link':''}`} onClick={()=>go(id)}><Icon size={18}/><span>{label}</span>{project&&stageComplete(project,id)&&<Check size={13} className="nav-check"/>}</button>;})}
+    <aside className="sidebar">
+      <div className="brand-area"><BrandIcon size={28}/><div><strong>{BRAND.productKo}</strong><small>{BRAND.productEn}</small></div></div>
+      <div className="sidebar-project">
+        <button className="current-project" onClick={()=>void go('projects')} title="다른 작품 열기 (내 작품)"><FolderOpen size={15}/><div><small>현재 작품</small><strong>{project?(project.brief.title.trim()||UNTITLED):'열린 작품 없음'}</strong></div><ChevronDown size={14}/></button>
+        <Button size="sm" onClick={()=>void newProject()} title="입력 창 없이 바로 새 작품을 만들고 작품 정보 화면을 엽니다"><Plus size={14}/> 새 작품</Button>
       </div>
-      <div className="sidebar-bottom"><button className={`nav-link ${view==='settings'?'active':''}`} onClick={()=>go('settings')}><Settings2 size={18}/> 환경 설정</button><div className="sidebar-status"><div className="status-led"/><span>로컬 프로젝트 모드</span><Tag tone="muted">v0.1</Tag></div></div>
+      <div className="nav-groups"><div className="nav-label">작업 공간</div>
+        {[['home','대시보드'],['projects','내 작품']].map(([id,label])=>{const Icon=iconFor[id];return <button key={id} className={`nav-link ${view===id?'active':''}`} onClick={()=>void go(id as View)}><Icon size={17}/><span>{label}</span>{id==='projects'&&<small>{projects.length}</small>}</button>;})}
+        <div className="nav-label nav-separator">제작 단계</div>
+        {STEP_VIEWS.map((id,i)=>{const Icon=iconFor[id];const done=!!project&&stageComplete(project,id);return <button key={id} className={`nav-link step-link ${view===id?'active':''} ${!project?'disabled-link':''} ${done?'done':''}`} onClick={()=>void go(id)} title={project?STAGE_HINTS[id]:'작품을 먼저 열거나 새로 만들어 주세요'}><span className="step-num">{done?<Check size={12}/>:i+1}</span><Icon size={16}/><span>{STEP_TITLES[id]}</span></button>;})}
+      </div>
+      <div className="sidebar-bottom"><button className={`nav-link ${view==='settings'?'active':''}`} onClick={()=>void go('settings')}><Settings2 size={17}/> <span>환경 설정</span></button></div>
     </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>{BRAND.suiteKo}</span><ChevronRight size={14}/><strong>{project&&view!=='home'&&view!=='projects'&&view!=='settings'?project.brief.title:view==='home'?'대시보드':view==='projects'?'내 작품':view==='settings'?'환경 설정':STAGE_NAMES[view as Stage]}</strong></div>
-      <div className="topbar-actions">{project&&<button className="topbar-project" onClick={()=>go('projects')}><Folder size={15}/><span>{project.brief.title}</span><ChevronDown size={14}/></button>}<div className="topbar-divider"/><button className="user-avatar" aria-label="개인 작업 공간">G</button></div></header>
+    <div className="main-shell">
       <main className="main-content">
         {loading?<div className="loading-content"><Sparkles size={29}/> 작품을 불러오는 중…</div>:<>
-        {view==='home'&&<div className="page-enter"><section className="hero"><div className="hero-copy"><Tag tone="accent"><Sparkles size={13}/> YOUR CREATIVE WORKSPACE</Tag><h1>좋은 이야기는<br/><em>한 장면에서 시작됩니다.</em></h1><p>원문을 등록하고, 스토리를 기획하고, 이미지와 영상 그리고 음악을 모으세요. 더빙 전 준비 과정을 하나의 작업 공간에서 관리합니다.</p><div className="hero-actions"><Button size="lg" onClick={()=>setNewOpen(true)}><Plus size={18}/> 새 작품 만들기 <ArrowRight size={17}/></Button><Button kind="outline" size="lg" onClick={()=>go('projects')}><FolderOpen size={17}/> 내 작품 보기</Button></div></div><div className="hero-visual"><div className="hero-art-glow"/><div className="hero-art art1"/><div className="hero-art art2"/><div className="hero-art art3"/><div className="hero-orbit orbit1"/><div className="hero-orbit orbit2"/><div className="hero-art-caption"><WandSparkles size={16}/> From idea to scene</div></div></section>
-          <div className="dashboard-kpis"><Kpi icon={<Layers3 size={19}/>} value={projects.length} label="전체 작품"/><Kpi icon={<Clapperboard size={19}/>} value={projects.reduce((n,p)=>n+p.sceneCount,0)} label="기획된 장면"/><Kpi icon={<ImageIcon size={19}/>} value={projects.reduce((n,p)=>n+p.mediaCount,0)} label="확보한 미디어"/></div>
-          <SectionHeading eyebrow="RECENT PROJECTS" title="최근 작업" description="이어서 작업할 작품을 선택하세요." action={<Button size="sm" kind="ghost" onClick={()=>go('projects')}>전체 보기 <ArrowRight size={15}/></Button>}/>
-          {projects.length?<div className="project-grid">{projects.slice(0,3).map((p,i)=><button className="project-tile" key={p.id} onClick={()=>void open(p.id)}><div className={`project-tile-art tile-art-${i%4}`}><span>{GENRES[p.genre]}</span><BookOpen size={42} strokeWidth={1.2}/></div><div className="project-tile-info"><h3>{p.title}</h3><span>{p.sceneCount}개 장면 · {p.mediaCount}개 미디어</span><small>마지막 수정 {formatDate(p.updatedAt)}</small></div><ArrowRight className="project-tile-arrow" size={17}/></button>)}</div>:<Card><Empty title="아직 작품이 없습니다" description="첫 작품을 만들면 이곳에 최근 작업이 표시됩니다." action={<Button onClick={()=>setNewOpen(true)}><Plus size={16}/> 첫 작품 만들기</Button>}/></Card>}
-        </div>}
-        {view==='projects'&&<div className="page-enter"><SectionHeading eyebrow="LIBRARY" title="내 작품" description="모든 창작 프로젝트를 한곳에서 관리하세요." action={<Button onClick={()=>setNewOpen(true)}><Plus size={16}/> 새 작품</Button>}/>
-          <div className="projects-toolbar"><div className="search-field"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="작품 제목으로 검색"/></div><button className="filter-btn" onClick={()=>setShowArchived(v=>!v)}><Archive size={16}/> {showArchived?'보관한 작품 숨기기':'보관한 작품 포함'}</button></div>
-          <div className="project-list">{projects.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())).map(p=><article key={p.id} className="project-row"><div className="row-icon"><BookOpen size={22}/></div><div className="row-primary"><h3>{p.title}</h3><p>{GENRES[p.genre]} · {AUDIENCES[p.audience]} · 마지막 수정 {formatDate(p.updatedAt)}</p></div><span className="row-muted">{p.sceneCount} 장면</span><span className="row-muted">{p.mediaCount} 미디어</span><Button size="sm" kind="secondary" onClick={()=>void open(p.id)}>열기 <ArrowRight size={15}/></Button><IconButton label="작품 보관" onClick={()=>{if(confirm('작품을 보관 목록으로 이동할까요? 파일은 삭제되지 않습니다.'))void studio.archive(p.id,true);}}><Archive size={17}/></IconButton></article>)}{!projects.length&&<Empty title="작품 라이브러리가 비어 있습니다" description="새 작품을 만들면 여기에 표시됩니다." action={<Button onClick={()=>setNewOpen(true)}>작품 만들기</Button>}/>}</div>
-          {showArchived&&<div className="archive-section"><SectionHeading title="보관한 작품" description="보관한 작품은 삭제되지 않으며 복원할 수 있습니다."/><ArchivedList onRestore={id=>void studio.archive(id,false)}/></div>}
-        </div>}
-        {project&&(['brief','analysis','storyboard','prompt','media','assembly','handoff'] as View[]).includes(view)&&<div className="page-enter project-context"><div className="project-context-top"><div><div className="eyebrow">CURRENT PRODUCTION</div><h1>{project.brief.title}</h1><div className="project-meta"><Tag tone="accent">{GENRES[project.brief.genre]}</Tag><span>{AUDIENCES[project.brief.audience]}</span><span className="separator-dot"/> <span>최종 수정 {formatDate(project.updatedAt)}</span></div></div><div className="context-actions"><Tag tone="success"><CheckCircle2 size={13}/> 로컬 자동 저장</Tag><Button kind="outline" size="sm" onClick={()=>void window.studio.app.openFolder(project.id)}><FolderOpen size={15}/> 작업 폴더</Button></div></div>
-          <StageProgress project={project} onSelect={go}/>
-          {view==='brief'&&<BriefPage
-            project={project}
-            flash={flash}
-            onSave={v=>void mutate(p=>{
-              const textChanged=p.brief.originalText!==v.originalText;
-              if(textChanged){
-                const prevRights=p.brief.originalMeta?.rights||evaluateRightsEvidence({
-                  providerEvidenceStatus:fromLegacyRightsStatus(v.rightsStatus),
-                  providerEvidenceItems:['사용자가 작품 정보에서 원문을 직접 수정·저장했습니다.']
-                });
-                return approveOriginalInProject(p,{
-                  briefPatch:v,
-                  meta:{
-                    inputMethod:'manual',
-                    providerId:'manual',
-                    providerName:'직접 입력',
-                    workId:p.brief.originalMeta?.workId||'manual',
-                    title:v.title,
-                    author:v.author,
-                    edition:v.source||'직접 입력',
-                    sourceUrl:v.sourceUrl,
-                    fetchedAt:new Date().toISOString(),
-                    rights:prevRights
-                  },
-                  reason:'사용자가 작품 정보 화면에서 원문을 직접 수정'
-                });
-              }
-              return {...p,brief:v};
-            }).then(saved=>{if(saved)flash('작품 정보를 저장했습니다.','success');})}
-            onApproveOriginal={payload=>void mutate(p=>approveOriginalInProject(p,{
-              briefPatch:{
-                title:payload.title,
-                author:payload.author,
-                source:payload.source,
-                sourceUrl:payload.sourceUrl,
-                originalText:payload.originalText,
-                ...(payload.genre?{genre:payload.genre}:{})
-              },
-              meta:payload.meta,
-              reason:`${payload.meta.providerName}에서 기준 원문 확정`
-            })).then(saved=>{if(saved)flash('기준 원문을 확정하고 작품에 저장했습니다. 이제 기획 분석을 시작할 수 있습니다.','success');})}
-            onNext={()=>go('analysis')}/>}
-          {view==='analysis'&&<div><SectionHeading eyebrow="01 / PLANNING" title="기획 분석" description="작품의 분위기와 시각적 방향을 정합니다. 원하는 화풍과 연출안을 직접 선택하세요." action={<div className="action-group">{analysisBusy?<Button onClick={()=>openAnalysis(false)}><Sparkles size={16}/> 진행 상황 보기</Button>:<Button onClick={()=>openAnalysis(true)}><Sparkles size={16}/> {project.analysis?'AI 기획 분석 다시 시작':'AI 기획 분석 시작'}</Button>}<Button kind="outline" onClick={()=>openAnalysis(false)}>상세·수동 연결</Button></div>}/>
+        {view==='home'&&pageLayout(<Home size={16}/>,'대시보드',<span className="header-stats">작품 {projects.length} · 장면 {projects.reduce((n,p)=>n+p.sceneCount,0)} · 미디어 {projects.reduce((n,p)=>n+p.mediaCount,0)}</span>,<div className="home-page">
+          <section className="start-section"><div className="section-row"><h3>새로 만들기</h3><span className="muted-text">종류를 고르면 바로 작품 정보 화면이 열려요. 내용은 그 화면에서 채우면 돼요.</span></div>
+            <div className="new-tiles">{GENRE_TILES.map(t=>{const Icon=t.icon;return <button key={t.genre} className="new-tile" onClick={()=>void newProject(t.genre)} disabled={busy}><span className="new-tile-icon"><Icon size={22}/></span><strong>{GENRES[t.genre]}</strong><small>{t.desc}</small></button>;})}</div>
+          </section>
+          <section><div className="section-row"><h3>최근 작업</h3>{projects.length>0&&<Button size="sm" kind="ghost" onClick={()=>void go('projects')}>전체 보기 <ArrowRight size={14}/></Button>}</div>
+            {projects.length?<div className="project-list">{projects.slice(0,6).map(p=><ProjectRow key={p.id} p={p} onOpen={()=>void open(p.id)}/>)}</div>:<Card><Empty title="아직 작품이 없어요" description="위에서 종류를 고르면 첫 작품이 바로 만들어져요."/></Card>}
+          </section>
+        </div>)}
+        {view==='projects'&&pageLayout(<Layers3 size={16}/>,'내 작품',<><div className="search-field compact"><Search size={15}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="작품 제목으로 검색"/></div><button className={`filter-btn ${showArchived?'on':''}`} onClick={()=>setShowArchived(v=>!v)}><Archive size={15}/> {showArchived?'보관한 작품 숨기기':'보관한 작품 보기'}</button><Button size="sm" onClick={()=>void newProject()}><Plus size={14}/> 새 작품</Button></>,<>
+          <div className="project-list">{projects.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())).map(p=><ProjectRow key={p.id} p={p} onOpen={()=>void open(p.id)} onArchive={()=>{if(confirm('작품을 보관 목록으로 옮길까요? 파일은 지워지지 않아요.'))void studio.archive(p.id,true);}}/>)}{!projects.length&&<Empty title="작품이 없어요" description="「새 작품」을 누르면 바로 만들어져요." action={<Button onClick={()=>void newProject()}><Plus size={15}/> 새 작품</Button>}/>}</div>
+          {showArchived&&<div className="archive-section"><div className="section-row"><h3>보관한 작품</h3><span className="muted-text">보관한 작품은 지워지지 않으며 복원할 수 있어요.</span></div><ArchivedList onRestore={id=>void studio.archive(id,false)}/></div>}
+        </>)}
+        {project&&view==='brief'&&<BriefPage
+          project={project}
+          flash={flash}
+          saveState={saveState}
+          panelOpen={briefPanel}
+          onTogglePanel={toggleBriefPanel}
+          registerFlush={fn=>{flushRef.current=fn;}}
+          onAutosave={onBriefAutosave}
+          onApproveOriginal={onApproveOriginal}
+          onPendingChange={setBriefPending}
+          onNext={()=>void go('analysis')}/>}
+        {project&&view==='analysis'&&renderStep('analysis',{
+          actions:<>{analysisBusy?<Button size="sm" onClick={()=>openAnalysis(false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openAnalysis(true)}><Sparkles size={15}/> {project.analysis?'AI 기획 분석 다시 시작':'AI 기획 분석 시작'}</Button>}<Button size="sm" kind="outline" onClick={()=>openAnalysis(false)}>상세·수동 연결</Button></>,
+          body:<div className="step-body">
             {project.reviewNeeded?.analysis&&<div className="review-needed-banner"><ShieldAlert size={16}/><div><strong>기준 원문 변경 — 기획 분석 재검토 필요</strong><span>{project.reviewNeeded.reason||'기준 원문이 변경되었습니다.'} 기존 미디어 파일은 삭제되지 않습니다. 새 원문으로 기획 분석을 다시 실행하세요.</span></div></div>}
             <div className="ai-transfer-note"><Info size={14}/><span>확정된 기준 원문{project.brief.originalMeta?` (v${project.brief.originalMeta.version} · ${RIGHTS_STATUS_META[project.brief.originalMeta.rights.status].shortLabel})`:''}이 AI 기획 시작 시 외부 Gemini 서비스로 전송됩니다.</span></div>
             {stageBanner('analysis')}
@@ -309,19 +367,27 @@ function App(){
             <div className="choice-layout"><div><div className="choice-title"><h3>01. 화풍 선택</h3><p>모든 장면에 일관되게 적용할 스타일입니다.</p></div><div className="choice-list">{project.analysis.styles.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.styleId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('화풍을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,styleId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-v${i%3}`}><Palette size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.styleId===o.id&&<Check size={14}/>}</div></button>)}</div></div>
               <div><div className="choice-title"><h3>02. 연출 방향 선택</h3><p>장면의 흐름과 감정 전달 방식입니다.</p></div><div className="choice-list">{project.analysis.directions.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.directionId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('연출안을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,directionId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-d${i%3}`}><MonitorPlay size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.directionId===o.id&&<Check size={14}/>}</div></button>)}</div></div></div>
               {!!project.analysis.cautions.length&&<div className="notice"><ShieldAlert size={17}/><div><b>제작 시 유의사항</b><p>{project.analysis.cautions.join(' · ')}</p></div></div>}
-              <div className="page-bottom"><span>화풍과 연출안을 모두 선택하면 다음 단계를 진행할 수 있습니다.</span><Button onClick={()=>go('storyboard')} disabled={!project.selection.styleId||!project.selection.directionId}>스토리보드로 <ArrowRight size={16}/></Button></div></>}
-          </div>}
-          {view==='storyboard'&&<div><SectionHeading eyebrow="02 / SCENE PLANNING" title="스토리보드" description="장면별 원문과 시각 연출을 구성하고, 개별 장면을 수정할 수 있습니다." action={<div className="action-group"><Button kind="outline" onClick={()=>{const n=Math.max(0,...project.scenes.map(s=>Number(s.id.slice(1))||0))+1;const id='S'+String(n).padStart(2,'0');setEditingScene({id,title:`새 장면 ${n}`,narration:'원문을 입력하세요',visual:'장면 설명을 입력하세요',durationSec:10,kind:'image',imagePrompt:'',videoPrompt:'',negativePrompt:'',assetId:null,status:'draft'});}}><Plus size={15}/> 장면 추가</Button>{stageButton('storyboard',!!STAGE_META.storyboard.prerequisite(project))}<Button kind="outline" onClick={()=>openStage('storyboard',false)}>상세·수동 연결</Button></div>}/>
+              </>}
+          </div>})}
+        {project&&view==='storyboard'&&renderStep('storyboard',{
+          actions:<><Button size="sm" kind="outline" onClick={addScene}><Plus size={14}/> 장면 추가</Button>{stageButton('storyboard',!!STAGE_META.storyboard.prerequisite(project))}<Button size="sm" kind="outline" onClick={()=>openStage('storyboard',false)}>상세·수동 연결</Button></>,
+          body:<div className="step-body">
             {project.reviewNeeded?.storyboard&&<div className="review-needed-banner"><ShieldAlert size={16}/><div><strong>기준 원문 변경 — 스토리보드 재검토 필요</strong><span>{project.reviewNeeded.reason||'기준 원문이 변경되어 장면 낭독 문장을 새 원문과 대조해야 합니다.'} 이미 확보한 미디어 파일은 그대로 유지됩니다.</span></div></div>}
             {stageBanner('storyboard')}
-            {project.scenes.length?<><div className="scene-grid">{project.scenes.map((scene,i)=><article className="scene-card" key={scene.id}><div className="scene-cover"><Photo project={project} asset={sceneAsset(project,scene)}/><div className="scene-index">{scene.id}</div><div className="scene-kind">{scene.kind==='video'?<Film size={13}/>:<ImageIcon size={13}/>} {scene.kind==='video'?'동영상':'이미지'}</div></div><div className="scene-card-body"><div className="scene-card-top"><div className="micro">SCENE {String(i+1).padStart(2,'0')}</div><span className="duration"><Clock3 size={13}/>{scene.durationSec}초</span></div><h3>{scene.title}</h3><p className="scene-visual">{scene.visual}</p><blockquote>{scene.narration}</blockquote><div className="scene-card-actions"><Button kind="secondary" size="sm" onClick={()=>setEditingScene(scene)}><PenLine size={14}/> 편집</Button><span className="scene-reorder"><IconButton label="앞으로 이동" disabled={i===0} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i-1],a[i]]=[a[i],a[i-1]];return {...p,scenes:a};})}><ArrowUp size={15}/></IconButton><IconButton label="뒤로 이동" disabled={i===project.scenes.length-1} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i],a[i+1]]=[a[i+1],a[i]];return {...p,scenes:a};})}><ArrowDown size={15}/></IconButton><IconButton label="삭제" onClick={()=>{if(confirm('이 장면을 삭제할까요?'))void mutate(p=>({...p,scenes:p.scenes.filter(s=>s.id!==scene.id),assembly:{...p.assembly,clips:p.assembly.clips.filter(c=>c.sceneId!==scene.id)}}));}}><Trash2 size={15}/></IconButton></span></div></div></article>)}</div><div className="page-bottom"><span>총 {project.scenes.length}개 장면 · 예상 {project.scenes.reduce((n,s)=>n+s.durationSec,0)}초</span><Button onClick={()=>go('prompt')}>프롬프트로 <ArrowRight size={16}/></Button></div></>:<Card><Empty title="아직 장면 구성이 없습니다" description="「AI 장면 구성 시작」을 누르면 선택한 화풍·연출로 Gemini 탭에 장면 구성을 요청하고, 응답 JSON을 검사해 바로 반영합니다. 직접 추가할 수도 있습니다." action={<Button disabled={!stageComplete(project,'analysis')||busyOf('storyboard')} onClick={()=>openStage('storyboard',true)}><Sparkles size={16}/> AI 장면 구성 시작</Button>}/></Card>}
-          </div>}
-          {view==='prompt'&&<div><SectionHeading eyebrow="03 / CREATIVE PROMPTS" title="생성 프롬프트" description="이미지와 동영상 생성 지시문을 장면별로 관리합니다. 내용은 직접 수정할 수도 있습니다." action={<div className="action-group">{stageButton('prompt',!project.scenes.length)}<Button kind="outline" onClick={()=>openStage('prompt',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></div>}/>
+            {project.scenes.length||newScene?<div className="scene-grid">{project.scenes.map((scene,i)=>editingSceneId===scene.id?<article className="scene-card is-editing" key={scene.id}><div className="scene-card-body"><div className="scene-card-top"><div className="micro">SCENE {String(i+1).padStart(2,'0')} · {scene.id}</div></div><SceneEditor scene={scene} isNew={false} onCancel={()=>setEditingSceneId(null)} onSave={s=>{saveScene(s);setEditingSceneId(null);}}/></div></article>:<article className="scene-card" key={scene.id}><div className="scene-cover"><Photo project={project} asset={sceneAsset(project,scene)}/><div className="scene-index">{scene.id}</div><div className="scene-kind">{scene.kind==='video'?<Film size={13}/>:<ImageIcon size={13}/>} {scene.kind==='video'?'동영상':'이미지'}</div></div><div className="scene-card-body"><div className="scene-card-top"><div className="micro">SCENE {String(i+1).padStart(2,'0')}</div><span className="duration"><Clock3 size={13}/>{scene.durationSec}초</span></div><h3>{scene.title}</h3><p className="scene-visual">{scene.visual}</p><blockquote>{scene.narration}</blockquote><div className="scene-card-actions"><Button kind="secondary" size="sm" onClick={()=>{setNewScene(null);setEditingSceneId(scene.id);}}><PenLine size={14}/> 바로 고치기</Button><span className="scene-reorder"><IconButton label="앞으로 이동" disabled={i===0} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i-1],a[i]]=[a[i],a[i-1]];return {...p,scenes:a};})}><ArrowUp size={15}/></IconButton><IconButton label="뒤로 이동" disabled={i===project.scenes.length-1} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i],a[i+1]]=[a[i+1],a[i]];return {...p,scenes:a};})}><ArrowDown size={15}/></IconButton><IconButton label="삭제" onClick={()=>{if(confirm('이 장면을 삭제할까요?'))void mutate(p=>({...p,scenes:p.scenes.filter(s=>s.id!==scene.id),assembly:{...p.assembly,clips:p.assembly.clips.filter(c=>c.sceneId!==scene.id)}}));}}><Trash2 size={15}/></IconButton></span></div></div></article>)}
+              {newScene&&<article className="scene-card is-editing is-new" key={newScene.id}><div className="scene-card-body"><div className="scene-card-top"><div className="micro">새 장면 · {newScene.id}</div></div><SceneEditor scene={newScene} isNew onCancel={()=>setNewScene(null)} onSave={s=>{void mutate(p=>({...p,scenes:[...p.scenes,s]}));setNewScene(null);}}/></div></article>}
+            </div>:<Card><Empty title="아직 장면 구성이 없어요" description="「AI 장면 구성 시작」을 누르면 선택한 화풍·연출로 Gemini에 장면 구성을 요청하고 결과를 바로 반영해요. 「장면 추가」로 직접 만들 수도 있어요." action={<div className="action-group"><Button disabled={!stageComplete(project,'analysis')||busyOf('storyboard')} onClick={()=>openStage('storyboard',true)}><Sparkles size={16}/> AI 장면 구성 시작</Button><Button kind="outline" onClick={addScene}><Plus size={15}/> 장면 추가</Button></div>}/></Card>}
+          </div>})}
+        {project&&view==='prompt'&&renderStep('prompt',{
+          actions:<>{stageButton('prompt',!project.scenes.length)}<Button size="sm" kind="outline" onClick={()=>openStage('prompt',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></>,
+          body:<div className="step-body">
             {project.reviewNeeded?.prompt&&<div className="review-needed-banner"><ShieldAlert size={16}/><div><strong>기준 원문 변경 — 생성 프롬프트 재검토 필요</strong><span>장면 구성이 바뀌었다면 필요한 프롬프트만 다시 생성하세요.</span></div></div>}
             {stageBanner('prompt')}
-            {project.scenes.length?<><div className="prompt-grid">{project.scenes.map(s=><PromptCard key={s.id} scene={s} onSave={saveScene} onCopy={t=>void copy(t)}/>)}</div><div className="notice"><Info size={17}/><div><b>화풍과 기준 이미지의 일관성</b><p>현 단계는 프롬프트와 설정을 보관합니다. 실제 Gemini 웹 자동 생성과 기준 이미지 참조 기능은 후속 연결 모듈에서 구현합니다.</p></div></div><div className="page-bottom"><span>완성한 프롬프트는 클립보드로 복사할 수 있습니다.</span><Button onClick={()=>go('media')}>미디어 보관함으로 <ArrowRight size={16}/></Button></div></>:<Card><Empty title="장면을 먼저 구성해 주세요" description="스토리보드 장면이 생성되면 프롬프트를 관리할 수 있습니다." action={<Button onClick={()=>go('storyboard')}>스토리보드 열기</Button>}/></Card>}
-          </div>}
-          {view==='media'&&<div><SectionHeading eyebrow="04 / ASSET LIBRARY" title="미디어 보관함" description="장면별 이미지·동영상 및 작품 배경음악을 Gemini 웹에서 반자동 생성하거나, 로컬 파일을 가져와 연결합니다." action={<Button onClick={()=>void studio.importAssets()}><Upload size={16}/> 미디어 가져오기</Button>}/>
+            {project.scenes.length?<><div className="prompt-grid">{project.scenes.map(s=><PromptCard key={s.id} scene={s} onSave={saveScene} onCopy={t=>void copy(t)}/>)}</div><div className="notice"><Info size={17}/><div><b>화풍과 기준 이미지의 일관성</b><p>현 단계는 프롬프트와 설정을 보관합니다. 실제 Gemini 웹 자동 생성과 기준 이미지 참조 기능은 후속 연결 모듈에서 구현합니다.</p></div></div></>:<Card><Empty title="장면을 먼저 구성해 주세요" description="스토리보드 장면이 생성되면 프롬프트를 관리할 수 있습니다." action={<Button onClick={()=>go('storyboard')}>스토리보드 열기</Button>}/></Card>}
+          </div>})}
+        {project&&view==='media'&&renderStep('media',{
+          actions:<Button size="sm" onClick={()=>void studio.importAssets()}><Upload size={15}/> 미디어 가져오기</Button>,
+          body:<div className="step-body">
             {(()=>{
               const bgmPromptText=getProjectBgmPrompt(project);
               const audioAssets=project.assets.filter(a=>a.kind==='audio');
@@ -441,21 +507,24 @@ function App(){
             </Card>
             <div className="media-layout"><div className="media-list"><div className="subsection-head"><h3>프로젝트 미디어</h3><Tag>{project.assets.length}개 파일</Tag></div>{project.assets.length?<div className="asset-grid">{project.assets.map(a=><button key={a.id} className={`asset-card ${activeAsset===a.id?'selected':''}`} onClick={()=>setActiveAsset(a.id)}><div className="asset-preview"><Photo project={project} asset={a}/></div><div className="asset-info"><span>{a.name}</span><small>{a.kind.toUpperCase()} · {fileSize(a.bytes)}</small></div></button>)}</div>:<Empty title="미디어를 가져오세요" description="위 장면별 「Gemini로 이미지 생성」을 사용하거나, 다운로드한 이미지·영상·음악 파일을 이 프로젝트에 복사해 저장합니다." action={<Button kind="secondary" onClick={()=>void studio.importAssets()}><Upload size={15}/> 파일 선택</Button>}/>}</div>
               <aside className="media-inspector"><div className="subsection-head"><h3>파일 정보</h3></div>{activeMedia?<><div className="inspector-preview"><Photo project={project} asset={activeMedia}/></div><h3 className="inspector-filename">{activeMedia.name}</h3><div className="inspector-props"><div><span>유형</span><b>{activeMedia.kind}</b></div><div><span>파일 크기</span><b>{fileSize(activeMedia.bytes)}</b></div><div><span>연결된 장면</span><b>{project.scenes.find(s=>s.assetId===activeMedia.id)?.id||'없음'}</b></div></div>{activeMedia.kind==='audio'&&<audio controls src={mediaUrl(project,activeMedia)} style={{width:'100%'}}/>}<div className="subsection-head"><h3>장면에 연결</h3></div>{activeMedia.kind==='audio'?<p className="muted-text" style={{marginBottom:16}}>오디오 파일은 최종 편집안의 배경음악 선택에서 연결합니다.</p>:<div className="scene-link-list">{project.scenes.map(s=><button className={`scene-link ${s.assetId===activeMedia.id?'selected':''}`} key={s.id} onClick={()=>void mutate(p=>({...p,scenes:p.scenes.map(scene=>scene.id===s.id?{...scene,assetId:activeMedia.id}:scene)}))}><span>{s.id} · {s.title}</span>{s.assetId===activeMedia.id&&<Check size={15}/>}</button>)}</div>}<Button kind="outline" onClick={()=>void window.studio.assets.reveal(project.id,activeMedia.id)}><FolderOpen size={15}/> 탐색기에서 보기</Button></>:<p className="inspector-empty">파일을 선택하면 상세 정보와 장면 연결 설정이 나타납니다.</p>}</aside></div>
-            <div className="page-bottom"><span>이미지·영상은 장면마다 1개씩 연결합니다. 음악은 편집안에서 선택합니다.</span><Button onClick={()=>go('assembly')}>최종 편집안으로 <ArrowRight size={16}/></Button></div>
-          </div>}
-          {view==='assembly'&&<div><SectionHeading eyebrow="05 / EDITING BLUEPRINT" title="최종 편집안" description="확보된 미디어의 배치, 재생 시간, 전환과 자막을 설계합니다. 최종 음성 녹음은 더빙 프로그램에서 진행합니다." action={<div className="action-group"><Button kind="outline" onClick={()=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.scenes.map(s=>({sceneId:s.id,durationSec:s.durationSec,transition:p.assembly.transitionDefault}))}}))} disabled={!project.scenes.length}><ListOrdered size={15}/> 장면 순서로 구성</Button>{stageButton('editplan',!project.scenes.length)}<Button kind="outline" onClick={()=>openStage('editplan',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></div>}/>
+          </div>})}
+        {project&&view==='assembly'&&renderStep('assembly',{
+          actions:<><Button size="sm" kind="outline" onClick={()=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.scenes.map(s=>({sceneId:s.id,durationSec:s.durationSec,transition:p.assembly.transitionDefault}))}}))} disabled={!project.scenes.length}><ListOrdered size={14}/> 장면 순서로 구성</Button>{stageButton('editplan',!project.scenes.length)}<Button size="sm" kind="outline" onClick={()=>openStage('editplan',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></>,
+          body:<div className="step-body">
             {(project.reviewNeeded?.editplan||project.reviewNeeded?.subtitles)&&<div className="review-needed-banner"><ShieldAlert size={16}/><div><strong>기준 원문 변경 — 편집안·자막 재검토 필요</strong><span>원문이 수정되어 기존 자막이 새 원문과 다를 수 있습니다. 스토리보드와 최종 편집안을 확인하세요.</span></div></div>}
             {stageBanner('editplan')}
             <div className="assembly-layout"><div className="assembly-main"><Card><div className="subsection-head"><h3>타임라인 초안</h3><Tag tone="accent">{project.assembly.clips.length} 클립</Tag></div>{project.assembly.clips.length?<div className="assembly-rows">{project.assembly.clips.map((c,i)=>{const scene=project.scenes.find(s=>s.id===c.sceneId);const asset=scene?sceneAsset(project,scene):null;return <div className="assembly-row" key={i}><div className="assembly-thumb">{asset?<Photo project={project} asset={asset}/>:<ImageIcon size={19}/>}</div><div className="assembly-row-name"><strong>{scene?.title||c.sceneId}</strong><small>{c.sceneId} · {asset?.name||'파일 미연결'}</small></div><div className="assembly-row-controls"><label><span>초</span><input aria-label={`${c.sceneId} 재생 시간`} type="number" min={1} max={600} value={c.durationSec} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.assembly.clips.map((x,j)=>j===i?{...x,durationSec:Math.max(1,Number(e.target.value)||1)}:x)}}))}/></label><select aria-label="전환 효과" value={c.transition} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.assembly.clips.map((x,j)=>j===i?{...x,transition:e.target.value as EditClip['transition']}:x)}}))}><option value="cut">컷</option><option value="fade">페이드</option><option value="dissolve">디졸브</option></select></div></div>;})}</div>:<Empty title="아직 최종 편집안이 없습니다" description="AI에게 최종 구성안을 요청하거나 스토리보드 순서대로 초안을 만들 수 있습니다." action={<Button onClick={()=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.scenes.map(s=>({sceneId:s.id,durationSec:s.durationSec,transition:'fade'}))}}))} disabled={!project.scenes.length}>편집 초안 만들기</Button>}/>}</Card>
                 <Card><div className="subsection-head"><h3>원문 자막 미리보기</h3><Tag>임시 시간</Tag></div>{project.assembly.clips.length?<div className="subtitle-lines">{(()=>{let t=0;return project.assembly.clips.map((c,i)=>{const start=t;t+=c.durationSec;const scene=project.scenes.find(s=>s.id===c.sceneId);return <div key={i}><span>{Math.round(start)}s – {Math.round(t)}s</span><p>{scene?.narration||'장면 원문 없음'}</p></div>;});})()}</div>:<p className="muted-text">편집안이 생성되면 예상 시간에 맞춘 자막이 여기에 나타납니다.</p>}<div className="inline-notice"><Mic2 size={16}/> 실제 녹음에 맞춘 자막 시간 조정은 더빙 프로그램에서 진행합니다.</div></Card></div>
-              <aside className="media-inspector assembly-inspector"><h3>편집 기본 설정</h3><Field label="전환 기본값"><select value={project.assembly.transitionDefault} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,transitionDefault:e.target.value as 'fade'|'cut'|'dissolve'}}))}><option value="fade">부드러운 페이드</option><option value="cut">컷</option><option value="dissolve">디졸브</option></select></Field><Field label="배경음악"><select value={project.assembly.bgmAssetId||''} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,bgmAssetId:e.target.value||null}}))}><option value="">사용하지 않음</option>{project.assets.filter(a=>a.kind==='audio').map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field label="자막 기본값"><select value={project.assembly.subtitleMode} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,subtitleMode:e.target.value as 'original'|'none'}}))}><option value="original">확정 원문으로 생성</option><option value="none">자막 없음</option></select></Field><div className="assembly-total"><span>예상 전체 길이</span><strong>{project.assembly.clips.reduce((n,c)=>n+c.durationSec,0)}<small>초</small></strong></div><div className="inline-notice"><Info size={16}/> 영상 렌더링은 이 프로그램에서 수행하지 않습니다.</div></aside></div><div className="page-bottom"><span>실제 미디어가 확정된 뒤 최종 편집안을 승인하세요.</span><Button onClick={()=>go('handoff')}>더빙 전달로 <ArrowRight size={16}/></Button></div>
-          </div>}
-          {view==='handoff'&&<div><SectionHeading eyebrow="06 / HANDOFF" title="더빙 프로그램으로 전달" description="AI 제작 결과를 미디어·기획·편집안이 포함된 패키지로 내보냅니다."/>
-            <div className="handoff-layout"><Card className="handoff-main"><div className="handoff-icon"><Clapperboard size={30}/></div><h2>목소리를 더해<br/>작품을 완성하세요.</h2><p>창작실은 여기서 작업을 마칩니다. 최종 영상 조립, 사람 목소리 녹음, 자막 정렬, 렌더링은 별도 더빙 프로그램에서 진행하세요.</p><div className="handoff-steps"><div><CheckCircle2 size={18}/><span>작품 원문 · 스토리보드 저장</span></div><div><CheckCircle2 size={18}/><span>이미지·영상·음악 파일 함께 전달</span></div><div><CheckCircle2 size={18}/><span>편집안 JSON · 가능한 경우 더빙용 프로젝트 초안 포함</span></div></div><div className="handoff-buttons"><Button size="lg" onClick={()=>void studio.exportFolder()}><Download size={18}/> 제작 패키지 내보내기</Button><Button kind="outline" size="lg" onClick={()=>void window.studio.app.openFolder(project.id)}><FolderOpen size={17}/> 원본 폴더 열기</Button></div><div className="inline-notice"><Info size={16}/> 미디어가 모두 연결되면 composer_project.json 및 captions.srt 초안을 함께 출력합니다. 기존 더빙 프로그램에서 열기 전 실제 호환성 검증이 필요합니다.</div></Card>
+              <aside className="media-inspector assembly-inspector"><h3>편집 기본 설정</h3><Field label="전환 기본값"><select value={project.assembly.transitionDefault} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,transitionDefault:e.target.value as 'fade'|'cut'|'dissolve'}}))}><option value="fade">부드러운 페이드</option><option value="cut">컷</option><option value="dissolve">디졸브</option></select></Field><Field label="배경음악"><select value={project.assembly.bgmAssetId||''} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,bgmAssetId:e.target.value||null}}))}><option value="">사용하지 않음</option>{project.assets.filter(a=>a.kind==='audio').map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></Field><Field label="자막 기본값"><select value={project.assembly.subtitleMode} onChange={e=>void mutate(p=>({...p,assembly:{...p.assembly,subtitleMode:e.target.value as 'original'|'none'}}))}><option value="original">확정 원문으로 생성</option><option value="none">자막 없음</option></select></Field><div className="assembly-total"><span>예상 전체 길이</span><strong>{project.assembly.clips.reduce((n,c)=>n+c.durationSec,0)}<small>초</small></strong></div><div className="inline-notice"><Info size={16}/> 영상 렌더링은 이 프로그램에서 수행하지 않습니다.</div></aside></div>
+          </div>})}
+        {project&&view==='handoff'&&renderStep('handoff',{
+          primaryLabel:'제작 패키지 내보내기',
+          onPrimary:()=>void studio.exportFolder(),
+          body:<div className="step-body">
+            <div className="handoff-layout"><Card className="handoff-main"><div className="handoff-icon"><Clapperboard size={30}/></div><h2>목소리를 더해<br/>작품을 완성하세요.</h2><p>창작실은 여기서 작업을 마칩니다. 아래 「제작 패키지 내보내기」를 누르면 패키지 폴더가 만들어집니다. 최종 영상 조립, 사람 목소리 녹음, 자막 정렬, 렌더링은 별도 더빙 프로그램에서 진행하세요.</p><div className="handoff-steps"><div><CheckCircle2 size={18}/><span>작품 원문 · 스토리보드 저장</span></div><div><CheckCircle2 size={18}/><span>이미지·영상·음악 파일 함께 전달</span></div><div><CheckCircle2 size={18}/><span>편집안 JSON · 가능한 경우 더빙용 프로젝트 초안 포함</span></div></div><div className="inline-notice"><Info size={16}/> 미디어가 모두 연결되면 composer_project.json 및 captions.srt 초안을 함께 출력합니다. 기존 더빙 프로그램에서 열기 전 실제 호환성 검증이 필요합니다.</div></Card>
               <Card className="handoff-check"><h3>최종 점검</h3>{readyForHandoff(project).warnings.length?<><Tag tone="warning"><ShieldAlert size={13}/> 확인 항목 있음</Tag><div className="checklist">{readyForHandoff(project).warnings.map((w,i)=><div key={i} className="check-warning"><ShieldAlert size={17}/><span>{w}</span></div>)}</div></>:<><Tag tone="success"><Check size={13}/> 준비 완료</Tag><p>모든 필수 항목이 준비되었습니다.</p></>}<div className="handoff-summary"><div><span>장면</span><strong>{project.scenes.length}개</strong></div><div><span>미디어</span><strong>{project.assets.length}개</strong></div><div><span>예상 길이</span><strong>{project.assembly.clips.reduce((n,c)=>n+c.durationSec,0)}초</strong></div></div></Card></div>
-          </div>}
-        </div>}
-        {view==='settings'&&<div className="page-enter"><SectionHeading eyebrow="PREFERENCES" title="환경 설정" description="저장소, 브랜드 분리, AI 연결 상태를 확인합니다."/>
+          </div>})}
+        {view==='settings'&&pageLayout(<Settings2 size={16}/>,'환경 설정',null,<>
           <div className="settings-grid">
             <Card className="theme-settings-card">
               <div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>화면 테마</h3><p>프로그램 전체 색상을 즉시 변경합니다. 재시작 없이 적용됩니다.</p></div></div>
@@ -526,126 +595,17 @@ function App(){
             <Card><div className="setting-head"><div className="setting-icon"><FolderOpen size={21}/></div><div><h3>로컬 데이터</h3><p>프로젝트와 미디어는 컴퓨터에 저장됩니다.</p></div></div><div className="setting-line"><div><strong>데이터 폴더</strong><small className="path-text">{infoPath||'확인 중...'}</small></div></div><p className="setting-note">화면 표시용 브랜드를 변경해도 내부 프로젝트 스키마와 저장 경로는 유지합니다.</p></Card>
             <Card><div className="setting-head"><div className="setting-icon"><Palette size={21}/></div><div><h3>브랜드 관리</h3><p>초기 GOMO 표시 → 향후 NUNI 변경을 위한 구조</p></div></div><div className="setting-line"><div><strong>제품군</strong><small>{BRAND.suiteKo}</small></div><Tag>{BRAND.companyMark}</Tag></div><div className="setting-line"><div><strong>제품</strong><small>{BRAND.productKo}</small></div></div><p className="setting-note">브랜드 표시 이름: src/shared/brand.ts · 테마: src/renderer/theme/ · 설치 표시 이름: package.json</p></Card>
           </div>
-        </div>}
+        </>)}
         </>}
       </main>
-      <footer className="statusbar"><div><span className="status-indicator"/> {busy?'저장 및 처리 중…':'모든 작업은 로컬에 저장됩니다'}</div><span>{project?`작품 ID ${project.id.slice(0,8)}`:BRAND.suiteEn} · v0.1.0</span></footer>
+      <footer className="statusbar">
+        <div className={`status-save save-${project?saveState:'saved'}`}><span className="status-indicator"/>{project?`${SAVE_LABEL[saveState]} · ${formatTime(project.updatedAt)}`:'모든 작업은 이 컴퓨터에 저장돼요'}</div>
+        {project&&<div className="status-mid"><span>작품 ID {project.id.slice(0,8)}</span><span>원문 v{project.brief.originalMeta?.version??'-'}</span><span title="완료한 제작 단계">{completed}/{TOTAL_STEPS} 단계</span></div>}
+        <div className="status-right">{activeJob&&<button className="status-job" onClick={()=>openStage(activeJob.st,false)} title="AI 작업 창 열기"><Sparkles size={12}/> Gemini {STAGE_META[activeJob.st].name} · {activeJob.v!.label}</button>}<span>{BRAND.productKo} v{appVersion}</span></div>
+      </footer>
     </div>
-    {newOpen&&<NewProjectModal busy={busy} onClose={()=>setNewOpen(false)} onCreate={b=>void start(b)}/>}
-    {aiStage&&project&&<AIDialog key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>}
-    {editingScene&&project&&<SceneModal key={editingScene.id} scene={editingScene} onClose={()=>setEditingScene(null)} onSave={s=>{if(project.scenes.some(x=>x.id===s.id))saveScene(s);else void mutate(p=>({...p,scenes:[...p.scenes,s]}));}}/>}
     {studio.toast&&<div className={`toast toast-${studio.toast.type}`} role="status"><Info size={17}/><span>{studio.toast.text}</span><button className="icon-btn" onClick={()=>studio.setToast(null)}><X size={16}/></button></div>}
   </div>;
 }
-function ArchivedList({onRestore}:{onRestore:(id:string)=>void}){const [all,setAll]=useState<Awaited<ReturnType<typeof window.studio.projects.list>>>([]);useEffect(()=>{void window.studio.projects.list(true).then(p=>setAll(p.filter(x=>x.archived)));},[]);return <div className="project-list">{all.length?all.map(p=><article className="project-row" key={p.id}><div className="row-icon"><Archive size={21}/></div><div className="row-primary"><h3>{p.title}</h3><p>{formatDate(p.updatedAt)} · 보관됨</p></div><Button size="sm" kind="secondary" onClick={()=>onRestore(p.id)}><RotateCcw size={15}/> 복원</Button></article>):<p className="muted-text">보관한 작품이 없습니다.</p>}</div>;}
-function BriefPage({
-  project,
-  flash,
-  onSave,
-  onApproveOriginal,
-  onNext
-}:{
-  project:StudioProject,
-  flash:(text:string,type?:'info'|'success'|'error')=>void,
-  onSave:(brief:Brief)=>void,
-  onApproveOriginal:(payload:ApprovedOriginalPayload)=>void,
-  onNext:()=>void
-}){
-  const [draft,setDraft]=useState<Brief>(project.brief);const [dirty,setDirty]=useState(false);
-  const [showFinder,setShowFinder]=useState(!project.brief.originalMeta);
-  // 내용 비교: 기획 분석 결과 저장 등으로 작품을 다시 읽어도 작성 중인 작품 정보가 지워지지 않도록
-  useEffect(()=>{setDraft(project.brief);setDirty(false);},[project.id,JSON.stringify(project.brief)]);
-  const set=<K extends keyof Brief>(k:K,v:Brief[K])=>{setDraft(p=>({...p,[k]:v}));setDirty(true);};
-  const submit=()=>{
-    if(!draft.title.trim()||!draft.originalText.trim())return;
-    const impact=assessOriginalChangeImpact(project,draft.originalText);
-    if(impact.warningMessage&&!confirm(impact.warningMessage))return;
-    onSave(draft);setDirty(false);
-  };
-  const handleApprove=(payload:ApprovedOriginalPayload)=>{
-    const impact=assessOriginalChangeImpact(project,payload.originalText);
-    if(impact.warningMessage&&!confirm(impact.warningMessage))return;
-    onApproveOriginal(payload);
-    setShowFinder(false);
-    setDirty(false);
-  };
-  const meta=project.brief.originalMeta;
-  const history=project.originalHistory||[];
-  return <div>
-    <SectionHeading
-      eyebrow="00 / PROJECT BRIEF"
-      title="작품 정보"
-      description="신뢰 가능한 출처에서 원문을 검색·검증해 확정하거나 직접 입력하여 제작 기준 원문을 관리합니다."
-      action={<div className="action-group">
-        <Button kind="outline" onClick={()=>setShowFinder(v=>!v)}><Search size={15}/> {showFinder?'원문 가져오기 닫기':'원문 자동 가져오기'}</Button>
-        <Button onClick={submit} disabled={!dirty||!draft.title.trim()||!draft.originalText.trim()}><Check size={16}/> 변경 저장</Button>
-      </div>}
-    />
-
-    {meta&&<Card className="approved-original-card">
-      <div className="approved-original-head">
-        <div>
-          <div className="eyebrow">APPROVED ORIGINAL · v{meta.version}</div>
-          <strong>{meta.title}</strong>
-          <span className="muted-text"> · {meta.author||'저자 미기재'}{meta.translator?` (역: ${meta.translator})`:''} · {meta.providerName} ({meta.edition})</span>
-        </div>
-        <div className="approved-original-tags">
-          <Tag tone={RIGHTS_STATUS_META[meta.rights.status].tone}>{RIGHTS_STATUS_META[meta.rights.status].label}</Tag>
-          <Tag tone="muted">SHA-256 {meta.sha256.slice(0,10)}</Tag>
-          <Tag tone="muted">확정 {formatDate(meta.approvedAt)}</Tag>
-        </div>
-      </div>
-      <div className="approved-original-foot">
-        <span>{meta.rights.basis}</span>
-        {meta.sourceUrl&&<Button size="sm" kind="ghost" onClick={()=>void window.studio.sources.openExternal(meta.sourceUrl)}>출처 열기</Button>}
-      </div>
-    </Card>}
-
-    {showFinder&&<Card className="source-finder-card">
-      <OriginalSourcePanel
-        defaultGenre={draft.genre}
-        initialQuery={draft.title}
-        initialAuthor={draft.author}
-        onApprove={handleApprove}
-        onSwitchManual={()=>setShowFinder(false)}
-        flash={flash}
-      />
-    </Card>}
-
-    <div className="brief-layout">
-      <Card className="brief-form">
-        <div className="subsection-head"><h3>기본 정보 · 직접 입력 / 확인</h3><Tag tone="accent">원문 중심</Tag></div>
-        <div className="form-row"><Field label="콘텐츠 유형"><select value={draft.genre} onChange={e=>set('genre',e.target.value as Genre)}>{Object.entries(GENRES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field><Field label="시청 대상"><select value={draft.audience} onChange={e=>set('audience',e.target.value as Audience)}>{Object.entries(AUDIENCES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field></div>
-        <Field label="작품 제목"><input value={draft.title} onChange={e=>set('title',e.target.value)}/></Field>
-        <div className="form-row"><Field label="저자 · 기록자"><input value={draft.author} onChange={e=>set('author',e.target.value)} placeholder="저자"/></Field><Field label="출처 · 역본"><input value={draft.source} onChange={e=>set('source',e.target.value)} placeholder="출처/역본"/></Field></div>
-        <Field label="원문 출처 URL"><input value={draft.sourceUrl} onChange={e=>set('sourceUrl',e.target.value)} placeholder="https:// (선택 사항)"/></Field>
-        <div className="subsection-head subsection-spaced"><h3>낭독할 기준 원문</h3><span className="muted-text">{draft.originalText.length.toLocaleString()}자</span></div>
-        <textarea className="original-text" value={draft.originalText} onChange={e=>set('originalText',e.target.value)} placeholder="원문을 이곳에 입력하거나 상단의 「원문 자동 가져오기」에서 검색·검증 후 확정하세요." spellCheck={false}/>
-        {history.length>0&&<details className="original-history-details">
-          <summary>기준 원문 변경 이력 ({history.length}건 보존됨)</summary>
-          <div className="original-history-list">
-            {history.slice().reverse().map(h=><div key={`${h.version}-${h.archivedAt}`} className="original-history-item">
-              <div className="original-history-head">
-                <strong>v{h.version} · {h.title}</strong>
-                <span className="muted-text">보존 {formatDate(h.archivedAt)} · SHA-256 {h.sha256.slice(0,10)}</span>
-              </div>
-              {h.reason&&<small className="muted-text">사유: {h.reason}</small>}
-              <pre>{h.originalText.slice(0,300)}{h.originalText.length>300?'…':''}</pre>
-            </div>)}
-          </div>
-        </details>}
-      </Card>
-      <aside className="brief-side">
-        <Card>
-          <h3>제작 설정</h3>
-          <Field label="목표 영상 길이"><div className="unit-input"><input type="number" min="10" max="3600" value={draft.targetDuration} onChange={e=>set('targetDuration',Math.max(10,Number(e.target.value)||10))}/><span>초</span></div></Field>
-          <Field label="화면 비율"><select value={draft.aspectRatio} onChange={e=>set('aspectRatio',e.target.value as Brief['aspectRatio'])}><option value="16:9">16:9 가로형</option><option value="9:16">9:16 세로형</option><option value="1:1">1:1 정사각형</option></select></Field>
-          <Field label="원문 이용 권한 확인"><select value={draft.rightsStatus} onChange={e=>set('rightsStatus',e.target.value as Brief['rightsStatus'])}><option value="unreviewed">확인 전</option><option value="reviewed">확인함 (사용자 직접 신고)</option><option value="public-domain">퍼블릭 도메인 확인</option><option value="licensed">이용 허락 확보</option></select></Field>
-          <div className="inline-notice"><ShieldAlert size={16}/> AI 생성 여부와 별개로 원문·성경 역본의 저작권을 직접 확인해 주세요. AI 기획을 시작하면 확정된 원문이 외부 Gemini로 전송됩니다.</div>
-        </Card>
-        <Card className="workflow-card"><div className="eyebrow">YOUR WORKFLOW</div><h3>제작 흐름</h3><div className="workflow-list">{STAGE_ORDER.slice(0,5).map((stage,i)=><div key={stage} className={stageComplete(project,stage)?'done':''}><span>{stageComplete(project,stage)?<Check size={13}/>:i+1}</span>{STAGE_NAMES[stage]}</div>)}</div><Button kind="secondary" onClick={onNext}>기획 분석으로 <ArrowRight size={16}/></Button></Card>
-      </aside>
-    </div>
-  </div>;
-}
+function ArchivedList({onRestore}:{onRestore:(id:string)=>void}){const [all,setAll]=useState<Awaited<ReturnType<typeof window.studio.projects.list>>>([]);useEffect(()=>{void window.studio.projects.list(true).then(p=>setAll(p.filter(x=>x.archived)));},[]);return <div className="project-list">{all.length?all.map(p=><article className="project-row" key={p.id}><div className="row-icon"><Archive size={18}/></div><div className="row-primary"><h3>{p.title}</h3><p>{formatDate(p.updatedAt)} · 보관됨</p></div><Button size="sm" kind="secondary" onClick={()=>onRestore(p.id)}><RotateCcw size={14}/> 복원</Button></article>):<p className="muted-text">보관한 작품이 없어요.</p>}</div>;}
 export default App;

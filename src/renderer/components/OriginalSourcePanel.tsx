@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   BookOpen,
@@ -57,11 +57,30 @@ interface OriginalSourcePanelProps {
   defaultGenre?: Genre;
   initialQuery?: string;
   initialAuthor?: string;
-  onApprove: (payload: ApprovedOriginalPayload) => void;
+  /** false를 돌려주면(사용자가 덮어쓰기를 취소) 검토 화면을 그대로 둔다 */
+  onApprove: (payload: ApprovedOriginalPayload) => boolean | void;
   onSwitchManual?: () => void;
+  /** 닫기 버튼 이름 (기본: 직접 입력으로 전환) */
+  switchLabel?: string;
   flash?: (text: string, type?: 'info' | 'success' | 'error') => void;
   compact?: boolean;
+  /** 보여 줄 가져오기 방식 (기본: 전부). 하나뿐이면 탭 줄을 숨긴다 */
+  tabs?: SourceTab[];
+  /** 성경 범위 처음 값 (이미 확정한 범위가 있으면 그 값) */
+  initialBible?: { translationId: string; testament: 'old' | 'new'; bookId: number; chapter: number; startVerse: number; endVerse: number };
+  /** 확정한 뒤 검토 카드를 닫고 처음 상태로 (입력 칸 자리에 붙박이로 쓸 때) */
+  resetAfterApprove?: boolean;
+  /** 열자마자 처음 검색어로 한 번 검색 */
+  autoSearch?: boolean;
 }
+
+const ALL_TABS: SourceTab[] = ['search', 'bible', 'url', 'file'];
+const TAB_META: Record<SourceTab, { label: string; title: string; icon: typeof Search }> = {
+  search: { label: '작품 검색', title: '작품 검색', icon: Search },
+  bible: { label: '성경 본문', title: '성경 본문 범위', icon: BookOpen },
+  url: { label: 'URL에서 가져오기', title: 'URL에서 가져오기', icon: Globe },
+  file: { label: '파일 가져오기', title: '파일 가져오기', icon: FileUp }
+};
 
 type UiStatus =
   | 'idle'
@@ -103,10 +122,17 @@ export function OriginalSourcePanel({
   initialAuthor = '',
   onApprove,
   onSwitchManual,
+  switchLabel = '직접 입력으로 전환',
   flash,
-  compact = false
+  compact = false,
+  tabs = ALL_TABS,
+  initialBible,
+  resetAfterApprove = false,
+  autoSearch = false
 }: OriginalSourcePanelProps) {
-  const [tab, setTab] = useState<SourceTab>(defaultGenre === 'bible' ? 'bible' : 'search');
+  const [tab, setTab] = useState<SourceTab>(
+    tabs.includes(defaultGenre === 'bible' ? 'bible' : 'search') ? (defaultGenre === 'bible' ? 'bible' : 'search') : tabs[0]
+  );
   const [status, setStatus] = useState<UiStatus>('idle');
 
   // 1) 작품 검색 상태
@@ -117,12 +143,12 @@ export function OriginalSourcePanel({
   const [searchError, setSearchError] = useState('');
 
   // 2) 성경 전용 상태
-  const [translationId, setTranslationId] = useState('KRV');
-  const [testament, setTestament] = useState<'old' | 'new'>('old');
-  const [bookId, setBookId] = useState(19); // 시편 기본
-  const [chapter, setChapter] = useState(23);
-  const [startVerse, setStartVerse] = useState(1);
-  const [endVerse, setEndVerse] = useState(6);
+  const [translationId, setTranslationId] = useState(initialBible?.translationId ?? 'KRV');
+  const [testament, setTestament] = useState<'old' | 'new'>(initialBible?.testament ?? 'old');
+  const [bookId, setBookId] = useState(initialBible?.bookId ?? 19); // 시편 기본
+  const [chapter, setChapter] = useState(initialBible?.chapter ?? 23);
+  const [startVerse, setStartVerse] = useState(initialBible?.startVerse ?? 1);
+  const [endVerse, setEndVerse] = useState(initialBible?.endVerse ?? 6);
 
   // 3) URL 입력 상태
   const [urlInput, setUrlInput] = useState('');
@@ -295,7 +321,7 @@ export function OriginalSourcePanel({
         ? genreFilter
         : undefined;
 
-    onApprove({
+    const accepted = onApprove({
       title: fetched.title || queryText.trim() || '제목 없는 작품',
       author: fetched.author || authorQuery.trim(),
       source: sourceLabel,
@@ -320,10 +346,38 @@ export function OriginalSourcePanel({
         comparison: comparison || fetched.comparison
       }
     });
+    if (accepted === false) return;
+    if (resetAfterApprove) {
+      setFetched(null);
+      setRightsDraft(null);
+      setComparison(null);
+      setStatus('idle');
+      return;
+    }
     setStatus('approved');
   };
 
-  const statusMeta = UI_STATUS_LABEL[status];
+  const reviewRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!fetched) return;
+    setTimeout(() => {
+      const el = reviewRef.current;
+      if (!el) return;
+      // 작품 정보 화면 안의 펼침 영역이면 그 영역만 스크롤 (화면 전체가 밀리지 않게)
+      const box = el.closest<HTMLElement>('.finder-inline, .bible-inline');
+      if (box) box.scrollBy({ top: el.getBoundingClientRect().top - box.getBoundingClientRect().top - 8, behavior: 'smooth' });
+      else el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 60);
+  }, [fetched]);
+  const autoSearched = useRef(false);
+  useEffect(() => {
+    if (!autoSearch || autoSearched.current || tab !== 'search') return;
+    autoSearched.current = true;
+    if (queryText.trim() || authorQuery.trim()) void handleSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const statusMeta = status === 'idle' && tab === 'bible' ? { label: '범위를 고르세요', tone: 'muted' as const } : UI_STATUS_LABEL[status];
   const gonguSearchUrl = `https://gongu.copyright.or.kr/gongu/search/search/list.do?searchWord=${encodeURIComponent(
     (queryText || authorQuery).trim()
   )}`;
@@ -331,44 +385,27 @@ export function OriginalSourcePanel({
   return (
     <div className={`source-panel ${compact ? 'is-compact' : ''}`}>
       <div className="source-panel-head">
-        <div className="source-tabs" role="tablist" aria-label="원문 가져오기 방식">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'search'}
-            className={`source-tab ${tab === 'search' ? 'active' : ''}`}
-            onClick={() => setTab('search')}
-          >
-            <Search size={14} /> 작품 검색
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'bible'}
-            className={`source-tab ${tab === 'bible' ? 'active' : ''}`}
-            onClick={() => setTab('bible')}
-          >
-            <BookOpen size={14} /> 성경 본문
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'url'}
-            className={`source-tab ${tab === 'url' ? 'active' : ''}`}
-            onClick={() => setTab('url')}
-          >
-            <Globe size={14} /> URL에서 가져오기
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'file'}
-            className={`source-tab ${tab === 'file' ? 'active' : ''}`}
-            onClick={() => setTab('file')}
-          >
-            <FileUp size={14} /> 파일 가져오기
-          </button>
-        </div>
+        {tabs.length > 1 ? (
+          <div className="source-tabs" role="tablist" aria-label="원문 가져오기 방식">
+            {tabs.map(t => {
+              const Icon = TAB_META[t].icon;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === t}
+                  className={`source-tab ${tab === t ? 'active' : ''}`}
+                  onClick={() => setTab(t)}
+                >
+                  <Icon size={14} /> {TAB_META[t].label}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <strong className="source-single-title">{TAB_META[tab].title}</strong>
+        )}
         <div className="source-status-right">
           <Tag tone={statusMeta.tone}>
             {(status === 'searching' || status === 'fetching') && <Loader2 size={12} className="spin" />}
@@ -376,7 +413,7 @@ export function OriginalSourcePanel({
           </Tag>
           {onSwitchManual && (
             <Button type="button" size="sm" kind="ghost" onClick={onSwitchManual}>
-              직접 입력으로 전환
+              {switchLabel}
             </Button>
           )}
         </div>
@@ -700,7 +737,7 @@ export function OriginalSourcePanel({
 
       {/* 가져온 결과 검토 및 기준 원문 확정 카드 */}
       {fetched && (
-        <div className="source-review-card">
+        <div className="source-review-card" ref={reviewRef}>
           <div className="source-review-head">
             <div>
               <div className="eyebrow">ORIGINAL SOURCE REVIEW</div>
