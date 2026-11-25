@@ -8,12 +8,18 @@ import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
 import { createAnalysisService, type AnalysisService } from './gemini/analysis-service';
+import { createDefaultSourceService } from './sources/source-service';
 import { isAIStage } from '../shared/gemini-analysis';
 import type { AIStage } from '../shared/types';
 import type { GeminiJobRecord } from '../shared/types';
 
 protocol.registerSchemesAsPrivileged([{scheme:'gomo-asset', privileges:{secure:true,standard:true,stream:true,supportFetchAPI:true}}]);
 let win:BrowserWindow|null=null;
+const sourceService = createDefaultSourceService({
+  openExternalUrl: async (url: string) => {
+    await shell.openExternal(url);
+  }
+});
 function registerHandlers(){
   ipcMain.handle('app:info',async()=>({version:app.getVersion(),dataRoot:app.getPath('userData'),platform:process.platform}));
   ipcMain.handle('app:open-folder',async(_event,id:string)=>({success:!await shell.openPath(projectDir(id))}));
@@ -26,6 +32,27 @@ function registerHandlers(){
   ipcMain.handle('assets:import',async(_event,id:string)=>importAssets(id));
   ipcMain.handle('assets:reveal',async(_event,id:string,assetId:string)=>revealAsset(id,assetId));
   ipcMain.handle('clipboard:write',async(_event,text:string)=>clipboard.writeText(String(text)));
+  ipcMain.handle('sources:providers',async()=>sourceService.listProviders());
+  ipcMain.handle('sources:search',async(_event,query)=>sourceService.search(query));
+  ipcMain.handle('sources:fetch-original',async(_event,candidate)=>sourceService.fetchOriginal(candidate));
+  ipcMain.handle('sources:compare',async(_event,primary,secondary)=>sourceService.compare(primary,secondary));
+  ipcMain.handle('sources:import-url',async(_event,url:string)=>sourceService.importUrl(String(url)));
+  ipcMain.handle('sources:import-file',async()=>{
+    const picked=await dialog.showOpenDialog({
+      title:'원문 텍스트 파일 가져오기',
+      properties:['openFile'],
+      filters:[
+        {name:'지원 원문 파일 (TXT · MD · DOCX)',extensions:['txt','md','docx']},
+        {name:'텍스트 파일 (UTF-8)',extensions:['txt','md']},
+        {name:'Word 문서 (DOCX · 선택 기능)',extensions:['docx']},
+        {name:'PDF (안내 표시)',extensions:['pdf']}
+      ]
+    });
+    if(picked.canceled || !picked.filePaths.length) return null;
+    return sourceService.importFilePath(picked.filePaths[0]);
+  });
+  ipcMain.handle('sources:fetch-bible',async(_event,req)=>sourceService.fetchBible(req));
+  ipcMain.handle('sources:open-external',async(_event,url:string)=>sourceService.openExternal(String(url)));
   ipcMain.handle('gemini:status',async()=>geminiAdapter.getStatus());
   ipcMain.handle('gemini:ping',async()=>geminiAdapter.ping());
   ipcMain.handle('gemini:submit',async(_event,job)=>geminiAdapter.submitPrompt(job));

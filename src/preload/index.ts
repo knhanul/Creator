@@ -5,6 +5,16 @@ const api:StudioAPI={
   projects:{list:(includeArchived)=>ipcRenderer.invoke('projects:list',includeArchived),create:(brief)=>ipcRenderer.invoke('projects:create',brief),read:(id)=>ipcRenderer.invoke('projects:read',id),save:(p)=>ipcRenderer.invoke('projects:save',p),archive:(id,archive)=>ipcRenderer.invoke('projects:archive',id,archive),exportFolder:(id)=>ipcRenderer.invoke('projects:export',id)},
   assets:{import:(id)=>ipcRenderer.invoke('assets:import',id),reveal:(projectId,assetId)=>ipcRenderer.invoke('assets:reveal',projectId,assetId)},
   clipboard:{write:(text)=>ipcRenderer.invoke('clipboard:write',text)},
+  sources:{
+    providers:()=>ipcRenderer.invoke('sources:providers'),
+    search:(query)=>ipcRenderer.invoke('sources:search',query),
+    fetchOriginal:(candidate)=>ipcRenderer.invoke('sources:fetch-original',candidate),
+    compare:(primary,secondary)=>ipcRenderer.invoke('sources:compare',primary,secondary),
+    importUrl:(url)=>ipcRenderer.invoke('sources:import-url',url),
+    importFile:()=>ipcRenderer.invoke('sources:import-file'),
+    fetchBible:(req)=>ipcRenderer.invoke('sources:fetch-bible',req),
+    openExternal:(url)=>ipcRenderer.invoke('sources:open-external',url)
+  },
   gemini:{
     status:()=>ipcRenderer.invoke('gemini:status'),
     ping:()=>ipcRenderer.invoke('gemini:ping'),

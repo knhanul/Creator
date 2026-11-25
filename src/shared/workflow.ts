@@ -1,5 +1,6 @@
 import type { AIRecords, AIStage, AnalysisResult, Assembly, Brief, Choice, EditClip, EditPlanResult, Genre, MediaAsset, ProjectSummary, PromptsResult, Scene, StageRecord, StudioProject, StoryboardResult } from './types';
 import { INTERNAL } from './brand';
+import { clearStageReviewFlag } from './original-versioning';
 
 export const GENRES: Record<Genre, string> = { bible: '성경', poetry: '시', essay: '에세이', novel: '소설', classic: '고전' };
 export const AUDIENCES = { preschool: '유아', kids: '어린이', teens: '청소년', adult: '성인', family: '가족' } as const;
@@ -12,7 +13,8 @@ export function makeProject(id: string, input: Brief, timestamp = now()): Studio
   return { schema: INTERNAL.projectSchema, id, revision: 1, createdAt: timestamp, updatedAt: timestamp, archived: false,
     brief: { ...input }, selection: { styleId: '', directionId: '' }, analysis: null, scenes: [], assets: [],
     ai: { analysis: emptyStage(), storyboard: emptyStage(), prompt: emptyStage(), editplan: emptyStage() },
-    assembly: { clips: [], subtitleMode: 'original', transitionDefault: 'fade', bgmAssetId: null } };
+    assembly: { clips: [], subtitleMode: 'original', transitionDefault: 'fade', bgmAssetId: null },
+    originalHistory: [] };
 }
 export function summarize(p: StudioProject): ProjectSummary {
   return { id: p.id, title: p.brief.title || '제목 없는 작품', genre: p.brief.genre, audience: p.brief.audience, updatedAt: p.updatedAt, createdAt: p.createdAt, sceneCount: p.scenes.length, mediaCount: p.assets.length, archived: p.archived };
@@ -78,6 +80,7 @@ export function applyAIResponse(project: StudioProject, stage: AIStage, answer: 
   if (stage === 'prompt') { const prompts=validatePrompts(result,p.scenes); const map=new Map(prompts.items.map(x=>[x.sceneId,x])); p.scenes=p.scenes.map(s=> ({...s,...{ imagePrompt:map.get(s.id)?.imagePrompt||'',videoPrompt:map.get(s.id)?.videoPrompt||'',negativePrompt:map.get(s.id)?.negativePrompt||''},status:'ready'})); }
   if (stage === 'editplan') { const plan=validateEditPlan(result,p.scenes); p.assembly.clips=plan.clips; }
   p.ai[stage]={ raw:answer, updatedAt:now(), status:'approved' };
+  p.reviewNeeded = clearStageReviewFlag(p, stage);
   return p;
 }
 export function stageComplete(p:StudioProject,stage: keyof typeof STAGE_NAMES): boolean {
@@ -97,6 +100,12 @@ export function readyForHandoff(p:StudioProject): {ready:boolean; warnings:strin
   if(missing.length)warnings.push(`미디어 미연결 장면 ${missing.length}개가 있습니다.`);
   if(!p.assembly.clips.length)warnings.push('최종 편집안이 없습니다.');
   if(p.brief.rightsStatus==='unreviewed')warnings.push('원문 저작권·이용 조건을 확인하지 않았습니다.');
+  const metaRights = p.brief.originalMeta?.rights.status;
+  if(metaRights==='RESTRICTED')warnings.push('원문이 이용 제한(RESTRICTED) 상태입니다. 별도 이용허락을 확인하세요.');
+  else if(metaRights==='UNKNOWN' || metaRights==='REVIEW_REQUIRED')warnings.push('원문 저작권 추가 확인이 필요합니다.');
+  if(p.reviewNeeded && (p.reviewNeeded.analysis || p.reviewNeeded.storyboard || p.reviewNeeded.prompt || p.reviewNeeded.editplan || p.reviewNeeded.subtitles)) {
+    warnings.push('기준 원문이 변경되어 재검토가 필요한 후속 단계가 남아 있습니다.');
+  }
   return {ready:warnings.length===0,warnings};
 }
 export function toHandoff(p:StudioProject) {

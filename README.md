@@ -39,7 +39,7 @@ EXE는 `release/`에 생성되도록 설정했습니다. 서명하지 않은 자
 | --- | --- |
 | 대시보드 | 최근 작품·통계·빠른 새 작품 등록 |
 | 내 작품 | 작품 목록·검색·보관·복원 |
-| 작품 정보 | 장르/시청 대상/원문/출처/권리확인/길이/화면비 등록·수정 |
+| 작품 정보 | 장르/시청 대상/**원문 자동 검색(위키문헌·Gutenberg·공유마당 공식 연계)·성경 전용 가져오기(개역한글판)·URL/파일(TXT·DOCX) 가져오기·저작권 6단계 검증·판본 대조·기준 원문 확정 및 버전 이력 관리** |
 | 기획 분석 | AI 요청문 자동 생성, JSON 검증·적용, 화풍/연출안 직접 선택 |
 | 스토리보드 | 장면 JSON 적용, 카드 보기, 추가·수정·순서 조정·삭제 |
 | 생성 프롬프트 | 장면별 이미지/동영상 프롬프트 JSON 적용, 직접 수정·복사 |
@@ -113,4 +113,4 @@ docs/                        # 아키텍처·브랜딩·로드맵·검증 상태
 4. **Chrome 확장 + Windows Native Messaging**으로 Gemini 연결 어댑터를 별도 개발·검증.
 5. 실제 더빙 프로그램과 `composer_project.json` 호환 검증 및 원클릭 실행 추가.
 
-자세한 내용은 `docs/ARCHITECTURE.md`, `docs/BRANDING.md`, `docs/ROADMAP.md`를 참고하세요.
+자세한 내용은 `docs/ARCHITECTURE.md`, `docs/BRANDING.md`, `docs/ROADMAP.md`, `docs/ORIGINAL_SOURCE_GUIDE.md`를 참고하세요.

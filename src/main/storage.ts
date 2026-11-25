@@ -4,6 +4,7 @@ import { cp, copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { AssetKind, Brief, StudioProject, ProjectSummary } from '../shared/types';
 import { makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
+import { migrateProjectDocument } from '../shared/original-versioning';
 import { INTERNAL } from '../shared/brand';
 
 const projectRegex=/^[0-9a-f-]{36}$/i;
@@ -30,7 +31,7 @@ export async function listProjects(includeArchived=false):Promise<ProjectSummary
 export async function readProject(id:string):Promise<StudioProject>{
   const raw=JSON.parse(await readFile(documentPath(id),'utf8')) as StudioProject;
   if(raw.schema!==INTERNAL.projectSchema || raw.id!==id) throw Error('지원하지 않는 프로젝트 형식입니다.');
-  return raw;
+  return migrateProjectDocument(raw);
 }
 async function persist(p:StudioProject):Promise<void>{
   const target=documentPath(p.id);

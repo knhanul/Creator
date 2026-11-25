@@ -6,7 +6,7 @@ const common = (p: StudioProject) => `당신은 낭독 콘텐츠의 시각 연�
 작품 제목: ${p.brief.title}
 장르: ${GENRES[p.brief.genre]}
 대상: ${AUDIENCES[p.brief.audience]}
-저자/출처: ${p.brief.author || '미입력'}
+저자/출처: ${p.brief.author || '미입력'}${p.brief.source ? ` (${p.brief.source})` : ''}
 목표 길이(초): ${p.brief.targetDuration}
 화면 비율: ${p.brief.aspectRatio}
 원문(필수 참조, 요약·각색 금지):

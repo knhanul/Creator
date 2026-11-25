@@ -1,10 +1,36 @@
+import type {
+  BibleFetchRequest,
+  EditionComparisonSummary,
+  OriginalFetchResult,
+  OriginalSourceMeta,
+  OriginalVersionEntry,
+  SourceCandidate,
+  SourceProviderInfo,
+  SourceSearchQuery,
+  SourceSearchResponse,
+  StageReviewFlags
+} from './source-types';
+
 export type Genre = 'bible' | 'poetry' | 'essay' | 'novel' | 'classic';
 export type Audience = 'preschool' | 'kids' | 'teens' | 'adult' | 'family';
 export type Stage = 'brief' | 'analysis' | 'storyboard' | 'prompt' | 'media' | 'assembly' | 'handoff';
 export type AIStage = 'analysis' | 'storyboard' | 'prompt' | 'editplan';
 export type AssetKind = 'image' | 'video' | 'audio';
 export type SceneStatus = 'draft' | 'ready' | 'complete';
-export interface Brief { genre: Genre; audience: Audience; title: string; author: string; source: string; sourceUrl: string; originalText: string; rightsStatus: 'unreviewed' | 'reviewed' | 'public-domain' | 'licensed'; targetDuration: number; aspectRatio: '16:9' | '9:16' | '1:1'; }
+export interface Brief {
+  genre: Genre;
+  audience: Audience;
+  title: string;
+  author: string;
+  source: string;
+  sourceUrl: string;
+  originalText: string;
+  rightsStatus: 'unreviewed' | 'reviewed' | 'public-domain' | 'licensed';
+  targetDuration: number;
+  aspectRatio: '16:9' | '9:16' | '1:1';
+  /** 확정된 기준 원문 출처·저작권·검증·해시·버전 정보 (기존 프로젝트 하위 호환: optional) */
+  originalMeta?: OriginalSourceMeta;
+}
 export interface Choice { id: string; label: string; description: string }
 export interface AnalysisResult { schema: 'creator.analysis.v1'; summary: string; emotion: string; keywords: string[]; styles: Choice[]; directions: Choice[]; cautions: string[]; }
 export interface StoryScene { id: string; title: string; narration: string; visual: string; durationSec: number; kind: 'image' | 'video'; }
@@ -23,6 +49,10 @@ export interface StudioProject {
   brief: Brief;
   selection: { styleId: string; directionId: string };
   analysis: AnalysisResult | null; scenes: Scene[]; assets: MediaAsset[]; ai: AIRecords; assembly: Assembly;
+  /** 기준 원문 변경 이력 (기존 프로젝트 하위 호환: optional) */
+  originalHistory?: OriginalVersionEntry[];
+  /** 기준 원문 변경 후 재검토가 필요한 후속 단계 표시 (기존 프로젝트 하위 호환: optional) */
+  reviewNeeded?: StageReviewFlags;
 }
 export interface ProjectSummary { id: string; title: string; genre: Genre; audience: Audience; updatedAt: string; createdAt: string; sceneCount: number; mediaCount: number; archived: boolean; }
 export interface AppInfo { version: string; dataRoot: string; platform: string; }
@@ -80,6 +110,16 @@ export type StudioAPI = {
   };
   assets: { import(projectId: string): Promise<StudioProject | null>; reveal(projectId: string, assetId: string): Promise<void>; };
   clipboard: { write(text: string): Promise<void> };
+  sources: {
+    providers(): Promise<SourceProviderInfo[]>;
+    search(query: SourceSearchQuery): Promise<SourceSearchResponse>;
+    fetchOriginal(candidate: SourceCandidate): Promise<OriginalFetchResult>;
+    compare(primary: { label: string; text: string }, secondary: { label: string; text: string }): Promise<EditionComparisonSummary>;
+    importUrl(url: string): Promise<OriginalFetchResult>;
+    importFile(): Promise<OriginalFetchResult | null>;
+    fetchBible(req: BibleFetchRequest): Promise<OriginalFetchResult>;
+    openExternal(url: string): Promise<OperationResult>;
+  };
   gemini: {
     status(): Promise<GeminiStatus>;
     ping(): Promise<GeminiPingResult>;
