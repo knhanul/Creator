@@ -19,18 +19,18 @@
    npm install
    npm run build
    ```
-2. **앱 완전히 종료 후 다시 실행** — 평소 실행 방식 그대로 (`npm run dev` 또는 `npm run preview`).
-   설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드).
-3. **Chrome 확장 새로고침** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
-   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.3**인지 확인.
+   이어서 같은 폴더의 **`SETUP_GEMINI.bat`**을 실행합니다. Node.js 확인과 Native Host 등록(고정 확장 ID 포함)을 자동으로 합니다. 여러 번 실행해도 안전합니다.
+2. **앱 완전히 종료 후 다시 실행** — 평소 실행 방식 그대로 (`npm run dev` 또는 `npm run preview` 또는 `START_WINDOWS.bat`).
+   설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드). 설치용 EXE에는 Native Host가 아직 들어 있지 않으므로 Host 등록은 저장소 폴더의 `SETUP_GEMINI.bat`으로 합니다.
+3. **Chrome 확장 새로고침 또는 다시 로드** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
+   - **이번 갱신부터 확장 ID가 고정값 `ekibpgmnknamcpplppceoaogmcbcabbo` 로 바뀝니다.** 예전에 불러온 카드의 ID가 이와 다르면 그 카드를 **제거**한 뒤 「압축해제된 확장 프로그램을 로드합니다」로 저장소의 `extension` 폴더를 다시 불러오세요.
+   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.3**인지, ID가 **`ekibpgmnknamcpplppceoaogmcbcabbo`** 인지 확인.
    - **「서비스 워커」 링크**(뷰 검사)를 눌러 열린 콘솔 첫 줄에
      `GOMO background protocol 2 build 0.2.3 file gomo-sw.js manifest 0.2.3` 이 보여야 합니다.
      안 보이거나 다른 내용이면(0.2.2까지는 서비스 워커 파일이 `background.js`였음): 확장을 **삭제** → 「압축해제된 확장 프로그램을 로드합니다」로
-     `E:\Pjt\creator\extension` 을 다시 로드 → 콘솔 다시 확인. 새 ID가 이전과 다르면 4번 아래 재등록 명령을 새 ID로 실행.
-   - 「세부정보」의 소스 경로가 `E:\Pjt\creator\extension` (git pull 한 저장소)인지 확인.
-   - 다르면 다른 폴더를 불러온 것입니다 → 카드 「세부정보」의 「소스」 경로가 `<저장소>\extension` 인지 확인하고,
-     아니면 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다(ID가 바뀌면 5번 필수).
-   - 카드에 표시된 **ID**(32자)를 메모해 둡니다.
+     `<저장소>\extension` 을 다시 로드 → 콘솔 다시 확인.
+   - 「세부정보」의 소스 경로가 git pull 한 저장소의 `extension` 폴더인지 확인.
+   - 다르면 다른 폴더를 불러온 것입니다 → 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다.
 4. **다른 Chrome 프로필 확인** — Chrome 오른쪽 위 프로필 아이콘에 프로필이 여러 개면, **각 프로필에서** `chrome://extensions` 를 열어
    GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.3)하거나, 쓰지 않으면 **제거**합니다.
 5. **Chrome 완전히 종료 후 다시 켜기**
@@ -42,10 +42,11 @@
      Chrome을 끈 상태에서 여기에 나오는 것은 남은 Host입니다 → `Stop-Process -Id <ProcessId>` 로 종료.
      (앱을 `npm run dev` 로 띄운 node.exe는 `host.mjs` 가 아니므로 여기에 나오지 않습니다.)
    - Native Host 재등록은 보통 필요 없습니다(등록된 `gomo-host.cmd` 가 저장소의 `native-host\host.mjs` 를 직접 실행).
-     저장소 폴더를 옮겼거나 확장 ID가 바뀌었거나 연결 확인에서 `HOST_OUTDATED` 가 계속 나올 때만:
+     저장소 폴더를 옮겼거나 이번처럼 확장 ID가 바뀌었거나 연결 확인에서 `HOST_OUTDATED` 가 계속 나올 때만
+     저장소 폴더의 `SETUP_GEMINI.bat`을 다시 실행하세요. 수동이면:
      ```powershell
-     # 반드시 저장소 폴더에서 실행
-     npm run native:register -- --extension-id=<3번에서 메모한 ID>
+     # 반드시 저장소 폴더에서 실행. ID를 생략하면 고정 ID를 씁니다.
+     npm run native:register
      npm run native:check
      ```
 6. **Gemini 탭 열기/새로고침** — `gemini.google.com` 을 열거나 F5. 로그인 상태 확인, 입력창은 비워 둡니다.

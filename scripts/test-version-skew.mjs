@@ -209,7 +209,7 @@ await test('Native Host: HOST_INFO_REQUEST에 직접 응답(Chrome으로 넘기�
 
 await test('checkPeerVersions: Host 무응답(이전 Host) → HOST_OUTDATED, 안내에 재등록 명령 포함', () => {
   assert.equal(checkPeerVersions({ host: null, extension: { protocol: 2, version: '0.2.1' }, content: { state: 'ok', protocol: 2 } }).code, 'HOST_OUTDATED');
-  assert.match(ERROR_GUIDE.HOST_OUTDATED.fix, /npm run native:register -- --extension-id=/);
+  assert.match(ERROR_GUIDE.HOST_OUTDATED.fix, /SETUP_GEMINI\.bat/);
   assert.equal(checkPeerVersions({ host: { protocol: 2, version: 'x' }, extension: { protocol: 2, version: '0.2.1' }, content: { state: 'none' } }), null); // 전송 때 주입
 });
 

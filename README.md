@@ -22,6 +22,18 @@ npm run dev
 
 처음 실행에서는 Electron이 빌드되어 **고모 창작실 Windows 창**이 표시됩니다. 개발 중 코드를 저장하면 화면이 다시 빌드·갱신됩니다.
 
+`START_WINDOWS.bat`으로 같은 실행을 할 수도 있습니다.
+
+### Gemini 연결 (Chrome 확장)
+
+Gemini 자동 요청을 쓰려면 Chrome 확장과 Native Host를 이 컴퓨터에 한 번 연결해야 합니다. 저장소 폴더의 **`SETUP_GEMINI.bat`**을 실행하세요. Node.js 확인·필요 시 설치·Host 등록까지 자동으로 합니다.
+
+이어서 bat 안내에 따라 `chrome://extensions`에서 **개발자 모드**를 켜고(이 단계는 Chrome이 막아 두어서 자동으로 할 수 없음) `extension` 폴더를 불러오면 됩니다. 카드 ID는 `ekibpgmnknamcpplppceoaogmcbcabbo` 이어야 합니다. 예전에 다른 ID로 불러 둔 확장이 있으면 제거한 뒤 다시 불러오세요.
+
+`git pull` 후에도 한 번 `SETUP_GEMINI.bat`을 실행하고, 이미 불러온 확장은 새로고침하거나(ID가 바뀌었으면 제거 후 다시 로드) 하면 됩니다. 자세한 절차는 [GEMINI.md](GEMINI.md)를 보세요.
+
+> 설치용 EXE에는 Native Host와 확장이 아직 들어 있지 않습니다. 지금은 저장소 폴더에서 위 bat으로 연결합니다.
+
 ### 검사·패키징
 
 ```powershell

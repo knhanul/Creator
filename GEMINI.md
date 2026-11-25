@@ -15,7 +15,8 @@
 |------|------|
 | `extension/` | Chrome Manifest V3 확장 프로그램 |
 | `native-host/host.mjs` | Native Messaging Host (stdin/stdout + Named Pipe) |
-| `native-host/register.mjs` | Windows HKCU 레지스트리 등록/해제 |
+| `native-host/register.mjs` | Windows HKCU 레지스트리 등록/해제. 확장 ID는 manifest 고정 키에서 기본값으로 계산 |
+| `SETUP_GEMINI.bat` | Windows에서 Node 확인·의존성 설치·Native Host 등록을 한 번에 실행 |
 | `src/shared/gemini-protocol.ts` | 공통 메시지 타입 |
 | `src/main/gemini/adapter.ts` | Gemini Provider Adapter |
 | `src/main/gemini/pipe-client.ts` | Electron ↔ Host Named Pipe 클라이언트 |
@@ -35,27 +36,32 @@ npm install
 npm run dev
 ```
 
-### Native Host 등록 (Windows)
+### Gemini 연결 설정 (Windows)
+
+저장소 폴더의 `SETUP_GEMINI.bat`을 실행하세요. Node.js 22.12 이상 확인, 필요 시 `npm install`, Native Host 등록·확인까지 자동으로 합니다. 이어서 화면에 나온 대로:
+
+1. Chrome에서 `chrome://extensions` 열기 (bat이 열기를 시도하고, `extension` 폴더 경로를 클립보드에 복사합니다)
+2. 오른쪽 위 **개발자 모드** 켜기 — 이 컴퓨터에서 한 번만 하면 됩니다. Chrome이 막아 두어서 bat으로는 켤 수 없습니다.
+3. **압축해제된 확장 프로그램을 로드합니다** → 저장소의 `extension` 폴더 선택
+4. 카드에 표시된 ID가 고정 ID `ekibpgmnknamcpplppceoaogmcbcabbo` 와 같은지 확인
+5. Chrome을 완전히 종료했다가 다시 켜기 (트레이 아이콘까지)
+
+이미 예전 방식으로 불러온 확장이 있으면(ID가 다름) 그 카드를 **제거**한 뒤 같은 `extension` 폴더를 다시 불러오세요. `git pull` 후 처음 한 번은 이 과정이 필요합니다. `SETUP_GEMINI.bat`은 여러 번 실행해도 안전합니다.
+
+수동 등록이 필요할 때만:
 
 ```bash
 npm run native:register
-# 확장 프로그램 ID를 아는 경우
-npm run native:register -- --extension-id=YOUR_EXTENSION_ID
+# 예전에 쓴 다른 ID도 함께 허용할 때
+npm run native:register -- --extension-id=OTHER_ID
 npm run native:check
 npm run native:unregister
 ```
 
+`--extension-id`를 생략하면 고정 ID를 씁니다. 플래그를 주어도 고정 ID는 항상 포함됩니다. Host 경로는 실행 폴더가 아니라 `native-host` 폴더 위치 기준으로 잡힙니다.
+
 등록 위치: `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.gomo.create`  
-Host 식별자 `com.gomo.create`는 브랜드 표시 문자열과 분리되어 있습니다.
-
-### Chrome 확장 프로그램 설치
-
-1. Chrome에서 `chrome://extensions` 열기
-2. 개발자 모드 켜기
-3. "압축해제된 확장 프로그램을 로드합니다" → `extension/` 폴더 선택
-4. 표시된 확장 프로그램 ID를 복사
-5. `npm run native:register -- --extension-id=<ID>` 로 허용 목록 갱신
-6. Chrome 재시작
+Host 식별자 `com.gomo.create`는 브랜드 표시 문자열과 분리되어 있습니다. 설치용 EXE에는 Native Host가 아직 들어 있지 않으므로, 지금은 저장소 폴더에서 `SETUP_GEMINI.bat`으로 등록합니다.
 
 ### Gemini 로그인
 
@@ -139,7 +145,7 @@ GOMO Create는 로그인 정보를 저장하거나 추출하지 않습니다.
 - `npm run native:check` 로 레지스트리 확인
 - `%USERPROFILE%\.gomo-create\host.log` 확인 (stdout에 로그를 쓰지 않음)
 - Chrome 확장 프로그램 콘솔에서 `connectNative` 오류 메시지 확인
-- 확장 프로그램 ID가 Host manifest `allowed_origins`와 일치하는지 확인
+- 확장 프로그램 ID가 고정 ID `ekibpgmnknamcpplppceoaogmcbcabbo` 인지, Host manifest `allowed_origins`와 일치하는지 확인. 다르면 예전 확장을 제거하고 `SETUP_GEMINI.bat`을 다시 실행
 
 ## 보안 원칙
 
