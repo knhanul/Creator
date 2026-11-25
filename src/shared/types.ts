@@ -49,6 +49,8 @@ export interface StudioProject {
   brief: Brief;
   selection: { styleId: string; directionId: string };
   analysis: AnalysisResult | null; scenes: Scene[]; assets: MediaAsset[]; ai: AIRecords; assembly: Assembly;
+  /** 작품 배경음악 생성 프롬프트 (생성 프롬프트 단계에서 저장; 기존 프로젝트는 ai.prompt.raw에서 폴백) */
+  bgmPrompt?: string;
   /** 기준 원문 변경 이력 (기존 프로젝트 하위 호환: optional) */
   originalHistory?: OriginalVersionEntry[];
   /** 기준 원문 변경 후 재검토가 필요한 후속 단계 표시 (기존 프로젝트 하위 호환: optional) */
@@ -94,8 +96,8 @@ export interface GeminiJobRecord {
   codeBlocks?: string[]; isolation?: string; progressChars?: number;
   tab?: { id: number; title: string; url?: string }; insertMethod?: string; sendEvidence?: string; /** 연결 확인 진단 텍스트 (본문 없음) */ diagnostics?: string;
   appliedAt?: string; appliedRevision?: number; validationError?: string;
-  /** 이미지 생성 작업 결과 메타데이터 */
-  imageDataUrl?: string; imageUrl?: string; downloadPath?: string; imageMimeType?: string; assetId?: string;
+  /** 미디어 생성 작업 결과 메타데이터 (이미지·동영상·배경음악 공용) */
+  imageDataUrl?: string; imageUrl?: string; mediaDataUrl?: string; mediaUrl?: string; downloadPath?: string; imageMimeType?: string; mediaMimeType?: string; assetId?: string;
   /** 오류·확인 필요로 멈추기 직전 단계 */
   stoppedPhase?: GeminiJobPhase;
 }
@@ -149,6 +151,18 @@ export type StudioAPI = {
     image: {
       start(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult>;
       latest(projectId: string, sceneId?: string): Promise<GeminiJobRecord | null>;
+      listForProject(projectId: string): Promise<GeminiJobRecord[]>;
+    };
+    /** Phase 5 확장: 장면별 동영상 생성(반자동) */
+    video: {
+      start(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult>;
+      latest(projectId: string, sceneId?: string): Promise<GeminiJobRecord | null>;
+      listForProject(projectId: string): Promise<GeminiJobRecord[]>;
+    };
+    /** Phase 5 확장: 작품 단위 배경음악 생성(반자동) */
+    music: {
+      start(projectId: string): Promise<GeminiAnalysisStartResult>;
+      latest(projectId: string): Promise<GeminiJobRecord | null>;
       listForProject(projectId: string): Promise<GeminiJobRecord[]>;
     };
     /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */

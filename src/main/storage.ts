@@ -81,46 +81,75 @@ export async function importAssets(id:string,targetSceneId?:string):Promise<Stud
   await persist(next);return next;
 }
 
-function extFromImageMime(mime?: string): string {
+function extFromMediaMime(kind: AssetKind, mime?: string): string {
   const m = (mime || '').toLowerCase();
+  if (kind === 'video') {
+    if (m.includes('webm')) return 'webm';
+    if (m.includes('quicktime') || m.includes('mov')) return 'mov';
+    if (m.includes('mkv') || m.includes('matroska')) return 'mkv';
+    return 'mp4';
+  }
+  if (kind === 'audio') {
+    if (m.includes('wav')) return 'wav';
+    if (m.includes('ogg')) return 'ogg';
+    if (m.includes('flac')) return 'flac';
+    if (m.includes('aac')) return 'aac';
+    if (m.includes('mp4') || m.includes('m4a')) return 'm4a';
+    return 'mp3';
+  }
   if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
   if (m.includes('webp')) return 'webp';
   if (m.includes('gif')) return 'gif';
   return 'png';
 }
 
-export function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string; ext: string } {
-  const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+const ALLOWED_EXTS_BY_KIND: Record<AssetKind, string[]> = {
+  image: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'],
+  video: ['mp4', 'mov', 'm4v', 'webm', 'mkv'],
+  audio: ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac']
+};
+
+export function decodeMediaDataUrl(kind: AssetKind, dataUrl: string): { buffer: Buffer; mimeType: string; ext: string } {
+  const match = dataUrl.match(/^data:((?:image|video|audio)\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
   if (!match) {
-    throw new Error('유효한 base64 이미지 데이터(data:image/...) 형식이 아닙니다.');
+    throw new Error('유효한 base64 미디어 데이터(data:...) 형식이 아닙니다.');
   }
   const mimeType = match[1].toLowerCase();
   const buffer = Buffer.from(match[2].trim(), 'base64');
   if (!buffer.byteLength) {
-    throw new Error('디코딩된 이미지 데이터가 비어 있습니다.');
+    throw new Error('디코딩된 미디어 데이터가 비어 있습니다.');
   }
-  return { buffer, mimeType, ext: extFromImageMime(mimeType) };
+  return { buffer, mimeType, ext: extFromMediaMime(kind, mimeType) };
+}
+
+export function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string; ext: string } {
+  return decodeMediaDataUrl('image', dataUrl);
 }
 
 /**
- * Phase 5 MVP: Gemini에서 생성된 이미지를 프로젝트 내부 `assets/image/` 하위에 저장하고 해당 장면에 연결한다.
+ * Phase 5 공용: Gemini에서 생성된 이미지·동영상·배경음악 파일을 프로젝트 내부 `assets/<kind>/` 하위에 저장한다.
+ * - image / video: sceneId 필수, 저장 후 해당 scene.assetId에 자동 연결
+ * - audio (배경음악): 장면에는 연결하지 않고 project.assets에만 추가 (최종 편집안 BGM 선택 목록에 표시)
  */
-export async function saveGeneratedImageAsset(
+export async function saveGeneratedMediaAsset(
   projectId: string,
-  sceneId: string,
-  input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
+  kind: AssetKind,
+  input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string }
 ): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset }> {
   const p = await readProject(projectId);
-  const sceneIdx = p.scenes.findIndex(s => s.id === sceneId);
-  if (sceneIdx < 0) {
-    throw new Error(`장면(${sceneId})을 찾을 수 없습니다.`);
+  let sceneIdx = -1;
+  if (kind === 'image' || kind === 'video') {
+    if (!input.sceneId) throw new Error('장면 ID(sceneId)가 필요합니다.');
+    sceneIdx = p.scenes.findIndex(s => s.id === input.sceneId);
+    if (sceneIdx < 0) throw new Error(`장면(${input.sceneId})을 찾을 수 없습니다.`);
   }
 
   let buffer: Buffer;
-  let ext = extFromImageMime(input.mimeType);
+  let ext = extFromMediaMime(kind, input.mimeType);
+  const dataUrl = input.mediaDataUrl || input.imageDataUrl;
 
-  if (input.imageDataUrl && input.imageDataUrl.startsWith('data:image/')) {
-    const decoded = decodeImageDataUrl(input.imageDataUrl);
+  if (dataUrl && /^data:(?:image|video|audio)\//i.test(dataUrl)) {
+    const decoded = decodeMediaDataUrl(kind, dataUrl);
     buffer = decoded.buffer;
     ext = decoded.ext;
   } else if (input.downloadPath) {
@@ -138,21 +167,22 @@ export async function saveGeneratedImageAsset(
     }
     if (!readBuf || !readBuf.byteLength) {
       throw new Error(
-        `다운로드된 이미지 파일을 읽지 못했습니다: ${lastErr instanceof Error ? lastErr.message : '파일이 비어 있거나 접근할 수 없습니다.'}`
+        `다운로드된 파일을 읽지 못했습니다: ${lastErr instanceof Error ? lastErr.message : '파일이 비어 있거나 접근할 수 없습니다.'}`
       );
     }
     buffer = readBuf;
     const pathExt = extname(input.downloadPath).replace(/^\./, '').toLowerCase();
-    if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(pathExt)) {
+    if (ALLOWED_EXTS_BY_KIND[kind].includes(pathExt)) {
       ext = pathExt === 'jpeg' ? 'jpg' : pathExt;
     }
   } else {
-    throw new Error('생성된 이미지 데이터가 없습니다.');
+    throw new Error('생성된 미디어 데이터가 없습니다.');
   }
 
   const unique = randomUUID();
-  const name = `${safeName(sceneId)}_gemini_${unique.slice(0, 8)}.${ext}`;
-  const relative = `assets/image/${unique}_${safeName(name)}`;
+  const prefix = kind === 'audio' ? 'bgm' : safeName(input.sceneId || kind);
+  const name = `${prefix}_gemini_${unique.slice(0, 8)}.${ext}`;
+  const relative = `assets/${kind}/${unique}_${safeName(name)}`;
   const destination = resolveAssetPath(projectId, relative);
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, buffer);
@@ -160,16 +190,18 @@ export async function saveGeneratedImageAsset(
   const importedAt = new Date().toISOString();
   const asset: import('../shared/types').MediaAsset = {
     id: unique,
-    kind: 'image',
+    kind,
     name,
     relativePath: relative,
     bytes: buffer.byteLength,
     importedAt
   };
 
-  const nextScenes = p.scenes.map((s, idx) =>
-    idx === sceneIdx ? { ...s, assetId: asset.id, status: 'complete' as const } : s
-  );
+  const nextScenes =
+    sceneIdx >= 0
+      ? p.scenes.map((s, idx) => (idx === sceneIdx ? { ...s, assetId: asset.id, status: 'complete' as const } : s))
+      : p.scenes;
+
   const next: StudioProject = {
     ...p,
     assets: [...p.assets, asset],
@@ -179,6 +211,15 @@ export async function saveGeneratedImageAsset(
   };
   await persist(next);
   return { project: next, asset };
+}
+
+/** Phase 5 MVP 호환 래퍼: 이미지 생성 저장 */
+export async function saveGeneratedImageAsset(
+  projectId: string,
+  sceneId: string,
+  input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
+): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset }> {
+  return saveGeneratedMediaAsset(projectId, 'image', { ...input, sceneId });
 }
 export async function revealAsset(id:string,assetId:string):Promise<void>{
   const p=await readProject(id);const a=p.assets.find(x=>x.id===assetId);if(!a)throw Error('미디어 항목이 없습니다.');

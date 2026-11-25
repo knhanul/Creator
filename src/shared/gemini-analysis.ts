@@ -5,7 +5,7 @@
  * - UI 단계 표시와 오류별 원인·해결 안내
  */
 import type { AIStage, GeminiJobPhase, GeminiJobRecord, StudioProject } from './types';
-import { applyAIResponse } from './workflow';
+import { applyAIResponse, extractJSON } from './workflow';
 import { makeAIPrompt } from './prompts';
 
 /** 자동화 대상 AI 단계: 모두 "프롬프트 → Gemini 텍스트 응답 → JSON 스키마 검사 → 작품 저장" 구조 */
@@ -31,6 +31,62 @@ export function makeImageGenerationPrompt(project: StudioProject, sceneId: strin
   }
   lines.push('Important: Do not render any text, letters, subtitles, or watermarks inside the image.');
   return lines.join('\n');
+}
+
+/** 작품의 배경음악 프롬프트 조회 (project.bgmPrompt 우선, 없으면 기존 ai.prompt.raw JSON에서 추출) */
+export function getProjectBgmPrompt(project: StudioProject): string {
+  if (typeof project.bgmPrompt === 'string' && project.bgmPrompt.trim()) {
+    return project.bgmPrompt.trim();
+  }
+  const raw = project.ai?.prompt?.raw;
+  if (raw && raw.trim()) {
+    try {
+      const parsed = extractJSON(raw) as { bgmPrompt?: unknown };
+      if (typeof parsed?.bgmPrompt === 'string' && parsed.bgmPrompt.trim()) {
+        return parsed.bgmPrompt.trim();
+      }
+    } catch { /* ignore */ }
+  }
+  return '';
+}
+
+/**
+ * Phase 5 확장: 장면의 videoPrompt(+negativePrompt·화면비)로 Gemini 웹 동영상 생성 요청문을 만든다.
+ * 참고: Gemini 웹의 동영상 생성(Veo 등)은 계정 등급·지역·UI 변경에 따라 불안정하거나 제한될 수 있다.
+ */
+export function makeVideoGenerationPrompt(project: StudioProject, sceneId: string): string {
+  const scene = project.scenes.find(s => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`장면(${sceneId})을 찾을 수 없습니다.`);
+  }
+  const basePrompt = (scene.videoPrompt || '').trim();
+  if (!basePrompt) {
+    throw new Error(`${scene.id} 장면의 동영상 생성 프롬프트(videoPrompt)가 비어 있습니다. 생성 프롬프트 단계에서 먼저 작성해 주세요.`);
+  }
+  const lines = [
+    `Generate a short cinematic video (${project.brief.aspectRatio} aspect ratio, gentle single motion, slow camera movement).`,
+    `Video prompt: ${basePrompt}`
+  ];
+  if (scene.negativePrompt?.trim()) {
+    lines.push(`Negative prompt (avoid): ${scene.negativePrompt.trim()}`);
+  }
+  lines.push('Important: Do not render any text, subtitles, or watermarks inside the video.');
+  return lines.join('\n');
+}
+
+/**
+ * Phase 5 확장: 작품의 bgmPrompt로 Gemini 웹 배경음악 생성 요청문을 만든다.
+ * 참고: Gemini 웹의 음악 생성(Lyria 등)은 계정 등급·지역·UI 변경에 따라 불안정하거나 제한될 수 있다.
+ */
+export function makeMusicGenerationPrompt(project: StudioProject): string {
+  const bgm = getProjectBgmPrompt(project);
+  if (!bgm) {
+    throw new Error('작품의 배경음악 프롬프트(bgmPrompt)가 비어 있습니다. 생성 프롬프트 단계에서 먼저 프롬프트를 생성해 주세요.');
+  }
+  return [
+    'Generate an instrumental background music track (no vocals, no lyrics, original composition).',
+    `Music prompt: ${bgm}`
+  ].join('\n');
 }
 
 export interface StageMeta {
@@ -216,8 +272,14 @@ export const ERROR_GUIDE: Record<string, { cause: string; fix: string }> = {
   DOWNLOAD_FAILED: { cause: '브라우저에서 이미지 다운로드가 중단되었거나 실패했습니다.', fix: 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.' },
   DOWNLOAD_PATH_MISSING: { cause: '다운로드는 감지되었으나 로컬 파일 경로를 확보하지 못했습니다.', fix: 'Gemini에서 이미지가 생성되었습니다. 다운로드한 파일을 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.' },
   IMAGE_DATA_MISSING: { cause: 'Gemini에서 이미지 생성은 감지되었으나 이미지 파일 데이터를 자동으로 가져오지 못했습니다.', fix: 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.' },
-  SCENE_NOT_FOUND: { cause: '이미지를 연결할 대상 장면을 프로젝트에서 찾을 수 없습니다.', fix: '스토리보드에서 장면 목록을 확인한 뒤 다시 시도해 주세요.' },
-  EMPTY_IMAGE_PROMPT: { cause: '이 장면의 이미지 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계에서 해당 장면의 이미지 프롬프트를 먼저 생성하거나 입력해 주세요.' }
+  NO_VIDEO_GENERATED: { cause: 'Gemini가 동영상을 생성하지 않고 텍스트로만 응답했습니다(계정 등급 또는 정책 제한 가능).', fix: 'Gemini 탭에서 응답을 확인하세요. 동영상이 생성되었다면 Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.' },
+  NO_MUSIC_GENERATED: { cause: 'Gemini가 배경음악을 생성하지 않고 텍스트로만 응답했습니다(계정 등급 또는 기능 미지원 가능).', fix: 'Gemini 탭에서 응답을 확인하세요. 음악이 생성되었다면 Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.' },
+  MEDIA_DETECT_FAILED: { cause: 'Gemini 응답이 완료되었으나 화면에서 생성된 동영상/음악 요소를 자동으로 감지하지 못했습니다.', fix: 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.' },
+  MEDIA_DATA_MISSING: { cause: '생성된 동영상/음악 파일 데이터를 자동으로 확보하지 못했습니다.', fix: 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.' },
+  SCENE_NOT_FOUND: { cause: '미디어를 연결할 대상 장면을 프로젝트에서 찾을 수 없습니다.', fix: '스토리보드에서 장면 목록을 확인한 뒤 다시 시도해 주세요.' },
+  EMPTY_IMAGE_PROMPT: { cause: '이 장면의 이미지 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계에서 해당 장면의 이미지 프롬프트를 먼저 생성하거나 입력해 주세요.' },
+  EMPTY_VIDEO_PROMPT: { cause: '이 장면의 동영상 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계의 고급 설정에서 동영상 프롬프트를 먼저 입력해 주세요.' },
+  EMPTY_BGM_PROMPT: { cause: '작품의 배경음악 프롬프트(bgmPrompt)가 비어 있습니다.', fix: '생성 프롬프트 단계에서 프롬프트를 먼저 생성해 주세요.' }
 };
 
 export function guideFor(job: GeminiJobRecord | null | undefined): { cause: string; fix: string } | null {

@@ -41,6 +41,8 @@ export declare class GeminiJobQueue {
       isolation?: string;
       imageDataUrl?: string;
       imageUrl?: string;
+      mediaDataUrl?: string;
+      mediaUrl?: string;
       downloadPath?: string;
       mimeType?: string;
     }

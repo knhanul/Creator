@@ -648,6 +648,274 @@
       }
     }
 
+    /**
+     * Phase 5 확장: 동영상/음악 생성 요소 탐색.
+     * 주의: Gemini 웹의 동영상(Veo)·음악(Lyria) 생성은 계정 등급·지역·UI 변경에 따라 불안정하거나 제한될 수 있습니다.
+     */
+    function findGeneratedMedia(responseEl, kind) {
+      if (!responseEl) return [];
+      const group = kind === 'video' ? 'generatedVideo' : 'generatedAudio';
+      const list = SEL[group] || [];
+      const seen = new Set();
+      const out = [];
+      for (let i = 0; i < list.length; i++) {
+        let nodes;
+        try { nodes = responseEl.querySelectorAll(list[i].sel); } catch { continue; }
+        for (const el of nodes) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          if (el.closest && el.closest('model-thoughts')) continue;
+          const mediaEl = el.tagName === 'SOURCE' && el.parentElement ? el.parentElement : el;
+          const src = (
+            el.getAttribute('src') ||
+            el.src ||
+            mediaEl.getAttribute('src') ||
+            mediaEl.currentSrc ||
+            (mediaEl.querySelector && mediaEl.querySelector('source[src]') && mediaEl.querySelector('source[src]').getAttribute('src')) ||
+            ''
+          ).trim();
+          out.push({ el: mediaEl, src, selector: list[i].sel });
+        }
+      }
+      return out;
+    }
+
+    /** 응답 블록 안에서 동영상/음악 다운로드 버튼 탐색 */
+    function findMediaDownloadButton(responseEl, mediaEl) {
+      if (!responseEl) return null;
+      revealImageActions(responseEl, mediaEl);
+      const visibleBtn = find('mediaDownloadButton', responseEl, (el) => isEnabled(el) && !(el.closest && el.closest('model-thoughts')));
+      if (visibleBtn) return visibleBtn;
+
+      const list = SEL.mediaDownloadButton || [];
+      for (let i = 0; i < list.length; i++) {
+        let nodes;
+        try { nodes = responseEl.querySelectorAll(list[i].sel); } catch { continue; }
+        for (const el of nodes) {
+          if (!el || !el.isConnected) continue;
+          if (el.closest && el.closest('model-thoughts')) continue;
+          const target = el.tagName === 'BUTTON' ? el : (el.querySelector && el.querySelector('button')) || el;
+          if (!isEnabled(target)) continue;
+          return { el: target, selector: list[i].sel, index: i };
+        }
+      }
+      // mat-icon="download" 보조 탐색
+      try {
+        const icons = responseEl.querySelectorAll('model-response mat-icon, generated-video mat-icon, generated-audio mat-icon');
+        for (const icon of icons) {
+          const iconName = ((icon.getAttribute('fonticon') || '') + ' ' + (icon.textContent || '')).trim().toLowerCase();
+          if (/\b(?:download|file_download|save_alt)\b/.test(iconName)) {
+            const btn = icon.closest && icon.closest('button');
+            if (btn && isEnabled(btn) && !(btn.closest && btn.closest('model-thoughts'))) {
+              return { el: btn, selector: 'mat-icon[download]', index: -1 };
+            }
+          }
+        }
+      } catch { /* ignore */ }
+      return null;
+    }
+
+    /** 작은 data:/blob: 미디어만 직접 dataUrl 추출 시도 (대용량 동영상·오디오는 다운로드 버튼 우선) */
+    async function extractMediaData(src, kind) {
+      const defaultMime = kind === 'video' ? 'video/mp4' : 'audio/mpeg';
+      if (!src) return { mediaDataUrl: undefined, mediaUrl: '', mimeType: defaultMime, method: 'none' };
+      if (src.startsWith('data:video/') || src.startsWith('data:audio/')) {
+        const mimeMatch = src.match(/^data:((?:video|audio)\/[a-z0-9.+-]+);/i);
+        return { mediaDataUrl: src, mediaUrl: src, mimeType: mimeMatch ? mimeMatch[1] : defaultMime, method: 'data-url' };
+      }
+      if (src.startsWith('blob:') && typeof win.fetch === 'function' && typeof win.FileReader === 'function') {
+        try {
+          const res = await win.fetch(src, { credentials: 'include' });
+          if (res && res.ok) {
+            const blob = await res.blob();
+            if (blob && blob.size > 0 && blob.size <= 750 * 1024) {
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new win.FileReader();
+                reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+                reader.onerror = () => reject(new Error('FileReader failed'));
+                reader.readAsDataURL(blob);
+              });
+              if (dataUrl && /^data:(?:video|audio)\//i.test(dataUrl)) {
+                return { mediaDataUrl: dataUrl, mediaUrl: src, mimeType: blob.type || defaultMime, method: 'fetch-blob' };
+              }
+            }
+          }
+        } catch { /* fall through to download button */ }
+      }
+      return { mediaDataUrl: undefined, mediaUrl: src, mimeType: defaultMime, method: 'url-only' };
+    }
+
+    /**
+     * Phase 5 확장(반자동 동영상·배경음악 수신):
+     * - 생성 완료 감지 → 다운로드 버튼 클릭 시도 → chrome.downloads로 파일 경로 확보
+     * - 작은 dataUrl 추출이 되면 그것도 허용
+     * - 일정 시간 내 미디어/버튼 미발견 시 무한 대기하지 않고 needsUser로 즉시 전환
+     */
+    async function watchMedia(ctx, kind, onProgress) {
+      const start = now();
+      const noMediaIdleLimit = timing.noImageIdleMs || Math.max(timing.stableMs * 4, 800);
+      const containerGroup = kind === 'video' ? 'videoContainer' : 'audioContainer';
+      const noMediaCode = kind === 'video' ? 'NO_VIDEO_GENERATED' : 'NO_MUSIC_GENERATED';
+      const labelKo = kind === 'video' ? '동영상' : '배경음악';
+      let lastSig = null; let lastChange = now(); let stopSeen = false; let lastProgress = 0; let found = null;
+
+      for (;;) {
+        await sleep(timing.pollMs);
+        const t = now();
+        if (detectBlocked()) return { ok: false, errorCode: 'BLOCKED', needsUser: true, message: `${labelKo} 생성 대기 중 Google 보안 확인 화면이 나타났습니다.` };
+        const stopActive = !!findStop();
+        if (stopActive) stopSeen = true;
+        const loc = locateResponse(ctx);
+        if (!loc) {
+          if (t - start > timing.firstResponseTimeoutMs) return { ok: false, errorCode: 'NO_RESPONSE_NODE', needsUser: true, message: '전송 후 Gemini 응답 블록을 찾지 못했습니다.' };
+          if (t - start > timing.maxWaitMs) return { ok: false, errorCode: 'RESPONSE_TIMEOUT', needsUser: true, message: `${labelKo} 생성 대기 시간이 초과되었습니다.` };
+          continue;
+        }
+        found = loc;
+        const loading = !!find('imageGenerating', loc.el);
+        const generating = stopActive || loading;
+        if (generating) stopSeen = true;
+
+        const ex = extract(loc.el);
+        const medias = findGeneratedMedia(loc.el, kind);
+        const hasContainer = !!find(containerGroup, loc.el);
+        const dlBtnCandidate = (!generating && (medias.length > 0 || hasContainer)) ? findMediaDownloadButton(loc.el, medias[0] && medias[0].el) : null;
+        const sig = `${ex.text}::${medias.map((x) => x.src || x.selector).join('|')}::${hasContainer ? 'C' : ''}`;
+        if (sig !== lastSig) { lastSig = sig; lastChange = t; }
+
+        if (onProgress && t - lastProgress >= timing.progressThrottleMs) {
+          lastProgress = t;
+          onProgress((medias.length > 0 || hasContainer) ? 'collecting' : 'waiting', {
+            chars: ex.text.length,
+            mediaCount: medias.length,
+            hasContainer,
+            generating,
+            isolation: loc.isolation
+          });
+        }
+
+        const stableFor = t - lastChange;
+        const actions = !!find('responseActions', loc.el) || !!dlBtnCandidate;
+        const needStable = actions ? timing.stableMs : (stopSeen ? timing.stableMs * 2 : timing.stableMs * 3);
+
+        // 1) 동영상/음악 요소 또는 컨테이너가 안정적으로 나타난 경우
+        if (!generating && (medias.length > 0 || (hasContainer && dlBtnCandidate)) && stableFor >= timing.stableMs) {
+          const picked = medias[0] || null;
+          const dlBtn = dlBtnCandidate || findMediaDownloadButton(loc.el, picked && picked.el);
+          const extracted = picked ? await extractMediaData(picked.src, kind) : { mediaDataUrl: undefined, mediaUrl: '', mimeType: kind === 'video' ? 'video/mp4' : 'audio/mpeg', method: 'container-only' };
+
+          // 1-A) 작은 dataUrl 직접 추출 성공 시(다운로드 버튼이 없거나 750KB 이하)
+          if (extracted.mediaDataUrl && (!dlBtn || extracted.mediaDataUrl.length <= 750 * 1024)) {
+            return {
+              ok: true,
+              text: ex.text,
+              codeBlocks: ex.codeBlocks,
+              isolation: loc.isolation,
+              mediaDataUrl: extracted.mediaDataUrl,
+              mediaUrl: extracted.mediaUrl,
+              mimeType: extracted.mimeType,
+              mediaMethod: extracted.method,
+              downloadClicked: false,
+              completion: { stopSeen, actions, stableMs: stableFor }
+            };
+          }
+
+          // 1-B) 다운로드 버튼 클릭 시도 (chrome.downloads로 로컬 파일 경로 수신)
+          if (dlBtn && dlBtn.el) {
+            try {
+              dlBtn.el.click();
+              return {
+                ok: true,
+                text: ex.text,
+                codeBlocks: ex.codeBlocks,
+                isolation: loc.isolation,
+                mediaUrl: extracted.mediaUrl,
+                mimeType: extracted.mimeType,
+                mediaMethod: 'download-button',
+                downloadClicked: true,
+                downloadButtonSelector: dlBtn.selector,
+                completion: { stopSeen, actions, stableMs: stableFor }
+              };
+            } catch { /* fallback below */ }
+          }
+
+          if (extracted.mediaDataUrl) {
+            return {
+              ok: true,
+              text: ex.text,
+              codeBlocks: ex.codeBlocks,
+              isolation: loc.isolation,
+              mediaDataUrl: extracted.mediaDataUrl,
+              mediaUrl: extracted.mediaUrl,
+              mimeType: extracted.mimeType,
+              mediaMethod: extracted.method,
+              downloadClicked: false,
+              completion: { stopSeen, actions, stableMs: stableFor }
+            };
+          }
+
+          // 1-C) 미디어는 감지했으나 다운로드 버튼을 못 찾음 → 즉시 수동 안내로 전환
+          return {
+            ok: true,
+            text: ex.text,
+            codeBlocks: ex.codeBlocks,
+            isolation: loc.isolation,
+            mediaUrl: extracted.mediaUrl,
+            mimeType: extracted.mimeType,
+            mediaMethod: 'manual-needed',
+            downloadClicked: false,
+            downloadButtonMissing: true,
+            completion: { stopSeen, actions, stableMs: stableFor }
+          };
+        }
+
+        // 2) 미디어 없이 텍스트만 완료된 경우
+        if (!generating && medias.length === 0 && !hasContainer && ex.text && stableFor >= needStable) {
+          return {
+            ok: false,
+            errorCode: noMediaCode,
+            needsUser: true,
+            message: `Gemini가 ${labelKo}을(를) 생성하지 않고 텍스트로만 응답했습니다. Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.`,
+            partialText: ex.text
+          };
+        }
+
+        // 3) 생성 종료 후 텍스트·미디어 셀렉터 모두 비어 정체된 경우 → 무한 대기 방지
+        if (!generating && medias.length === 0 && !hasContainer && !ex.text && stableFor >= noMediaIdleLimit) {
+          const fallbackDl = findMediaDownloadButton(loc.el, null);
+          if (fallbackDl && fallbackDl.el) {
+            try {
+              fallbackDl.el.click();
+              return {
+                ok: true,
+                text: '',
+                codeBlocks: [],
+                isolation: loc.isolation,
+                mediaMethod: 'download-button-fallback',
+                downloadClicked: true,
+                downloadButtonSelector: fallbackDl.selector,
+                completion: { stopSeen, actions: true, stableMs: stableFor }
+              };
+            } catch { /* ignore */ }
+          }
+          return {
+            ok: false,
+            errorCode: 'MEDIA_DETECT_FAILED',
+            needsUser: true,
+            message: 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.',
+            partialText: ''
+          };
+        }
+
+        if (t - start > timing.maxWaitMs) {
+          return { ok: false, errorCode: 'RESPONSE_TIMEOUT', needsUser: true, message: `${labelKo} 생성 완료를 제시간에 확인하지 못했습니다(시간 초과).`, partialText: found ? ex.text : '' };
+        }
+      }
+    }
+
+    function watchVideo(ctx, onProgress) { return watchMedia(ctx, 'video', onProgress); }
+    function watchMusic(ctx, onProgress) { return watchMedia(ctx, 'music', onProgress); }
+
     /** 아무것도 입력·전송하지 않고 셀렉터 일치 현황만 보고 */
     function probe() {
       const groups = {};
@@ -680,7 +948,7 @@
       };
     }
 
-    return { submit, watch, watchImage, findGeneratedImages, findImageDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
+    return { submit, watch, watchImage, watchVideo, watchMusic, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };

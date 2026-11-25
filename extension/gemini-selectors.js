@@ -139,6 +139,52 @@
       S('model-response button[aria-label*="Download" i]', '모델 응답 내 Download 버튼 영문'),
       S('model-response button[aria-label*="다운로드"]', '모델 응답 내 다운로드 버튼 한국어')
     ],
+    /** Phase 5 확장: 생성된 동영상 요소 (Veo 등 — Gemini 웹 계정·UI에 따라 변동 가능, 진단 필요) */
+    generatedVideo: [
+      S('generated-video video', 'Gemini generated-video 커스텀 요소 안의 video (진단 필요)'),
+      S('video-player video', 'video-player 안의 video (진단 필요)'),
+      S('[data-test-id*="generated-video"] video', 'data-test-id 생성 동영상 (진단 필요)'),
+      S('model-response video[src]', '모델 응답 안의 src 있는 video'),
+      S('model-response video source[src]', '모델 응답 안의 video source'),
+      S('model-response video', '모델 응답 안의 일반 video')
+    ],
+    /** Phase 5 확장: 생성 동영상 컨테이너 */
+    videoContainer: [
+      S('generated-video', 'Gemini generated-video 컨테이너 (진단 필요)'),
+      S('video-player', 'Gemini video-player 컨테이너 (진단 필요)'),
+      S('[data-test-id*="generated-video"]', 'data-test-id 생성 동영상 컨테이너 (진단 필요)')
+    ],
+    /** Phase 5 확장: 생성된 배경음악/오디오 요소 (Lyria 등 — Gemini 웹 계정·UI에 따라 변동 가능, 진단 필요) */
+    generatedAudio: [
+      S('generated-audio audio', 'Gemini generated-audio 커스텀 요소 안의 audio (진단 필요)'),
+      S('audio-player audio', 'audio-player 안의 audio (진단 필요)'),
+      S('music-player audio', 'music-player 안의 audio (진단 필요)'),
+      S('[data-test-id*="generated-audio"] audio', 'data-test-id 생성 오디오 (진단 필요)'),
+      S('[data-test-id*="music"] audio', 'data-test-id 생성 음악 (진단 필요)'),
+      S('model-response audio[src]', '모델 응답 안의 src 있는 audio'),
+      S('model-response audio source[src]', '모델 응답 안의 audio source'),
+      S('model-response audio', '모델 응답 안의 일반 audio')
+    ],
+    /** Phase 5 확장: 생성 음악/오디오 컨테이너 */
+    audioContainer: [
+      S('generated-audio', 'Gemini generated-audio 컨테이너 (진단 필요)'),
+      S('audio-player', 'Gemini audio-player 컨테이너 (진단 필요)'),
+      S('music-player', 'Gemini music-player 컨테이너 (진단 필요)'),
+      S('[data-test-id*="generated-audio"]', 'data-test-id 생성 오디오 컨테이너 (진단 필요)'),
+      S('[data-test-id*="music"]', 'data-test-id 생성 음악 컨테이너 (진단 필요)')
+    ],
+    /** Phase 5 확장: 동영상·음악 공용 다운로드 버튼 (진단 필요) */
+    mediaDownloadButton: [
+      S('download-generated-video-button button', '동영상 전용 다운로드 버튼 (진단 필요)'),
+      S('download-generated-audio-button button', '오디오 전용 다운로드 버튼 (진단 필요)'),
+      S('generated-video button[aria-label*="Download" i]', 'generated-video 다운로드 영문'),
+      S('generated-video button[aria-label*="다운로드"]', 'generated-video 다운로드 한국어'),
+      S('generated-audio button[aria-label*="Download" i]', 'generated-audio 다운로드 영문'),
+      S('generated-audio button[aria-label*="다운로드"]', 'generated-audio 다운로드 한국어'),
+      S('model-response button[data-test-id*="download"]', '모델 응답 내 data-test-id download 버튼'),
+      S('model-response button[aria-label*="Download" i]', '모델 응답 내 Download 버튼 영문'),
+      S('model-response button[aria-label*="다운로드"]', '모델 응답 내 다운로드 버튼 한국어')
+    ],
     /** 로그인 필요 신호 (입력창이 없을 때만 의미 있음) */
     signIn: [
       S('a[href*="accounts.google.com/ServiceLogin"]', 'Google 로그인 링크'),

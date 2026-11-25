@@ -6,8 +6,9 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-/** 아직 미구현된 생성 작업 종류 (Phase 5 MVP에서 image는 활성화, video·music은 후속) */
-const NON_EXECUTABLE = new Set(['video', 'music']);
+/** 아직 미구현된 생성 작업 종류 (Phase 5 반자동: image·video·music 모두 활성화) */
+const NON_EXECUTABLE = new Set([]);
+const SCENE_REQUIRED_KINDS = new Set(['image', 'video']);
 /** 같은 작품·같은 단계에서 새 요청을 막는 '진행 중' 상태 */
 const ACTIVE_STATES = new Set(['queued', 'dispatching', 'waiting', 'needs_confirmation', 'cancelling']);
 /** 전송 여부 불명 오류 코드 (사용자가 Gemini 화면에서 전송을 확인하면 재전송 없이 대기로 전환 가능) */
@@ -98,8 +99,8 @@ export class GeminiJobQueue {
   }
 
   async enqueue(input) {
-    const missingSceneForImage = input.kind === 'image' && (!input.sceneId || !String(input.sceneId).trim());
-    const executable = !NON_EXECUTABLE.has(input.kind) && !missingSceneForImage;
+    const missingScene = SCENE_REQUIRED_KINDS.has(input.kind) && (!input.sceneId || !String(input.sceneId).trim());
+    const executable = !NON_EXECUTABLE.has(input.kind) && !missingScene;
     const now = new Date().toISOString();
     const job = {
       jobId: randomUUID(),
@@ -115,11 +116,11 @@ export class GeminiJobQueue {
       cancelRequested: false,
       externalCancelConfirmed: false,
       sendConfirmed: false,
-      errorCode: executable ? undefined : (missingSceneForImage ? 'SCENE_ID_REQUIRED' : 'NOT_IMPLEMENTED'),
+      errorCode: executable ? undefined : (missingScene ? 'SCENE_ID_REQUIRED' : 'NOT_IMPLEMENTED'),
       errorMessage: executable
         ? undefined
-        : missingSceneForImage
-        ? '이미지 생성 작업에는 장면 ID(sceneId)가 필요합니다.'
+        : missingScene
+        ? `${input.kind === 'video' ? '동영상' : '이미지'} 생성 작업에는 장면 ID(sceneId)가 필요합니다.`
         : '이 생성 기능은 아직 검증되지 않아 실행할 수 없습니다.',
       phase: executable ? 'queued' : 'error',
       needsUser: false,
@@ -212,8 +213,10 @@ export class GeminiJobQueue {
       if (extra.isolation) job.isolation = extra.isolation;
       if (extra.imageDataUrl) job.imageDataUrl = String(extra.imageDataUrl);
       if (extra.imageUrl) job.imageUrl = String(extra.imageUrl);
+      if (extra.mediaDataUrl) job.mediaDataUrl = String(extra.mediaDataUrl);
+      if (extra.mediaUrl) job.mediaUrl = String(extra.mediaUrl);
       if (extra.downloadPath) job.downloadPath = String(extra.downloadPath);
-      if (extra.mimeType) job.imageMimeType = String(extra.mimeType);
+      if (extra.mimeType) { job.imageMimeType = String(extra.mimeType); job.mediaMimeType = String(extra.mimeType); }
       if (job.sendConfirmed === false) job.sendConfirmed = true; // 응답이 왔다는 것은 전송되었다는 증거
       job.completedAt = new Date().toISOString();
       job.updatedAt = job.completedAt;

@@ -131,9 +131,11 @@ export interface ResponseReceived extends BaseMessage {
     codeBlocks?: string[];
     replayed?: boolean;
     isolation?: string;
-    /** 이미지 생성 완료 시 확보된 데이터 URL(data:image/...) · 원본 URL · 또는 Chrome 다운로드 로컬 경로 */
+    /** 미디어 생성 완료 시 확보된 데이터 URL · 원본 URL · 또는 Chrome 다운로드 로컬 경로 */
     imageDataUrl?: string;
     imageUrl?: string;
+    mediaDataUrl?: string;
+    mediaUrl?: string;
     downloadPath?: string;
     mimeType?: string;
   };

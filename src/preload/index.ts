@@ -38,6 +38,16 @@ const api:StudioAPI={
       latest:(projectId,sceneId)=>ipcRenderer.invoke('gemini:image:latest',projectId,sceneId),
       listForProject:(projectId)=>ipcRenderer.invoke('gemini:image:list',projectId)
     },
+    video:{
+      start:(projectId,sceneId)=>ipcRenderer.invoke('gemini:video:start',projectId,sceneId),
+      latest:(projectId,sceneId)=>ipcRenderer.invoke('gemini:video:latest',projectId,sceneId),
+      listForProject:(projectId)=>ipcRenderer.invoke('gemini:video:list',projectId)
+    },
+    music:{
+      start:(projectId)=>ipcRenderer.invoke('gemini:music:start',projectId),
+      latest:(projectId)=>ipcRenderer.invoke('gemini:music:latest',projectId),
+      listForProject:(projectId)=>ipcRenderer.invoke('gemini:music:list',projectId)
+    },
     probe:()=>ipcRenderer.invoke('gemini:probe'),
     onJobUpdate:(cb)=>{const h=(_e:unknown,job:GeminiJobRecord)=>cb(job);ipcRenderer.on('gemini:job-update',h);return()=>{ipcRenderer.removeListener('gemini:job-update',h);};}
   }

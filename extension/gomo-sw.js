@@ -24,10 +24,12 @@ const RESULT_STORE_KEY = 'gomoRecentResults';
 const RESULT_KEEP = 5;
 const DEFAULT_DOWNLOAD_WAIT_MS = 20000;
 const MANUAL_IMPORT_GUIDE = 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.';
+const MANUAL_MEDIA_GUIDE = 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.';
+const MEDIA_STAGES = new Set(['image', 'video', 'music']);
 let port = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 3;
-/** 현재 진행 중인 이미지 생성 작업 메타데이터 (chrome.downloads 매칭용) */
+/** 현재 진행 중인 미디어(이미지·동영상·음악) 생성 작업 메타데이터 (chrome.downloads 매칭용) */
 let activeImageJob = null;
 /** 최근 완료/중단된 이미지 다운로드 캐시 (클릭 직후 이벤트가 complete 메시지보다 먼저 도착하는 경합 대비) */
 const recentImageDownloads = [];
@@ -131,8 +133,8 @@ async function handleSubmit(msg) {
   if (!tab?.id) return reply({ success: false, sendState: 'not_sent', errorCode: 'NO_TAB', needsUser: true, message: 'Gemini 탭을 찾을 수 없습니다.' });
   // 사용자가 전송 내용을 바로 볼 수 있도록 Gemini 탭을 앞으로 가져옵니다(백그라운드 탭 타이머 제한도 피함).
   try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* ignore */ }
-  if (msg.payload?.stage === 'image') {
-    activeImageJob = { ...base, stage: 'image', submittedAt: Date.now() };
+  if (MEDIA_STAGES.has(msg.payload?.stage)) {
+    activeImageJob = { ...base, stage: msg.payload.stage, submittedAt: Date.now() };
   }
   const r = await deliver(tab.id, {
     type: 'SUBMIT_PROMPT', protocol: AUTOMATION_PROTOCOL, prompt: msg.payload?.prompt, marker: msg.payload?.marker,
@@ -175,6 +177,8 @@ async function handleResultQuery(msg) {
     isolation: hit.isolation,
     ...(hit.imageDataUrl ? { imageDataUrl: hit.imageDataUrl } : {}),
     ...(hit.imageUrl ? { imageUrl: hit.imageUrl } : {}),
+    ...(hit.mediaDataUrl ? { mediaDataUrl: hit.mediaDataUrl } : {}),
+    ...(hit.mediaUrl ? { mediaUrl: hit.mediaUrl } : {}),
     ...(hit.downloadPath ? { downloadPath: hit.downloadPath } : {}),
     ...(hit.mimeType ? { mimeType: hit.mimeType } : {})
   }));
@@ -225,8 +229,8 @@ async function tryFetchImageAsDataUrl(imageUrl) {
   }
 }
 
-/** 다운로드 항목이 Gemini 이미지 다운로드인지 판별 (확장자·MIME·출처 URL·시간 윈도우) */
-function isLikelyImageDownload(item, minTimeMs) {
+/** 다운로드 항목이 요청된 Gemini 미디어(image/video/music) 다운로드인지 판별 */
+function isLikelyImageDownload(item, minTimeMs, stage = 'image') {
   if (!item) return false;
   if (item.startTime) {
     const started = Date.parse(item.startTime);
@@ -235,11 +239,20 @@ function isLikelyImageDownload(item, minTimeMs) {
   const mime = String(item.mime || '').toLowerCase();
   const filename = String(item.filename || '').toLowerCase();
   const url = String(item.url || item.finalUrl || '').toLowerCase();
+  const fromGemini = url.includes('googleusercontent.com') || url.includes('ggpht.com') || url.includes('gemini.google.com') || url.startsWith('blob:');
+  if (stage === 'video') {
+    if (mime.startsWith('video/')) return true;
+    if (/\.(mp4|webm|mov|m4v|mkv)$/i.test(filename)) return true;
+    return fromGemini && !mime.startsWith('image/') && !mime.startsWith('audio/');
+  }
+  if (stage === 'music') {
+    if (mime.startsWith('audio/')) return true;
+    if (/\.(mp3|wav|m4a|flac|ogg|aac)$/i.test(filename)) return true;
+    return fromGemini && !mime.startsWith('image/') && !mime.startsWith('video/');
+  }
   if (mime.startsWith('image/')) return true;
   if (/\.(png|jpe?g|webp|gif)$/i.test(filename)) return true;
-  if (url.includes('googleusercontent.com') || url.includes('ggpht.com') || url.includes('gemini.google.com') || url.startsWith('blob:') || url.startsWith('data:image/')) {
-    return true;
-  }
+  if (fromGemini || url.startsWith('data:image/')) return true;
   return false;
 }
 
@@ -293,22 +306,25 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     sendToHost(envelope('JOB_PROGRESS', base, { jobId: msg.jobId, stage: msg.phase, message: '', info: msg.info || {} }));
   } else if (msg.kind === 'complete') {
     void (async () => {
-      const isImageJob = msg.stage === 'image' || Boolean(msg.sceneId);
+      const stage = msg.stage || (msg.sceneId ? 'image' : '');
+      const isMediaJob = MEDIA_STAGES.has(stage);
+      const guideMsg = stage === 'image' ? MANUAL_IMPORT_GUIDE : MANUAL_MEDIA_GUIDE;
       let imageDataUrl = msg.imageDataUrl;
+      let mediaDataUrl = msg.mediaDataUrl;
       let mimeType = msg.mimeType;
       let downloadPath = msg.downloadPath;
 
-      // 1) 이미지 작업이고 dataUrl이 아직 없으면: 다운로드 버튼이 클릭된 경우 chrome.downloads 완료를 대기
-      if (isImageJob && !imageDataUrl && !downloadPath && msg.downloadClicked) {
+      // 1) 미디어 작업이고 dataUrl이 아직 없으면: 다운로드 버튼이 클릭된 경우 chrome.downloads 완료를 대기
+      if (isMediaJob && !imageDataUrl && !mediaDataUrl && !downloadPath && msg.downloadClicked) {
         const waitMs = typeof globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS === 'number' ? globalThis.__GOMO_DOWNLOAD_TIMEOUT_MS : DEFAULT_DOWNLOAD_WAIT_MS;
-        const dl = await waitForImageDownload(base, waitMs);
+        const dl = await waitForImageDownload({ ...base, stage }, waitMs);
         if (dl && dl.ok && dl.downloadPath) {
           downloadPath = dl.downloadPath;
           if (dl.mimeType) mimeType = dl.mimeType;
         } else {
           sendToHost(envelope('ERROR', base, {
             code: (dl && dl.errorCode) || 'DOWNLOAD_TIMEOUT',
-            message: (dl && dl.message) || MANUAL_IMPORT_GUIDE,
+            message: guideMsg,
             recoverable: true,
             needsUser: true,
             jobId: msg.jobId,
@@ -318,17 +334,17 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         }
       }
 
-      // 2) dataUrl도 downloadPath도 없으면 서비스 워커 fetch 보조 시도
-      if (isImageJob && !imageDataUrl && !downloadPath && msg.imageUrl) {
+      // 2) 이미지 작업이고 dataUrl도 downloadPath도 없으면 서비스 워커 fetch 보조 시도
+      if (stage === 'image' && !imageDataUrl && !downloadPath && msg.imageUrl) {
         const fetched = await tryFetchImageAsDataUrl(msg.imageUrl);
         if (fetched) { imageDataUrl = fetched.dataUrl; mimeType = fetched.mimeType; }
       }
 
-      // 3) 이미지 작업인데 다운로드 버튼도 못 찾고 파일도 확보하지 못했으면 즉시 needsUser 오류로 전환
-      if (isImageJob && !imageDataUrl && !downloadPath) {
+      // 3) 미디어 작업인데 다운로드 버튼도 못 찾고 파일도 확보하지 못했으면 즉시 needsUser 오류로 전환
+      if (isMediaJob && !imageDataUrl && !mediaDataUrl && !downloadPath) {
         sendToHost(envelope('ERROR', base, {
-          code: msg.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : 'IMAGE_DATA_MISSING',
-          message: MANUAL_IMPORT_GUIDE,
+          code: msg.downloadButtonMissing ? 'DOWNLOAD_BUTTON_NOT_FOUND' : (stage === 'image' ? 'IMAGE_DATA_MISSING' : 'MEDIA_DATA_MISSING'),
+          message: guideMsg,
           recoverable: true,
           needsUser: true,
           jobId: msg.jobId,
@@ -344,6 +360,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         isolation: msg.isolation,
         ...(imageDataUrl ? { imageDataUrl } : {}),
         ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(mediaDataUrl ? { mediaDataUrl } : {}),
+        ...(msg.mediaUrl ? { mediaUrl: msg.mediaUrl } : {}),
         ...(downloadPath ? { downloadPath } : {}),
         ...(mimeType ? { mimeType } : {}),
         at: Date.now(),
@@ -360,6 +378,8 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         completion: msg.completion,
         ...(imageDataUrl ? { imageDataUrl } : {}),
         ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(mediaDataUrl ? { mediaDataUrl } : {}),
+        ...(msg.mediaUrl ? { mediaUrl: msg.mediaUrl } : {}),
         ...(downloadPath ? { downloadPath } : {}),
         ...(mimeType ? { mimeType } : {})
       }));
@@ -420,8 +440,9 @@ chrome.downloads.onChanged.addListener((delta) => {
   if (state !== 'complete' && state !== 'interrupted') return;
   void (async () => {
     const item = await queryDownloadItem(delta.id);
+    const activeStage = pendingDownloadWaiter?.stage || activeImageJob?.stage || 'image';
     const minTime = pendingDownloadWaiter ? pendingDownloadWaiter.minTime : (activeImageJob ? activeImageJob.submittedAt : Date.now() - 30000);
-    const isImg = isLikelyImageDownload(item, minTime);
+    const isImg = isLikelyImageDownload(item, minTime, activeStage);
     const filename = item && typeof item.filename === 'string' ? item.filename.trim() : '';
     const mimeType = item && typeof item.mime === 'string' ? item.mime : undefined;
 

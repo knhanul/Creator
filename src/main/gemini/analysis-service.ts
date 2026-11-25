@@ -6,11 +6,19 @@
  *
  * 의존성을 주입받으므로 Electron 없이 mock으로 테스트할 수 있습니다(scripts/test-gemini-automation.mjs).
  */
-import type { AIStage, GeminiAnalysisStartResult, GeminiJobKind, GeminiJobRecord, MediaAsset, StudioProject } from '../../shared/types';
+import type { AIStage, AssetKind, GeminiAnalysisStartResult, GeminiJobKind, GeminiJobRecord, MediaAsset, StudioProject } from '../../shared/types';
 import type { ProtocolMessage } from '../../shared/gemini-protocol';
 import type { JobResult, ProviderStatus } from './adapter';
 import { makeAIPrompt } from '../../shared/prompts';
-import { STAGE_META, decideStageApply, isAIStage, makeImageGenerationPrompt } from '../../shared/gemini-analysis';
+import {
+  STAGE_META,
+  decideStageApply,
+  getProjectBgmPrompt,
+  isAIStage,
+  makeImageGenerationPrompt,
+  makeMusicGenerationPrompt,
+  makeVideoGenerationPrompt
+} from '../../shared/gemini-analysis';
 
 /** GeminiJobQueue(job-queue.mjs) 중 이 서비스가 쓰는 부분 */
 export interface QueueLike {
@@ -32,6 +40,8 @@ export interface QueueLike {
       isolation?: string;
       imageDataUrl?: string;
       imageUrl?: string;
+      mediaDataUrl?: string;
+      mediaUrl?: string;
       downloadPath?: string;
       mimeType?: string;
     }
@@ -58,6 +68,12 @@ export interface AnalysisServiceDeps {
     projectId: string,
     sceneId: string,
     input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
+  ): Promise<{ project: StudioProject; asset: MediaAsset }>;
+  /** Phase 5 확장: 생성된 이미지·동영상·오디오를 assets/<kind>/에 저장 (audio는 장면 미연결) */
+  saveGeneratedMediaAsset?(
+    projectId: string,
+    kind: AssetKind,
+    input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string }
   ): Promise<{ project: StudioProject; asset: MediaAsset }>;
   /** 결과가 작품에 저장되었을 때 (renderer가 작품을 다시 읽도록) */
   onProjectUpdated?(project: StudioProject, job: GeminiJobRecord): void;
@@ -253,6 +269,165 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     return done;
   }
 
+  /**
+   * Phase 5 확장: 장면 단위 동영상 생성 시작 (반자동).
+   * - 같은 작품·같은 장면의 진행 중 video 작업이 있으면 새로 보내지 않음
+   * - sceneId 필수, scene.videoPrompt 필수
+   */
+  async function startVideo(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult> {
+    const cleanSceneId = String(sceneId || '').trim();
+    if (!cleanSceneId) return { ok: false, message: '동영상을 생성할 장면 ID가 필요합니다.' };
+    const key = `${projectId}\u0000video\u0000${cleanSceneId}`;
+    if (starting.has(key)) {
+      const active = queue.findActive(projectId, 'video', cleanSceneId);
+      return { ok: true, job: active, reused: true, message: '이미 동영상 생성을 시작 중입니다.' };
+    }
+    starting.add(key);
+    try {
+      let project: StudioProject;
+      try {
+        project = await deps.readProject(projectId);
+      } catch (e) {
+        return { ok: false, message: '작품을 읽지 못했습니다: ' + (e instanceof Error ? e.message : String(e)) };
+      }
+      const scene = project.scenes.find(s => s.id === cleanSceneId);
+      if (!scene) return { ok: false, message: `장면(${cleanSceneId})을 찾을 수 없습니다.` };
+      if (!scene.videoPrompt || !scene.videoPrompt.trim()) {
+        return { ok: false, message: `${scene.id} 장면의 동영상 생성 프롬프트(videoPrompt)가 비어 있습니다. 생성 프롬프트 단계에서 먼저 입력해 주세요.` };
+      }
+      const existing = queue.findActive(projectId, 'video', cleanSceneId);
+      if (existing) {
+        return {
+          ok: true,
+          job: existing,
+          reused: true,
+          message: `이미 진행 중인 ${cleanSceneId} 장면 동영상 생성 작업이 있어 새로 보내지 않았습니다.`
+        };
+      }
+      const prompt = makeVideoGenerationPrompt(project, cleanSceneId);
+      const job = await queue.enqueue({ projectId, kind: 'video', sceneId: cleanSceneId, prompt });
+      void kick();
+      return { ok: true, job };
+    } finally {
+      starting.delete(key);
+    }
+  }
+
+  /**
+   * Phase 5 확장: 작품 단위 배경음악 생성 시작 (반자동).
+   * - sceneId 없음, 작품의 bgmPrompt 필수
+   * - 진행 중 music 작업이 있으면 새로 보내지 않음
+   */
+  async function startMusic(projectId: string): Promise<GeminiAnalysisStartResult> {
+    const key = `${projectId}\u0000music`;
+    if (starting.has(key)) {
+      const active = queue.findActive(projectId, 'music');
+      return { ok: true, job: active, reused: true, message: '이미 배경음악 생성을 시작 중입니다.' };
+    }
+    starting.add(key);
+    try {
+      let project: StudioProject;
+      try {
+        project = await deps.readProject(projectId);
+      } catch (e) {
+        return { ok: false, message: '작품을 읽지 못했습니다: ' + (e instanceof Error ? e.message : String(e)) };
+      }
+      const bgm = getProjectBgmPrompt(project);
+      if (!bgm) {
+        return { ok: false, message: '작품의 배경음악 프롬프트(bgmPrompt)가 비어 있습니다. 생성 프롬프트 단계에서 먼저 프롬프트를 생성해 주세요.' };
+      }
+      const existing = queue.findActive(projectId, 'music');
+      if (existing) {
+        return {
+          ok: true,
+          job: existing,
+          reused: true,
+          message: '이미 진행 중인 배경음악 생성 작업이 있어 새로 보내지 않았습니다.'
+        };
+      }
+      const prompt = makeMusicGenerationPrompt(project);
+      const job = await queue.enqueue({ projectId, kind: 'music', prompt });
+      void kick();
+      return { ok: true, job };
+    } finally {
+      starting.delete(key);
+    }
+  }
+
+  /** 완료된 동영상(video)·배경음악(music) 생성 작업 결과를 프로젝트 assets/에 저장 */
+  async function applyCompletedMedia(jobId: string): Promise<GeminiJobRecord | null> {
+    const job = queue.get(jobId);
+    if (!job || job.state !== 'completed' || (job.kind !== 'video' && job.kind !== 'music')) return null;
+    if (job.outcome === 'applied') return job;
+    const assetKind: AssetKind = job.kind === 'video' ? 'video' : 'audio';
+    if (job.kind === 'video' && !job.sceneId) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'error',
+        needsUser: false,
+        errorCode: 'SCENE_NOT_FOUND',
+        errorMessage: '동영상 작업에 장면 ID(sceneId)가 없습니다.'
+      });
+    }
+    await queue.setOutcome(job.jobId, job.requestId, { phase: 'validating' });
+
+    const dataUrl = job.mediaDataUrl || job.imageDataUrl;
+    if (!dataUrl && !job.downloadPath) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'needs_user',
+        needsUser: true,
+        errorCode: 'MEDIA_DATA_MISSING',
+        errorMessage: 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.'
+      });
+    }
+
+    if (!deps.saveGeneratedMediaAsset) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'error',
+        needsUser: false,
+        errorCode: 'SAVE_FAILED',
+        errorMessage: '미디어 파일 저장기가 구성되지 않았습니다.'
+      });
+    }
+
+    let savedResult: { project: StudioProject; asset: MediaAsset };
+    try {
+      savedResult = await deps.saveGeneratedMediaAsset(job.projectId, assetKind, {
+        sceneId: job.kind === 'video' ? job.sceneId : undefined,
+        mediaDataUrl: dataUrl,
+        downloadPath: job.downloadPath,
+        mimeType: job.mediaMimeType || job.imageMimeType
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isMissingScene = msg.includes('장면') && msg.includes('찾을 수 없습니다');
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: isMissingScene ? 'stale' : 'invalid',
+        phase: isMissingScene ? 'needs_user' : 'error',
+        needsUser: isMissingScene,
+        errorCode: isMissingScene ? 'SCENE_NOT_FOUND' : 'SAVE_FAILED',
+        errorMessage: msg
+      });
+    }
+
+    const done = await queue.setOutcome(job.jobId, job.requestId, {
+      outcome: 'applied',
+      phase: 'done',
+      needsUser: false,
+      errorCode: undefined,
+      errorMessage: undefined,
+      validationError: undefined,
+      assetId: savedResult.asset.id,
+      resultRef: savedResult.asset.relativePath,
+      appliedAt: new Date().toISOString(),
+      appliedRevision: savedResult.project.revision
+    });
+    if (done) deps.onProjectUpdated?.(savedResult.project, done);
+    return done;
+  }
+
   /** 완료된 응답 검증·적용. force=사용자가 '이 결과 적용'으로 확인(다른 작품에는 여전히 적용 불가) */
   async function applyCompleted(jobId: string, force = false, expectedStage?: AIStage): Promise<GeminiJobRecord | null> {
     const job = queue.get(jobId);
@@ -290,8 +465,8 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     if (msg.type === 'RESPONSE_RECEIVED') {
       const targetJob = queue.get(jobId);
       const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
-      // 이미지 생성 작업은 sceneId까지 반드시 일치해야 수락
-      if (targetJob?.kind === 'image' && (!msgSceneId || msgSceneId !== targetJob.sceneId)) {
+      // 이미지·동영상 생성 작업은 sceneId까지 반드시 일치해야 수락
+      if ((targetJob?.kind === 'image' || targetJob?.kind === 'video') && (!msgSceneId || msgSceneId !== targetJob.sceneId)) {
         return 'ignored';
       }
       const complete = !!payload.complete;
@@ -302,6 +477,8 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
         isolation: payload.isolation as string | undefined,
         imageDataUrl: typeof payload.imageDataUrl === 'string' ? payload.imageDataUrl : undefined,
         imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+        mediaDataUrl: typeof payload.mediaDataUrl === 'string' ? payload.mediaDataUrl : undefined,
+        mediaUrl: typeof payload.mediaUrl === 'string' ? payload.mediaUrl : undefined,
         downloadPath: typeof payload.downloadPath === 'string' ? payload.downloadPath : undefined,
         mimeType: typeof payload.mimeType === 'string' ? payload.mimeType : undefined
       });
@@ -309,6 +486,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
         const job = queue.get(jobId);
         if (job && isAIStage(job.kind)) await applyCompleted(jobId);
         else if (job && job.kind === 'image') await applyCompletedImage(jobId);
+        else if (job && (job.kind === 'video' || job.kind === 'music')) await applyCompletedMedia(jobId);
         else if (job) await queue.setOutcome(job.jobId, job.requestId, { outcome: 'received', phase: 'done' });
         void kick();
       }
@@ -317,7 +495,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     if (msg.type === 'JOB_PROGRESS') {
       const targetJob = queue.get(jobId);
       const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
-      if (targetJob?.kind === 'image' && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
+      if ((targetJob?.kind === 'image' || targetJob?.kind === 'video') && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
         return 'ignored';
       }
       const stage = String(payload.stage || '');
@@ -327,7 +505,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     if (msg.type === 'ERROR') {
       const targetJob = queue.get(jobId);
       const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
-      if (targetJob?.kind === 'image' && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
+      if ((targetJob?.kind === 'image' || targetJob?.kind === 'video') && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
         return 'ignored';
       }
       const r = await queue.onRemoteError(jobId, msg.requestId, msg.projectId, String(payload.code || 'REMOTE_ERROR'), String(payload.message || ''), payload.partialText ? String(payload.partialText) : undefined);
@@ -336,18 +514,18 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     }
     if (msg.type === 'DOWNLOAD_EVENT') {
       const targetJob = queue.get(jobId);
-      if (!targetJob || targetJob.kind !== 'image') return 'ignored';
+      if (!targetJob || (targetJob.kind !== 'image' && targetJob.kind !== 'video' && targetJob.kind !== 'music')) return 'ignored';
       const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
-      if (!msgSceneId || msgSceneId !== targetJob.sceneId) return 'ignored';
+      if ((targetJob.kind === 'image' || targetJob.kind === 'video') && (!msgSceneId || msgSceneId !== targetJob.sceneId)) return 'ignored';
       if (payload.state === 'complete' && typeof payload.downloadPath === 'string' && payload.downloadPath.trim()) {
-        // RESPONSE_RECEIVED보다 DOWNLOAD_EVENT가 먼저 또는 늦게 도착한 경우에도 파일이 확보되면 반영
         if (targetJob.outcome === 'applied') return 'ignored';
+        const applyFn = targetJob.kind === 'image' ? applyCompletedImage : applyCompletedMedia;
         if (targetJob.state === 'completed') {
           await queue.setOutcome(targetJob.jobId, targetJob.requestId, {
             downloadPath: payload.downloadPath.trim(),
-            ...(typeof payload.mimeType === 'string' ? { imageMimeType: payload.mimeType } : {})
+            ...(typeof payload.mimeType === 'string' ? { imageMimeType: payload.mimeType, mediaMimeType: payload.mimeType } : {})
           });
-          await applyCompletedImage(targetJob.jobId);
+          await applyFn(targetJob.jobId);
           void kick();
           return 'applied';
         }
@@ -358,19 +536,17 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
           mimeType: typeof payload.mimeType === 'string' ? payload.mimeType : undefined
         });
         if (r === 'applied') {
-          await applyCompletedImage(targetJob.jobId);
+          await applyFn(targetJob.jobId);
           void kick();
         }
         return r;
       }
       if (payload.state === 'interrupted') {
-        const r = await queue.onRemoteError(
-          targetJob.jobId,
-          msg.requestId,
-          msg.projectId,
-          'DOWNLOAD_FAILED',
-          'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.'
-        );
+        const failMsg =
+          targetJob.kind === 'image'
+            ? 'Gemini에서 이미지가 생성되었습니다. 다운로드 버튼을 눌러 파일을 받은 뒤, 창작실의 ‘미디어 가져오기’로 추가하고 해당 장면에 연결해 주세요.'
+            : 'Gemini에서 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.';
+        const r = await queue.onRemoteError(targetJob.jobId, msg.requestId, msg.projectId, 'DOWNLOAD_FAILED', failMsg);
         if (r === 'applied') void kick();
         return r;
       }
@@ -397,6 +573,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     if (job.state === 'completed') {
       if (isAIStage(job.kind) && job.outcome !== 'applied') await applyCompleted(jobId);
       else if (job.kind === 'image' && job.outcome !== 'applied') await applyCompletedImage(jobId);
+      else if ((job.kind === 'video' || job.kind === 'music') && job.outcome !== 'applied') await applyCompletedMedia(jobId);
       return { success: true, message: '이미 응답을 받았습니다.' };
     }
     if (job.state !== 'needs_confirmation' && job.state !== 'waiting') return { success: false, message: '응답을 다시 받을 수 있는 상태가 아닙니다.' };
@@ -416,6 +593,6 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
 
   /** 사용자가 「이 결과 적용」: 보류(stale)된 결과만 force. expectedStage가 다르면 거부(다른 단계 화면에서 적용 불가) */
   const applyResult = (jobId: string, expectedStage?: AIStage) => { const j = queue.get(jobId); return applyCompleted(jobId, j?.outcome === 'stale', expectedStage); };
-  return { start, startImage, kick, applyCompleted, applyCompletedImage, applyResult, handleMessage, fetchResult, onReconnect, provider };
+  return { start, startImage, startVideo, startMusic, kick, applyCompleted, applyCompletedImage, applyCompletedMedia, applyResult, handleMessage, fetchResult, onReconnect, provider };
 }
 export type AnalysisService = ReturnType<typeof createAnalysisService>;

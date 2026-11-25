@@ -41,10 +41,14 @@
     if (res.sendState === 'not_sent') { active = null; return { ...strip(res), ...ids(msg) }; }
     // sent 또는 uncertain: 어느 쪽이든 응답이 오면 수집해서 보고(앱이 jobId/requestId/projectId로 수락 여부 결정)
     const ctx = res.ctx;
-    const isImageStage = msg.stage === 'image';
+    const stage = msg.stage;
     void (async () => {
       try {
-        const watcher = isImageStage && typeof dom.watchImage === 'function' ? dom.watchImage : dom.watch;
+        const watcher =
+          stage === 'image' && typeof dom.watchImage === 'function' ? dom.watchImage :
+          stage === 'video' && typeof dom.watchVideo === 'function' ? dom.watchVideo :
+          stage === 'music' && typeof dom.watchMusic === 'function' ? dom.watchMusic :
+          dom.watch;
         const out = await watcher(ctx, (phase, info) => emit('progress', msg, { phase, info }));
         if (out.ok) {
           if (out.downloadClicked) {
@@ -57,8 +61,11 @@
             completion: out.completion,
             ...(out.imageDataUrl ? { imageDataUrl: out.imageDataUrl } : {}),
             ...(out.imageUrl ? { imageUrl: out.imageUrl } : {}),
+            ...(out.mediaDataUrl ? { mediaDataUrl: out.mediaDataUrl } : {}),
+            ...(out.mediaUrl ? { mediaUrl: out.mediaUrl } : {}),
             ...(out.mimeType ? { mimeType: out.mimeType } : {}),
             ...(out.imageMethod ? { imageMethod: out.imageMethod } : {}),
+            ...(out.mediaMethod ? { mediaMethod: out.mediaMethod } : {}),
             ...(out.downloadClicked ? { downloadClicked: true, downloadButtonSelector: out.downloadButtonSelector } : {}),
             ...(out.downloadButtonMissing ? { downloadButtonMissing: true } : {})
           });

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
-import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveProject } from './storage';
+import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
@@ -72,6 +72,12 @@ function registerHandlers(){
   ipcMain.handle('gemini:image:start',async(_event,projectId:string,sceneId:string)=>analysis.startImage(String(projectId),String(sceneId)));
   ipcMain.handle('gemini:image:latest',async(_event,projectId:string,sceneId?:string)=>jobQueue.latest(String(projectId),'image',sceneId?String(sceneId):undefined)||null);
   ipcMain.handle('gemini:image:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='image'));
+  ipcMain.handle('gemini:video:start',async(_event,projectId:string,sceneId:string)=>analysis.startVideo(String(projectId),String(sceneId)));
+  ipcMain.handle('gemini:video:latest',async(_event,projectId:string,sceneId?:string)=>jobQueue.latest(String(projectId),'video',sceneId?String(sceneId):undefined)||null);
+  ipcMain.handle('gemini:video:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='video'));
+  ipcMain.handle('gemini:music:start',async(_event,projectId:string)=>analysis.startMusic(String(projectId)));
+  ipcMain.handle('gemini:music:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'music')||null);
+  ipcMain.handle('gemini:music:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='music'));
   ipcMain.handle('gemini:probe',async()=>geminiAdapter.probe());
 }
 let analysis: AnalysisService;
@@ -87,7 +93,7 @@ function broadcastJobs(){
 }
 function setupGeminiAutomation(){
   analysis=createAnalysisService({
-    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject, saveGeneratedImageAsset
+    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject, saveGeneratedImageAsset, saveGeneratedMediaAsset
     // 저장 결과는 job-update(outcome='applied', appliedRevision)로 renderer에 전달됩니다.
   });
   jobQueue.subscribe(broadcastJobs);
