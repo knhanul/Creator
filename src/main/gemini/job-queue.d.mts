@@ -25,11 +25,26 @@ export declare class GeminiJobQueue {
   subscribe(fn: () => void): () => void;
   list(): GeminiJobRecord[];
   get(jobId: string): GeminiJobRecord | undefined;
-  findActive(projectId: string, kind: string): GeminiJobRecord | undefined;
-  latest(projectId: string, kind?: string): GeminiJobRecord | undefined;
+  findActive(projectId: string, kind: string, sceneId?: string): GeminiJobRecord | undefined;
+  latest(projectId: string, kind?: string, sceneId?: string): GeminiJobRecord | undefined;
   enqueue(input: EnqueueInput): Promise<GeminiJobRecord>;
   tick(provider: QueueProvider): Promise<void>;
-  onResponse(jobId: string, requestId: string, text: string, complete: boolean, extra?: { projectId?: string; codeBlocks?: string[]; isolation?: string }): Promise<'applied' | 'ignored'>;
+  onResponse(
+    jobId: string,
+    requestId: string,
+    text: string,
+    complete: boolean,
+    extra?: {
+      projectId?: string;
+      sceneId?: string;
+      codeBlocks?: string[];
+      isolation?: string;
+      imageDataUrl?: string;
+      imageUrl?: string;
+      downloadPath?: string;
+      mimeType?: string;
+    }
+  ): Promise<'applied' | 'ignored'>;
   setPhase(jobId: string, requestId: string, phase: string, info?: Record<string, unknown>, projectId?: string): Promise<'applied' | 'ignored'>;
   onRemoteError(jobId: string, requestId: string, projectId: string | undefined, code: string, message: string, partialText?: string): Promise<'applied' | 'ignored'>;
   markConnectionLost(): Promise<boolean>;

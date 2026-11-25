@@ -75,6 +75,90 @@ export async function importAssets(id:string):Promise<StudioProject|null>{
   const next={...p,revision:p.revision+1,updatedAt:new Date().toISOString()};
   await persist(next);return next;
 }
+
+function extFromImageMime(mime?: string): string {
+  const m = (mime || '').toLowerCase();
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  if (m.includes('gif')) return 'gif';
+  return 'png';
+}
+
+export function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string; ext: string } {
+  const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  if (!match) {
+    throw new Error('유효한 base64 이미지 데이터(data:image/...) 형식이 아닙니다.');
+  }
+  const mimeType = match[1].toLowerCase();
+  const buffer = Buffer.from(match[2].trim(), 'base64');
+  if (!buffer.byteLength) {
+    throw new Error('디코딩된 이미지 데이터가 비어 있습니다.');
+  }
+  return { buffer, mimeType, ext: extFromImageMime(mimeType) };
+}
+
+/**
+ * Phase 5 MVP: Gemini에서 생성된 이미지를 프로젝트 내부 `assets/image/` 하위에 저장하고 해당 장면에 연결한다.
+ */
+export async function saveGeneratedImageAsset(
+  projectId: string,
+  sceneId: string,
+  input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
+): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset }> {
+  const p = await readProject(projectId);
+  const sceneIdx = p.scenes.findIndex(s => s.id === sceneId);
+  if (sceneIdx < 0) {
+    throw new Error(`장면(${sceneId})을 찾을 수 없습니다.`);
+  }
+
+  let buffer: Buffer;
+  let ext = extFromImageMime(input.mimeType);
+
+  if (input.imageDataUrl && input.imageDataUrl.startsWith('data:image/')) {
+    const decoded = decodeImageDataUrl(input.imageDataUrl);
+    buffer = decoded.buffer;
+    ext = decoded.ext;
+  } else if (input.downloadPath) {
+    buffer = await readFile(input.downloadPath);
+    if (!buffer.byteLength) throw new Error('다운로드된 이미지 파일이 비어 있습니다.');
+    const pathExt = extname(input.downloadPath).replace(/^\./, '').toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(pathExt)) {
+      ext = pathExt === 'jpeg' ? 'jpg' : pathExt;
+    }
+  } else {
+    throw new Error('생성된 이미지 데이터가 없습니다.');
+  }
+
+  const unique = randomUUID();
+  const name = `${safeName(sceneId)}_gemini_${unique.slice(0, 8)}.${ext}`;
+  const relative = `assets/image/${unique}_${safeName(name)}`;
+  const destination = resolveAssetPath(projectId, relative);
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, buffer);
+
+  const importedAt = new Date().toISOString();
+  const asset: import('../shared/types').MediaAsset = {
+    id: unique,
+    kind: 'image',
+    name,
+    relativePath: relative,
+    bytes: buffer.byteLength,
+    importedAt
+  };
+
+  const nextScenes = p.scenes.map((s, idx) =>
+    idx === sceneIdx ? { ...s, assetId: asset.id, status: 'complete' as const } : s
+  );
+  const next: StudioProject = {
+    ...p,
+    assets: [...p.assets, asset],
+    scenes: nextScenes,
+    revision: p.revision + 1,
+    updatedAt: importedAt
+  };
+  await persist(next);
+  return { project: next, asset };
+}
 export async function revealAsset(id:string,assetId:string):Promise<void>{
   const p=await readProject(id);const a=p.assets.find(x=>x.id===assetId);if(!a)throw Error('미디어 항목이 없습니다.');
   shell.showItemInFolder(resolveAssetPath(id,a.relativePath));

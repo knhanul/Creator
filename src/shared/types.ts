@@ -94,6 +94,8 @@ export interface GeminiJobRecord {
   codeBlocks?: string[]; isolation?: string; progressChars?: number;
   tab?: { id: number; title: string; url?: string }; insertMethod?: string; sendEvidence?: string; /** 연결 확인 진단 텍스트 (본문 없음) */ diagnostics?: string;
   appliedAt?: string; appliedRevision?: number; validationError?: string;
+  /** 이미지 생성 작업 결과 메타데이터 */
+  imageDataUrl?: string; imageUrl?: string; downloadPath?: string; imageMimeType?: string; assetId?: string;
   /** 오류·확인 필요로 멈추기 직전 단계 */
   stoppedPhase?: GeminiJobPhase;
 }
@@ -142,6 +144,12 @@ export type StudioAPI = {
       fetchResult(jobId: string): Promise<OperationResult>;
       /** 자동 적용이 보류된(stale) 결과를 사용자가 확인 후 적용 */
       applyResult(jobId: string, stage?: AIStage): Promise<GeminiJobRecord | null>;
+    };
+    /** Phase 5 MVP: 장면별 이미지 생성 자동화 */
+    image: {
+      start(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult>;
+      latest(projectId: string, sceneId?: string): Promise<GeminiJobRecord | null>;
+      listForProject(projectId: string): Promise<GeminiJobRecord[]>;
     };
     /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */
     probe(): Promise<GeminiProbeResult>;

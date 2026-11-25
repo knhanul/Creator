@@ -12,7 +12,7 @@
   const dom = window.GomoGeminiDom.createGeminiDom({ doc: document, win: window });
   let active = null; // { jobId, requestId, projectId }
 
-  const ids = (m) => ({ jobId: m.jobId, requestId: m.requestId, projectId: m.projectId });
+  const ids = (m) => ({ jobId: m.jobId, requestId: m.requestId, projectId: m.projectId, ...(m.sceneId ? { sceneId: m.sceneId } : {}), ...(m.stage ? { stage: m.stage } : {}) });
   const strip = (r) => { const { ctx, ok, ...rest } = r; return rest; };
   function emit(kind, m, extra) {
     try { chrome.runtime.sendMessage(Object.assign({ type: 'GEMINI_EVENT', kind }, ids(m), extra || {})); } catch (e) { /* SW 재시작 중 */ }
@@ -41,11 +41,24 @@
     if (res.sendState === 'not_sent') { active = null; return { ...strip(res), ...ids(msg) }; }
     // sent 또는 uncertain: 어느 쪽이든 응답이 오면 수집해서 보고(앱이 jobId/requestId/projectId로 수락 여부 결정)
     const ctx = res.ctx;
+    const isImageStage = msg.stage === 'image';
     void (async () => {
       try {
-        const out = await dom.watch(ctx, (phase, info) => emit('progress', msg, { phase, info }));
-        if (out.ok) emit('complete', msg, { text: out.text, codeBlocks: out.codeBlocks, isolation: out.isolation, completion: out.completion });
-        else emit('error', msg, { errorCode: out.errorCode, message: out.message, needsUser: out.needsUser, partialText: out.partialText || '' });
+        const watcher = isImageStage && typeof dom.watchImage === 'function' ? dom.watchImage : dom.watch;
+        const out = await watcher(ctx, (phase, info) => emit('progress', msg, { phase, info }));
+        if (out.ok) {
+          emit('complete', msg, {
+            text: out.text || '',
+            codeBlocks: out.codeBlocks || [],
+            isolation: out.isolation,
+            completion: out.completion,
+            ...(out.imageDataUrl ? { imageDataUrl: out.imageDataUrl } : {}),
+            ...(out.imageUrl ? { imageUrl: out.imageUrl } : {}),
+            ...(out.mimeType ? { mimeType: out.mimeType } : {})
+          });
+        } else {
+          emit('error', msg, { errorCode: out.errorCode, message: out.message, needsUser: out.needsUser, partialText: out.partialText || '' });
+        }
       } catch (e) {
         emit('error', msg, { errorCode: 'WATCH_EXCEPTION', message: String(e && e.message || e), needsUser: true });
       } finally { active = null; }

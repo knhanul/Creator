@@ -88,6 +88,32 @@
       S('button[aria-label*="Copy" i]', '영문 aria-label'),
       S('button[aria-label*="복사"]', '한국어 aria-label 추정')
     ],
+    /** Phase 5: 응답 블록 안에 생성된 이미지 요소 */
+    generatedImage: [
+      S('generated-image img', 'Gemini 생성 이미지 커스텀 요소 안의 img (진단 필요)'),
+      S('single-image img', 'Gemini 단일 생성 이미지 커스텀 요소 안의 img (진단 필요)'),
+      S('image-preview img', '이미지 미리보기 커스텀 요소 안의 img (진단 필요)'),
+      S('[data-test-id*="generated-image"] img', 'data-test-id 생성 이미지 (진단 필요)'),
+      S('message-content img[src^="data:image/"]', '응답 본문 안의 data:image 이미지'),
+      S('message-content img[src^="blob:"]', '응답 본문 안의 blob: 이미지'),
+      S('message-content img[src*="googleusercontent.com"]', '응답 본문 안의 Google 호스팅 이미지'),
+      S('model-response img[src]', '모델 응답 안의 일반 img (아이콘 제외 필터와 함께 사용)')
+    ],
+    /** Phase 5: 이미지 생성 진행 중 표시(로딩 스피너·플레이스홀더) */
+    imageGenerating: [
+      S('generated-image [role="progressbar"]', '이미지 생성 진행 표시줄 (진단 필요)'),
+      S('model-response mat-progress-spinner', '응답 내 로딩 스피너 (진단 필요)'),
+      S('[data-test-id*="image-loading"]', 'data-test-id 이미지 로딩 (진단 필요)'),
+      S('.image-generation-loading', '이미지 로딩 클래스 대체 수단')
+    ],
+    /** Phase 5: 생성 이미지 다운로드 버튼 (보조 수단) */
+    imageDownloadButton: [
+      S('generated-image button[aria-label*="Download" i]', '생성 이미지 다운로드 버튼 영문'),
+      S('generated-image button[aria-label*="다운로드"]', '생성 이미지 다운로드 버튼 한국어'),
+      S('button[data-test-id*="download-image"]', 'data-test-id 이미지 다운로드 버튼'),
+      S('model-response button[aria-label*="Download full size" i]', '원본 크기 다운로드 영문'),
+      S('model-response button[aria-label*="다운로드"]', '모델 응답 내 다운로드 버튼 한국어')
+    ],
     /** 로그인 필요 신호 (입력창이 없을 때만 의미 있음) */
     signIn: [
       S('a[href*="accounts.google.com/ServiceLogin"]', 'Google 로그인 링크'),

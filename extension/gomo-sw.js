@@ -61,6 +61,7 @@ function envelope(type, base, payload) {
     type,
     jobId: base.jobId,
     projectId: base.projectId,
+    ...(base.sceneId ? { sceneId: base.sceneId } : {}),
     timestamp: new Date().toISOString(),
     // 모든 회신에 이 서비스 워커의 프로토콜·버전을 실어 보냄(앱 진단용)
     extensionProtocol: AUTOMATION_PROTOCOL,
@@ -108,7 +109,12 @@ async function deliver(tabId, message) {
 }
 
 async function handleSubmit(msg) {
-  const base = { requestId: msg.requestId, jobId: msg.payload?.jobId || msg.jobId, projectId: msg.payload?.projectId || msg.projectId };
+  const base = {
+    requestId: msg.requestId,
+    jobId: msg.payload?.jobId || msg.jobId,
+    projectId: msg.payload?.projectId || msg.projectId,
+    sceneId: msg.payload?.sceneId || msg.sceneId
+  };
   const reply = (payload) => sendToHost(envelope('PROMPT_SUBMIT_RESULT', base, { jobId: base.jobId, ...payload }));
   if (!base.jobId || !base.requestId || !base.projectId) {
     return reply({ success: false, sendState: 'not_sent', errorCode: 'BAD_REQUEST', needsUser: true, message: '앱이 보낸 요청에 jobId/requestId/projectId가 없습니다(앱이 이전 버전일 수 있음). 전송하지 않았습니다.' });
@@ -119,6 +125,7 @@ async function handleSubmit(msg) {
   try { await chrome.tabs.update(tab.id, { active: true }); } catch { /* ignore */ }
   const r = await deliver(tab.id, {
     type: 'SUBMIT_PROMPT', protocol: AUTOMATION_PROTOCOL, prompt: msg.payload?.prompt, marker: msg.payload?.marker,
+    stage: msg.payload?.stage, sceneId: base.sceneId,
     jobId: base.jobId, requestId: base.requestId, projectId: base.projectId
   });
   const tabInfo = { id: tab.id, title: tab.title || '', url: tab.url || '' };
@@ -140,14 +147,25 @@ async function rememberResult(entry) {
 
 async function handleResultQuery(msg) {
   const q = msg.payload || {};
-  const base = { requestId: q.requestId, jobId: q.jobId, projectId: q.projectId };
+  const base = { requestId: q.requestId, jobId: q.jobId, projectId: q.projectId, sceneId: q.sceneId };
   const cur = (await chrome.storage.local.get(RESULT_STORE_KEY))[RESULT_STORE_KEY] || [];
   const hit = cur.find(e => e.jobId === q.jobId && e.requestId === q.requestId && e.projectId === q.projectId);
   if (!hit) {
     sendToHost(envelope('ERROR', { ...base, requestId: msg.requestId }, { code: 'RESULT_NOT_FOUND', message: '확장 프로그램에 보관된 응답이 없습니다.', recoverable: true, jobId: q.jobId, queryRequestId: msg.requestId }));
     return;
   }
-  sendToHost(envelope('RESPONSE_RECEIVED', base, { jobId: hit.jobId, text: hit.text, codeBlocks: hit.codeBlocks, complete: true, replayed: true, isolation: hit.isolation }));
+  sendToHost(envelope('RESPONSE_RECEIVED', { ...base, sceneId: hit.sceneId }, {
+    jobId: hit.jobId,
+    ...(hit.sceneId ? { sceneId: hit.sceneId } : {}),
+    text: hit.text,
+    codeBlocks: hit.codeBlocks,
+    complete: true,
+    replayed: true,
+    isolation: hit.isolation,
+    ...(hit.imageDataUrl ? { imageDataUrl: hit.imageDataUrl } : {}),
+    ...(hit.imageUrl ? { imageUrl: hit.imageUrl } : {}),
+    ...(hit.mimeType ? { mimeType: hit.mimeType } : {})
+  }));
 }
 
 async function handleProbe(msg) {
@@ -174,16 +192,66 @@ function onNativeMessage(msg) {
   if (msg.type === 'SELECTOR_PROBE_REQUEST') { void handleProbe(msg); return; }
 }
 
+/** content script에서 cross-origin으로 dataUrl을 못 읽었을 때 서비스 워커에서 보조 fetch 시도 */
+async function tryFetchImageAsDataUrl(imageUrl) {
+  if (!imageUrl || typeof fetch !== 'function' || !/^https?:\/\//i.test(imageUrl)) return null;
+  try {
+    const res = await fetch(imageUrl, { credentials: 'include' });
+    if (!res || !res.ok) return null;
+    const mime = res.headers.get('content-type') || 'image/png';
+    const buf = await res.arrayBuffer();
+    if (!buf || !buf.byteLength) return null;
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return { dataUrl: `data:${mime};base64,${btoa(bin)}`, mimeType: mime };
+  } catch {
+    return null;
+  }
+}
+
 /** content script → 앱: 진행/완료/오류 이벤트 */
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (!msg || msg.type !== 'GEMINI_EVENT') return;
-  const base = { requestId: msg.requestId, jobId: msg.jobId, projectId: msg.projectId };
+  const base = { requestId: msg.requestId, jobId: msg.jobId, projectId: msg.projectId, ...(msg.sceneId ? { sceneId: msg.sceneId } : {}) };
   if (msg.kind === 'progress') {
     sendToHost(envelope('JOB_PROGRESS', base, { jobId: msg.jobId, stage: msg.phase, message: '', info: msg.info || {} }));
   } else if (msg.kind === 'complete') {
-    const entry = { ...base, text: msg.text, codeBlocks: msg.codeBlocks || [], isolation: msg.isolation, at: Date.now(), tabId: sender?.tab?.id };
-    void rememberResult(entry);
-    sendToHost(envelope('RESPONSE_RECEIVED', base, { jobId: msg.jobId, text: msg.text, codeBlocks: msg.codeBlocks || [], complete: true, isolation: msg.isolation, completion: msg.completion }));
+    void (async () => {
+      let imageDataUrl = msg.imageDataUrl;
+      let mimeType = msg.mimeType;
+      if (!imageDataUrl && msg.imageUrl) {
+        const fetched = await tryFetchImageAsDataUrl(msg.imageUrl);
+        if (fetched) { imageDataUrl = fetched.dataUrl; mimeType = fetched.mimeType; }
+      }
+      const entry = {
+        ...base,
+        text: msg.text,
+        codeBlocks: msg.codeBlocks || [],
+        isolation: msg.isolation,
+        ...(imageDataUrl ? { imageDataUrl } : {}),
+        ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(mimeType ? { mimeType } : {}),
+        at: Date.now(),
+        tabId: sender?.tab?.id
+      };
+      void rememberResult(entry);
+      sendToHost(envelope('RESPONSE_RECEIVED', base, {
+        jobId: msg.jobId,
+        ...(msg.sceneId ? { sceneId: msg.sceneId } : {}),
+        text: msg.text,
+        codeBlocks: msg.codeBlocks || [],
+        complete: true,
+        isolation: msg.isolation,
+        completion: msg.completion,
+        ...(imageDataUrl ? { imageDataUrl } : {}),
+        ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+        ...(mimeType ? { mimeType } : {})
+      }));
+    })();
   } else if (msg.kind === 'error') {
     sendToHost(envelope('ERROR', base, { code: msg.errorCode || 'UNKNOWN', message: msg.message || '', recoverable: true, needsUser: !!msg.needsUser, jobId: msg.jobId, partialText: msg.partialText || '' }));
   }

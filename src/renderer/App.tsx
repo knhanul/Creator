@@ -11,7 +11,7 @@ import {
 import {BRAND} from '../shared/brand';
 import {AUDIENCES,DEFAULT_BRIEF,GENRES,STAGE_NAMES,STAGE_ORDER,applyAIResponse,readyForHandoff,stageComplete} from '../shared/workflow';
 import {makeAIPrompt} from '../shared/prompts';
-import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,isAIStage,phaseView} from '../shared/gemini-analysis';
+import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,guideFor,isAIStage,phaseView} from '../shared/gemini-analysis';
 import type {AIStage,Brief,Genre,Audience,MediaAsset,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDialog,type AINavTarget} from './components/AIDialog';
@@ -84,20 +84,56 @@ function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
   const themeApi = useTheme();
   const [view,setView]=useState<View>('home');const [newOpen,setNewOpen]=useState(false);const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiAuto,setAiAuto]=useState(false);
-  const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);const [probe,setProbe]=useState('');
+  const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);
+  const [imageJobs,setImageJobs]=useState<Record<string,GeminiJobRecord>>({});
+  const [probe,setProbe]=useState('');
   const projectRef=useRef(project);projectRef.current=project;const handledJobs=useRef(new Set<string>());
   const [search,setSearch]=useState('');const [editingScene,setEditingScene]=useState<Scene|null>(null);
   const [activeAsset,setActiveAsset]=useState<string|null>(null);const [showArchived,setShowArchived]=useState(false);
   const [infoPath,setInfoPath]=useState('');
   useEffect(()=>{void window.studio.app.info().then(i=>setInfoPath(i.dataRoot)).catch(()=>{});},[]);
   useEffect(()=>{if(project&&!activeAsset&&project.assets.length)setActiveAsset(project.assets[0].id);},[project?.id]);
-  // Gemini AI 단계(기획 분석·스토리보드·생성 프롬프트·최종 편집 구성) 작업 상태 구독: 모달을 닫아도 main의 작업 큐가 상태를 유지하고, 결과가 저장되면 현재 작품을 다시 읽습니다.
+  // Gemini AI 단계(기획 분석·스토리보드·생성 프롬프트·최종 편집 구성) 및 장면별 이미지 생성 작업 상태 구독
   useEffect(()=>{
-    const id=project?.id;let alive=true;setStageJobs(EMPTY_STAGE_JOBS);
-    if(id)for(const st of AI_STAGES)void window.studio.gemini.analysis.latest(id,st).then(j=>{if(alive)setStageJobs(o=>({...o,[st]:j}));}).catch(()=>{});
+    const id=project?.id;let alive=true;setStageJobs(EMPTY_STAGE_JOBS);setImageJobs({});
+    if(id){
+      for(const st of AI_STAGES)void window.studio.gemini.analysis.latest(id,st).then(j=>{if(alive)setStageJobs(o=>({...o,[st]:j}));}).catch(()=>{});
+      void window.studio.gemini.image?.listForProject(id).then(list=>{
+        if(!alive||!Array.isArray(list))return;
+        const byScene:Record<string,GeminiJobRecord>={};
+        for(const j of list){
+          if(!j.sceneId)continue;
+          const prev=byScene[j.sceneId];
+          if(!prev||j.createdAt>=prev.createdAt)byScene[j.sceneId]=j;
+        }
+        setImageJobs(byScene);
+      }).catch(()=>{});
+    }
     const off=window.studio.gemini.onJobUpdate(j=>{
-      if(!isAIStage(j.kind))return;const st=j.kind;
       const cur=projectRef.current;
+      if(j.kind==='image'){
+        if(cur&&j.projectId===cur.id&&j.sceneId){
+          const sid=j.sceneId;
+          setImageJobs(o=>{const old=o[sid];return !old||old.jobId===j.jobId||j.createdAt>=old.createdAt?{...o,[sid]:j}:o;});
+        }
+        if(j.outcome!=='applied'||handledJobs.current.has(j.jobId))return;
+        handledJobs.current.add(j.jobId);
+        if(cur&&j.projectId===cur.id){
+          if(!j.appliedRevision||cur.revision<j.appliedRevision){
+            void studio.load(cur.id).then(p=>{
+              if(p){
+                if(j.assetId)setActiveAsset(j.assetId);
+                flash(`${j.sceneId||'장면'} 이미지를 Gemini에서 생성해 프로젝트에 저장하고 연결했습니다.`,'success');
+              }
+            });
+          }
+        }else{
+          void studio.refresh();
+          flash('다른 작품의 Gemini 생성 이미지가 저장되었습니다.','info');
+        }
+        return;
+      }
+      if(!isAIStage(j.kind))return;const st=j.kind;
       if(cur&&j.projectId===cur.id)setStageJobs(o=>{const old=o[st];return !old||old.jobId===j.jobId||j.createdAt>=old.createdAt?{...o,[st]:j}:o;});
       if(j.outcome!=='applied'||handledJobs.current.has(j.jobId))return;
       handledJobs.current.add(j.jobId);
@@ -107,6 +143,16 @@ function App(){
     });
     return()=>{alive=false;off();};
   },[project?.id]);
+
+  const startSceneImage=async(sceneId:string)=>{
+    if(!project)return;
+    try{
+      const r=await window.studio.gemini.image.start(project.id,sceneId);
+      if(!r.ok){flash(r.message||'이미지 생성을 시작하지 못했습니다.','error');return;}
+      if(r.job&&r.job.sceneId)setImageJobs(o=>({...o,[r.job!.sceneId!]:r.job!}));
+      flash(r.reused?(r.message||`${sceneId} 이미지 생성 작업이 이미 진행 중입니다.`):`${sceneId} 장면 이미지 생성 요청을 Gemini 작업 큐에 등록했습니다.`,'info');
+    }catch(e){flash(String(e),'error');}
+  };
   const analysisJob=stageJobs.analysis;
   const analysisView=phaseView(analysisJob);
   const busyOf=(st:AIStage)=>{const j=stageJobs[st];return !!j&&!['completed','failed','cancelled'].includes(j.state);};
@@ -220,8 +266,58 @@ function App(){
             {stageBanner('prompt')}
             {project.scenes.length?<><div className="prompt-grid">{project.scenes.map(s=><PromptCard key={s.id} scene={s} onSave={saveScene} onCopy={t=>void copy(t)}/>)}</div><div className="notice"><Info size={17}/><div><b>화풍과 기준 이미지의 일관성</b><p>현 단계는 프롬프트와 설정을 보관합니다. 실제 Gemini 웹 자동 생성과 기준 이미지 참조 기능은 후속 연결 모듈에서 구현합니다.</p></div></div><div className="page-bottom"><span>완성한 프롬프트는 클립보드로 복사할 수 있습니다.</span><Button onClick={()=>go('media')}>미디어 보관함으로 <ArrowRight size={16}/></Button></div></>:<Card><Empty title="장면을 먼저 구성해 주세요" description="스토리보드 장면이 생성되면 프롬프트를 관리할 수 있습니다." action={<Button onClick={()=>go('storyboard')}>스토리보드 열기</Button>}/></Card>}
           </div>}
-          {view==='media'&&<div><SectionHeading eyebrow="04 / ASSET LIBRARY" title="미디어 보관함" description="생성된 이미지·영상·음악을 작품에 보관하고 장면에 연결합니다." action={<Button onClick={()=>void studio.importAssets()}><Upload size={16}/> 미디어 가져오기</Button>}/>
-            <div className="media-layout"><div className="media-list"><div className="subsection-head"><h3>프로젝트 미디어</h3><Tag>{project.assets.length}개 파일</Tag></div>{project.assets.length?<div className="asset-grid">{project.assets.map(a=><button key={a.id} className={`asset-card ${activeAsset===a.id?'selected':''}`} onClick={()=>setActiveAsset(a.id)}><div className="asset-preview"><Photo project={project} asset={a}/></div><div className="asset-info"><span>{a.name}</span><small>{a.kind.toUpperCase()} · {fileSize(a.bytes)}</small></div></button>)}</div>:<Empty title="미디어를 가져오세요" description="Gemini 등 생성 도구에서 다운로드한 이미지·영상·음악 파일을 이 프로젝트에 복사해 저장합니다." action={<Button kind="secondary" onClick={()=>void studio.importAssets()}><Upload size={15}/> 파일 선택</Button>}/>}</div>
+          {view==='media'&&<div><SectionHeading eyebrow="04 / ASSET LIBRARY" title="미디어 보관함" description="장면별 프롬프트로 Gemini 웹에서 이미지를 자동 생성하거나, 로컬 이미지·영상·음악 파일을 가져와 장면에 연결합니다." action={<Button onClick={()=>void studio.importAssets()}><Upload size={16}/> 미디어 가져오기</Button>}/>
+            <Card className="scene-image-gen-card">
+              <div className="subsection-head">
+                <div>
+                  <h3>장면별 Gemini 이미지 자동 생성 (Phase 5 MVP)</h3>
+                  <p className="muted-text">각 장면의 이미지 프롬프트(imagePrompt)를 Chrome의 Gemini 탭으로 전송해 이미지를 생성하고, 완료 시 프로젝트 assets/image/ 폴더에 저장한 뒤 해당 장면에 자동 연결합니다.</p>
+                </div>
+                <Tag tone="accent">{project.scenes.filter(s=>!!sceneAsset(project,s)).length} / {project.scenes.length} 장면 연결됨</Tag>
+              </div>
+              {project.scenes.length===0?<Empty title="스토리보드 장면이 없습니다" description="먼저 스토리보드와 생성 프롬프트를 준비하면 장면별로 Gemini 이미지를 생성할 수 있습니다." action={<Button size="sm" onClick={()=>go('storyboard')}>스토리보드로 이동</Button>}/>:<div className="scene-image-gen-list">
+                {project.scenes.map(s=>{
+                  const linked=sceneAsset(project,s);
+                  const job=imageJobs[s.id];
+                  const pv=phaseView(job);
+                  const isBusy=!!job&&!['completed','failed','cancelled'].includes(job.state);
+                  const guide=guideFor(job);
+                  const hasPrompt=!!(s.imagePrompt&&s.imagePrompt.trim());
+                  return <div key={s.id} className={`scene-image-gen-row ${linked?'has-asset':''}`}>
+                    <div className="scene-image-gen-thumb" onClick={()=>{if(linked)setActiveAsset(linked.id);}}>
+                      <Photo project={project} asset={linked}/>
+                    </div>
+                    <div className="scene-image-gen-main">
+                      <div className="scene-image-gen-top">
+                        <strong>{s.id} · {s.title}</strong>
+                        {linked?<Tag tone="success"><Check size={12}/> {linked.name}</Tag>:<Tag tone="muted">미디어 미연결</Tag>}
+                        {pv&&<Tag tone={pv.tone==='danger'?'warning':pv.tone}>Gemini · {pv.label}</Tag>}
+                      </div>
+                      {hasPrompt?<p className="scene-image-gen-prompt">{s.imagePrompt}</p>:<p className="scene-image-gen-noprompt">이미지 생성 프롬프트가 비어 있습니다. 생성 프롬프트 단계에서 먼저 작성해 주세요.</p>}
+                      {job&&(pv?.phase==='needs_user'||pv?.phase==='error')&&<div className="scene-image-gen-guide">
+                        <ShieldAlert size={14}/>
+                        <div>
+                          <strong>{job.errorMessage||guide?.cause||'확인이 필요합니다.'}</strong>
+                          {guide&&<p>{guide.fix}</p>}
+                          <div className="scene-image-gen-recovery">
+                            {job.state==='needs_confirmation'&&job.sendConfirmed&&<Button size="sm" kind="secondary" onClick={async()=>{const u=await window.studio.gemini.analysis.fetchResult(job.jobId);flash(u.message||'응답을 다시 요청했습니다.',u.success?'info':'error');}}>응답 다시 가져오기</Button>}
+                            {job.state==='needs_confirmation'&&<Button size="sm" kind="outline" onClick={async()=>{const u=await window.studio.gemini.jobs.confirm(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('사용자 확인 후 재전송 대기열에 넣었습니다.','info');}}>확인 후 재전송</Button>}
+                            {job.state==='needs_confirmation'&&<Button size="sm" kind="secondary" onClick={async()=>{const u=await window.studio.gemini.jobs.continue(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('재전송 없이 응답 대기로 전환했습니다.','info');}}>응답 기다리기</Button>}
+                            {job.state==='failed'&&job.executable&&<Button size="sm" kind="outline" onClick={async()=>{const u=await window.studio.gemini.jobs.retry(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('실패 작업을 다시 대기열에 넣었습니다.','info');}}>재시도</Button>}
+                            {job.state!=='completed'&&job.state!=='cancelled'&&<Button size="sm" kind="ghost" onClick={async()=>{const u=await window.studio.gemini.jobs.cancel(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('작업 취소를 요청했습니다.','info');}}>취소</Button>}
+                          </div>
+                        </div>
+                      </div>}
+                    </div>
+                    <div className="scene-image-gen-actions">
+                      {!hasPrompt?<Button size="sm" kind="outline" onClick={()=>go('prompt')}>프롬프트 작성</Button>:isBusy?<Button size="sm" kind="secondary" disabled><Sparkles size={14}/> {pv?.label||'생성 중…'}</Button>:<Button size="sm" onClick={()=>void startSceneImage(s.id)}><Sparkles size={14}/> {linked?'Gemini로 다시 생성':'Gemini로 이미지 생성'}</Button>}
+                      {isBusy&&job&&<Button size="sm" kind="ghost" onClick={async()=>{const u=await window.studio.gemini.jobs.cancel(job.jobId);if(u)setImageJobs(o=>({...o,[s.id]:u}));flash('작업 취소를 요청했습니다.','info');}}>취소</Button>}
+                    </div>
+                  </div>;
+                })}
+              </div>}
+            </Card>
+            <div className="media-layout"><div className="media-list"><div className="subsection-head"><h3>프로젝트 미디어</h3><Tag>{project.assets.length}개 파일</Tag></div>{project.assets.length?<div className="asset-grid">{project.assets.map(a=><button key={a.id} className={`asset-card ${activeAsset===a.id?'selected':''}`} onClick={()=>setActiveAsset(a.id)}><div className="asset-preview"><Photo project={project} asset={a}/></div><div className="asset-info"><span>{a.name}</span><small>{a.kind.toUpperCase()} · {fileSize(a.bytes)}</small></div></button>)}</div>:<Empty title="미디어를 가져오세요" description="위 장면별 「Gemini로 이미지 생성」을 사용하거나, 다운로드한 이미지·영상·음악 파일을 이 프로젝트에 복사해 저장합니다." action={<Button kind="secondary" onClick={()=>void studio.importAssets()}><Upload size={15}/> 파일 선택</Button>}/>}</div>
               <aside className="media-inspector"><div className="subsection-head"><h3>파일 정보</h3></div>{activeMedia?<><div className="inspector-preview"><Photo project={project} asset={activeMedia}/></div><h3 className="inspector-filename">{activeMedia.name}</h3><div className="inspector-props"><div><span>유형</span><b>{activeMedia.kind}</b></div><div><span>파일 크기</span><b>{fileSize(activeMedia.bytes)}</b></div><div><span>연결된 장면</span><b>{project.scenes.find(s=>s.assetId===activeMedia.id)?.id||'없음'}</b></div></div>{activeMedia.kind==='audio'&&<audio controls src={mediaUrl(project,activeMedia)} style={{width:'100%'}}/>}<div className="subsection-head"><h3>장면에 연결</h3></div>{activeMedia.kind==='audio'?<p className="muted-text" style={{marginBottom:16}}>오디오 파일은 최종 편집안의 배경음악 선택에서 연결합니다.</p>:<div className="scene-link-list">{project.scenes.map(s=><button className={`scene-link ${s.assetId===activeMedia.id?'selected':''}`} key={s.id} onClick={()=>void mutate(p=>({...p,scenes:p.scenes.map(scene=>scene.id===s.id?{...scene,assetId:activeMedia.id}:scene)}))}><span>{s.id} · {s.title}</span>{s.assetId===activeMedia.id&&<Check size={15}/>}</button>)}</div>}<Button kind="outline" onClick={()=>void window.studio.assets.reveal(project.id,activeMedia.id)}><FolderOpen size={15}/> 탐색기에서 보기</Button></>:<p className="inspector-empty">파일을 선택하면 상세 정보와 장면 연결 설정이 나타납니다.</p>}</aside></div>
             <div className="page-bottom"><span>이미지·영상은 장면마다 1개씩 연결합니다. 음악은 편집안에서 선택합니다.</span><Button onClick={()=>go('assembly')}>최종 편집안으로 <ArrowRight size={16}/></Button></div>
           </div>}

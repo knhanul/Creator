@@ -329,6 +329,153 @@
       }
     }
 
+    /** 응답 블록 안에서 생성된 이미지(<img>) 요소들을 찾는다 (아이콘·사고과정 내부 제외) */
+    function findGeneratedImages(responseEl) {
+      if (!responseEl) return [];
+      const list = SEL.generatedImage || [];
+      const seen = new Set();
+      const out = [];
+      for (let i = 0; i < list.length; i++) {
+        let nodes;
+        try { nodes = responseEl.querySelectorAll(list[i].sel); } catch { continue; }
+        for (const img of nodes) {
+          if (seen.has(img)) continue;
+          seen.add(img);
+          if (!isVisible(img)) continue;
+          if (img.closest && img.closest('model-thoughts')) continue;
+          const src = (img.getAttribute('src') || img.src || '').trim();
+          if (!src || src === 'about:blank') continue;
+          // 명시적 크기가 64px 미만인 작은 아이콘·아바타는 제외
+          const w = Number(img.naturalWidth || img.width || img.getAttribute('width') || 0);
+          const h = Number(img.naturalHeight || img.height || img.getAttribute('height') || 0);
+          if ((w > 0 && w < 64) || (h > 0 && h < 64)) continue;
+          if (img.complete === false && !src.startsWith('data:image/') && !img.getAttribute('width')) continue;
+          out.push({ el: img, src, selector: list[i].sel });
+        }
+      }
+      return out;
+    }
+
+    /** 생성된 <img>에서 base64 dataUrl 또는 원본 URL을 추출 */
+    async function extractImageData(imgEl, src) {
+      if (src.startsWith('data:image/')) {
+        const mimeMatch = src.match(/^data:(image\/[a-z0-9.+-]+);/i);
+        return { imageDataUrl: src, imageUrl: src, mimeType: mimeMatch ? mimeMatch[1] : 'image/png', method: 'data-url' };
+      }
+      // 1) 페이지 컨텍스트 fetch (blob: 또는 CORS 허용 이미지)
+      if (typeof win.fetch === 'function' && typeof win.FileReader === 'function') {
+        try {
+          const res = await win.fetch(src, { credentials: 'include' });
+          if (res && res.ok) {
+            const blob = await res.blob();
+            if (blob && blob.size > 0) {
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new win.FileReader();
+                reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+                reader.onerror = () => reject(new Error('FileReader failed'));
+                reader.readAsDataURL(blob);
+              });
+              if (dataUrl && dataUrl.startsWith('data:image/')) {
+                return { imageDataUrl: dataUrl, imageUrl: src, mimeType: blob.type || 'image/png', method: 'fetch-blob' };
+              }
+            }
+          }
+        } catch { /* fall through to canvas or url-only */ }
+      }
+      // 2) Canvas toDataURL 시도
+      try {
+        const w = Number(imgEl.naturalWidth || imgEl.width || 0);
+        const h = Number(imgEl.naturalHeight || imgEl.height || 0);
+        if (w >= 64 && h >= 64 && typeof doc.createElement === 'function') {
+          const canvas = doc.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx2d = canvas.getContext && canvas.getContext('2d');
+          if (ctx2d) {
+            ctx2d.drawImage(imgEl, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png');
+            if (dataUrl && dataUrl.startsWith('data:image/png;base64,') && dataUrl.length > 64) {
+              return { imageDataUrl: dataUrl, imageUrl: src, mimeType: 'image/png', method: 'canvas' };
+            }
+          }
+        }
+      } catch { /* cross-origin canvas tainted; fallback to url-only */ }
+      return { imageDataUrl: undefined, imageUrl: src, mimeType: 'image/png', method: 'url-only' };
+    }
+
+    /**
+     * Phase 5: 이미지 생성 응답 감시 (기존 텍스트 watch와 분리).
+     * - 이번 요청의 응답 블록(locateResponse) 안에서만 생성 이미지를 찾음
+     * - 중지 버튼과 이미지 로딩 표시가 사라지고 이미지가 안정되면 이미지 데이터를 추출해 반환
+     * - 이미지가 전혀 생성되지 않고 텍스트 답변만 끝났으면 NO_IMAGE_GENERATED 반환
+     */
+    async function watchImage(ctx, onProgress) {
+      const start = now();
+      let lastSig = null; let lastChange = now(); let stopSeen = false; let lastProgress = 0; let found = null;
+      for (;;) {
+        await sleep(timing.pollMs);
+        const t = now();
+        if (detectBlocked()) return { ok: false, errorCode: 'BLOCKED', needsUser: true, message: '이미지 생성 대기 중 Google 보안 확인 화면이 나타났습니다.' };
+        const stopActive = !!findStop();
+        if (stopActive) stopSeen = true;
+        const loc = locateResponse(ctx);
+        if (!loc) {
+          if (t - start > timing.firstResponseTimeoutMs) return { ok: false, errorCode: 'NO_RESPONSE_NODE', needsUser: true, message: '전송 후 Gemini 응답 블록을 찾지 못했습니다.' };
+          if (t - start > timing.maxWaitMs) return { ok: false, errorCode: 'RESPONSE_TIMEOUT', needsUser: true, message: '이미지 생성 대기 시간이 초과되었습니다.' };
+          continue;
+        }
+        found = loc;
+        const imgLoading = !!find('imageGenerating', loc.el);
+        const generating = stopActive || imgLoading;
+        if (generating) stopSeen = true;
+
+        const ex = extract(loc.el);
+        const imgs = findGeneratedImages(loc.el);
+        const sig = `${ex.text}::${imgs.map((x) => x.src).join('|')}`;
+        if (sig !== lastSig) { lastSig = sig; lastChange = t; }
+
+        if (onProgress && t - lastProgress >= timing.progressThrottleMs) {
+          lastProgress = t;
+          onProgress(imgs.length > 0 ? 'collecting' : 'waiting', { chars: ex.text.length, images: imgs.length, generating, isolation: loc.isolation });
+        }
+
+        const stableFor = t - lastChange;
+        const actions = !!find('responseActions', loc.el) || !!find('imageDownloadButton', loc.el);
+        const needStable = actions ? timing.stableMs : (stopSeen ? timing.stableMs * 2 : timing.stableMs * 3);
+
+        if (!generating && imgs.length > 0 && stableFor >= timing.stableMs) {
+          const picked = imgs[0];
+          const extracted = await extractImageData(picked.el, picked.src);
+          return {
+            ok: true,
+            text: ex.text,
+            codeBlocks: ex.codeBlocks,
+            isolation: loc.isolation,
+            imageDataUrl: extracted.imageDataUrl,
+            imageUrl: extracted.imageUrl,
+            mimeType: extracted.mimeType,
+            imageMethod: extracted.method,
+            imageSelector: picked.selector,
+            completion: { stopSeen, actions, stableMs: stableFor }
+          };
+        }
+
+        if (!generating && imgs.length === 0 && ex.text && stableFor >= needStable) {
+          return {
+            ok: false,
+            errorCode: 'NO_IMAGE_GENERATED',
+            needsUser: true,
+            message: 'Gemini가 이미지를 생성하지 않고 텍스트로만 응답했습니다. 프롬프트 정책 제한 또는 모델 상태를 확인해 주세요.',
+            partialText: ex.text
+          };
+        }
+
+        if (t - start > timing.maxWaitMs) {
+          return { ok: false, errorCode: 'RESPONSE_TIMEOUT', needsUser: true, message: '이미지 생성 완료를 제시간에 확인하지 못했습니다(시간 초과).', partialText: found ? ex.text : '' };
+        }
+      }
+    }
+
     /** 아무것도 입력·전송하지 않고 셀렉터 일치 현황만 보고 */
     function probe() {
       const groups = {};
@@ -361,7 +508,7 @@
       };
     }
 
-    return { submit, watch, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
+    return { submit, watch, watchImage, findGeneratedImages, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };

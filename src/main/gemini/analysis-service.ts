@@ -6,21 +6,36 @@
  *
  * 의존성을 주입받으므로 Electron 없이 mock으로 테스트할 수 있습니다(scripts/test-gemini-automation.mjs).
  */
-import type { AIStage, GeminiAnalysisStartResult, GeminiJobRecord, StudioProject } from '../../shared/types';
+import type { AIStage, GeminiAnalysisStartResult, GeminiJobKind, GeminiJobRecord, MediaAsset, StudioProject } from '../../shared/types';
 import type { ProtocolMessage } from '../../shared/gemini-protocol';
 import type { JobResult, ProviderStatus } from './adapter';
 import { makeAIPrompt } from '../../shared/prompts';
-import { STAGE_META, decideStageApply, isAIStage } from '../../shared/gemini-analysis';
+import { STAGE_META, decideStageApply, isAIStage, makeImageGenerationPrompt } from '../../shared/gemini-analysis';
 
 /** GeminiJobQueue(job-queue.mjs) 중 이 서비스가 쓰는 부분 */
 export interface QueueLike {
   list(): GeminiJobRecord[];
   get(jobId: string): GeminiJobRecord | undefined;
-  findActive(projectId: string, kind: string): GeminiJobRecord | undefined;
-  latest(projectId: string, kind?: string): GeminiJobRecord | undefined;
-  enqueue(input: { projectId: string; kind: AIStage; prompt: string }): Promise<GeminiJobRecord>;
+  findActive(projectId: string, kind: string, sceneId?: string): GeminiJobRecord | undefined;
+  latest(projectId: string, kind?: string, sceneId?: string): GeminiJobRecord | undefined;
+  enqueue(input: { projectId: string; kind: GeminiJobKind; prompt: string; sceneId?: string }): Promise<GeminiJobRecord>;
   tick(provider: { submit(job: GeminiJobRecord): Promise<JobResult> }): Promise<void>;
-  onResponse(jobId: string, requestId: string, text: string, complete: boolean, extra?: { projectId?: string; codeBlocks?: string[]; isolation?: string }): Promise<'applied' | 'ignored'>;
+  onResponse(
+    jobId: string,
+    requestId: string,
+    text: string,
+    complete: boolean,
+    extra?: {
+      projectId?: string;
+      sceneId?: string;
+      codeBlocks?: string[];
+      isolation?: string;
+      imageDataUrl?: string;
+      imageUrl?: string;
+      downloadPath?: string;
+      mimeType?: string;
+    }
+  ): Promise<'applied' | 'ignored'>;
   setPhase(jobId: string, requestId: string, phase: string, info?: Record<string, unknown>, projectId?: string): Promise<'applied' | 'ignored'>;
   onRemoteError(jobId: string, requestId: string, projectId: string | undefined, code: string, message: string, partialText?: string): Promise<'applied' | 'ignored'>;
   setOutcome(jobId: string, requestId: string, fields: Partial<GeminiJobRecord>): Promise<GeminiJobRecord | null>;
@@ -30,14 +45,20 @@ export interface QueueLike {
 }
 export interface AdapterLike {
   getStatus(): Promise<ProviderStatus>;
-  submitPrompt(job: { jobId: string; requestId: string; projectId: string; stage: string; prompt: string }): Promise<JobResult>;
-  requestResult(job: { jobId: string; requestId: string; projectId: string }): Promise<{ ok: boolean; message: string }>;
+  submitPrompt(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage: string; prompt: string }): Promise<JobResult>;
+  requestResult(job: { jobId: string; requestId: string; projectId: string; sceneId?: string }): Promise<{ ok: boolean; message: string }>;
 }
 export interface AnalysisServiceDeps {
   queue: QueueLike;
   adapter: AdapterLike;
   readProject(id: string): Promise<StudioProject>;
   saveProject(p: StudioProject): Promise<StudioProject>;
+  /** Phase 5: 생성된 이미지를 프로젝트 assets/image/에 파일로 저장하고 scene.assetId를 연결 */
+  saveGeneratedImageAsset?(
+    projectId: string,
+    sceneId: string,
+    input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
+  ): Promise<{ project: StudioProject; asset: MediaAsset }>;
   /** 결과가 작품에 저장되었을 때 (renderer가 작품을 다시 읽도록) */
   onProjectUpdated?(project: StudioProject, job: GeminiJobRecord): void;
 }
@@ -61,7 +82,14 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       if (!status.geminiTabFound) return stop('NO_GEMINI_TAB', status.message);
       // 2) 프롬프트 전송 — requestId는 큐가 이번 시도에 부여한 값을 그대로 사용
       await queue.setPhase(job.jobId, job.requestId, 'sending');
-      const r = await adapter.submitPrompt({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, stage: job.kind, prompt: job.prompt });
+      const r = await adapter.submitPrompt({
+        jobId: job.jobId,
+        requestId: job.requestId,
+        projectId: job.projectId,
+        ...(job.sceneId ? { sceneId: job.sceneId } : {}),
+        stage: job.kind,
+        prompt: job.prompt
+      });
       return diagnostics && !r.diagnostics ? { ...r, diagnostics } : r;
     }
   };
@@ -108,6 +136,123 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     return { ok: true, job };
   }
 
+  /**
+   * Phase 5 MVP: 장면 단위 이미지 생성 시작.
+   * - 같은 작품·같은 장면의 진행 중 image 작업이 있으면 새로 보내지 않고 기존 작업을 반환
+   * - sceneId 필수, scene.imagePrompt 필수
+   */
+  async function startImage(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult> {
+    const cleanSceneId = String(sceneId || '').trim();
+    if (!cleanSceneId) return { ok: false, message: '이미지를 생성할 장면 ID가 필요합니다.' };
+    const key = `${projectId}\u0000image\u0000${cleanSceneId}`;
+    if (starting.has(key)) {
+      const active = queue.findActive(projectId, 'image', cleanSceneId);
+      return { ok: true, job: active, reused: true, message: '이미 이미지 생성을 시작 중입니다.' };
+    }
+    starting.add(key);
+    try {
+      let project: StudioProject;
+      try {
+        project = await deps.readProject(projectId);
+      } catch (e) {
+        return { ok: false, message: '작품을 읽지 못했습니다: ' + (e instanceof Error ? e.message : String(e)) };
+      }
+      const scene = project.scenes.find(s => s.id === cleanSceneId);
+      if (!scene) {
+        return { ok: false, message: `장면(${cleanSceneId})을 찾을 수 없습니다.` };
+      }
+      if (!scene.imagePrompt || !scene.imagePrompt.trim()) {
+        return { ok: false, message: `${scene.id} 장면의 이미지 생성 프롬프트가 비어 있습니다. 생성 프롬프트 단계에서 먼저 프롬프트를 준비해 주세요.` };
+      }
+      const existing = queue.findActive(projectId, 'image', cleanSceneId);
+      if (existing) {
+        return {
+          ok: true,
+          job: existing,
+          reused: true,
+          message: `이미 진행 중인 ${cleanSceneId} 장면 이미지 생성 작업이 있어 새로 보내지 않았습니다.`
+        };
+      }
+      const prompt = makeImageGenerationPrompt(project, cleanSceneId);
+      const job = await queue.enqueue({ projectId, kind: 'image', sceneId: cleanSceneId, prompt });
+      void kick();
+      return { ok: true, job };
+    } finally {
+      starting.delete(key);
+    }
+  }
+
+  /** 완료된 이미지 생성 작업의 결과를 프로젝트 assets/image/에 저장하고 해당 장면에 연결 */
+  async function applyCompletedImage(jobId: string): Promise<GeminiJobRecord | null> {
+    const job = queue.get(jobId);
+    if (!job || job.state !== 'completed' || job.kind !== 'image') return null;
+    if (job.outcome === 'applied') return job;
+    if (!job.sceneId) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'error',
+        needsUser: false,
+        errorCode: 'SCENE_NOT_FOUND',
+        errorMessage: '이미지 작업에 장면 ID(sceneId)가 없습니다.'
+      });
+    }
+    await queue.setOutcome(job.jobId, job.requestId, { phase: 'validating' });
+
+    if (!job.imageDataUrl && !job.downloadPath) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'needs_user',
+        needsUser: true,
+        errorCode: 'IMAGE_DATA_MISSING',
+        errorMessage: 'Gemini에서 생성된 이미지 데이터를 가져오지 못했습니다. Gemini 탭에서 이미지를 직접 다운로드한 뒤 미디어 가져오기로 추가해 주세요.'
+      });
+    }
+
+    if (!deps.saveGeneratedImageAsset) {
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'invalid',
+        phase: 'error',
+        needsUser: false,
+        errorCode: 'SAVE_FAILED',
+        errorMessage: '이미지 파일 저장기가 구성되지 않았습니다.'
+      });
+    }
+
+    let savedResult: { project: StudioProject; asset: MediaAsset };
+    try {
+      savedResult = await deps.saveGeneratedImageAsset(job.projectId, job.sceneId, {
+        imageDataUrl: job.imageDataUrl,
+        downloadPath: job.downloadPath,
+        mimeType: job.imageMimeType
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isMissingScene = msg.includes('장면') && msg.includes('찾을 수 없습니다');
+      return queue.setOutcome(job.jobId, job.requestId, {
+        outcome: isMissingScene ? 'stale' : 'invalid',
+        phase: isMissingScene ? 'needs_user' : 'error',
+        needsUser: isMissingScene,
+        errorCode: isMissingScene ? 'SCENE_NOT_FOUND' : 'SAVE_FAILED',
+        errorMessage: msg
+      });
+    }
+
+    const done = await queue.setOutcome(job.jobId, job.requestId, {
+      outcome: 'applied',
+      phase: 'done',
+      needsUser: false,
+      errorCode: undefined,
+      errorMessage: undefined,
+      validationError: undefined,
+      assetId: savedResult.asset.id,
+      resultRef: savedResult.asset.relativePath,
+      appliedAt: new Date().toISOString(),
+      appliedRevision: savedResult.project.revision
+    });
+    if (done) deps.onProjectUpdated?.(savedResult.project, done);
+    return done;
+  }
+
   /** 완료된 응답 검증·적용. force=사용자가 '이 결과 적용'으로 확인(다른 작품에는 여전히 적용 불가) */
   async function applyCompleted(jobId: string, force = false, expectedStage?: AIStage): Promise<GeminiJobRecord | null> {
     const job = queue.get(jobId);
@@ -143,24 +288,48 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     const jobId = (msg.jobId || payload.jobId) as string | undefined;
     if (!jobId || typeof msg.projectId !== 'string') return 'ignored'; // projectId 없는 응답은 받지 않음
     if (msg.type === 'RESPONSE_RECEIVED') {
+      const targetJob = queue.get(jobId);
+      const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
+      // 이미지 생성 작업은 sceneId까지 반드시 일치해야 수락
+      if (targetJob?.kind === 'image' && (!msgSceneId || msgSceneId !== targetJob.sceneId)) {
+        return 'ignored';
+      }
       const complete = !!payload.complete;
       const r = await queue.onResponse(jobId, msg.requestId, String(payload.text ?? ''), complete, {
-        projectId: msg.projectId, codeBlocks: Array.isArray(payload.codeBlocks) ? payload.codeBlocks.map(String) : [], isolation: payload.isolation as string | undefined
+        projectId: msg.projectId,
+        sceneId: msgSceneId,
+        codeBlocks: Array.isArray(payload.codeBlocks) ? payload.codeBlocks.map(String) : [],
+        isolation: payload.isolation as string | undefined,
+        imageDataUrl: typeof payload.imageDataUrl === 'string' ? payload.imageDataUrl : undefined,
+        imageUrl: typeof payload.imageUrl === 'string' ? payload.imageUrl : undefined,
+        downloadPath: typeof payload.downloadPath === 'string' ? payload.downloadPath : undefined,
+        mimeType: typeof payload.mimeType === 'string' ? payload.mimeType : undefined
       });
       if (r === 'applied' && complete) {
         const job = queue.get(jobId);
         if (job && isAIStage(job.kind)) await applyCompleted(jobId);
+        else if (job && job.kind === 'image') await applyCompletedImage(jobId);
         else if (job) await queue.setOutcome(job.jobId, job.requestId, { outcome: 'received', phase: 'done' });
         void kick();
       }
       return r;
     }
     if (msg.type === 'JOB_PROGRESS') {
+      const targetJob = queue.get(jobId);
+      const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
+      if (targetJob?.kind === 'image' && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
+        return 'ignored';
+      }
       const stage = String(payload.stage || '');
       if (!RECEIVABLE_PHASES.has(stage)) return 'ignored';
       return queue.setPhase(jobId, msg.requestId, stage, (payload.info || {}) as Record<string, unknown>, msg.projectId);
     }
     if (msg.type === 'ERROR') {
+      const targetJob = queue.get(jobId);
+      const msgSceneId = (msg.sceneId || payload.sceneId) as string | undefined;
+      if (targetJob?.kind === 'image' && msgSceneId !== undefined && msgSceneId !== targetJob.sceneId) {
+        return 'ignored';
+      }
       const r = await queue.onRemoteError(jobId, msg.requestId, msg.projectId, String(payload.code || 'REMOTE_ERROR'), String(payload.message || ''), payload.partialText ? String(payload.partialText) : undefined);
       if (r === 'applied') void kick();
       return r;
@@ -185,10 +354,11 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     if (!job) return { success: false, message: '작업을 찾을 수 없습니다.' };
     if (job.state === 'completed') {
       if (isAIStage(job.kind) && job.outcome !== 'applied') await applyCompleted(jobId);
+      else if (job.kind === 'image' && job.outcome !== 'applied') await applyCompletedImage(jobId);
       return { success: true, message: '이미 응답을 받았습니다.' };
     }
     if (job.state !== 'needs_confirmation' && job.state !== 'waiting') return { success: false, message: '응답을 다시 받을 수 있는 상태가 아닙니다.' };
-    const r = await adapter.requestResult({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId });
+    const r = await adapter.requestResult({ jobId: job.jobId, requestId: job.requestId, projectId: job.projectId, ...(job.sceneId ? { sceneId: job.sceneId } : {}) });
     return { success: r.ok, message: r.message };
   }
 
@@ -204,6 +374,6 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
 
   /** 사용자가 「이 결과 적용」: 보류(stale)된 결과만 force. expectedStage가 다르면 거부(다른 단계 화면에서 적용 불가) */
   const applyResult = (jobId: string, expectedStage?: AIStage) => { const j = queue.get(jobId); return applyCompleted(jobId, j?.outcome === 'stale', expectedStage); };
-  return { start, kick, applyCompleted, applyResult, handleMessage, fetchResult, onReconnect, provider };
+  return { start, startImage, kick, applyCompleted, applyCompletedImage, applyResult, handleMessage, fetchResult, onReconnect, provider };
 }
 export type AnalysisService = ReturnType<typeof createAnalysisService>;

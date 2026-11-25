@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
-import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveProject } from './storage';
+import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
@@ -69,6 +69,9 @@ function registerHandlers(){
   ipcMain.handle('gemini:analysis:latest',async(_event,projectId:string,stage?:string)=>jobQueue.latest(String(projectId),stageArg(stage))||null);
   ipcMain.handle('gemini:analysis:fetch',async(_event,jobId:string)=>analysis.fetchResult(String(jobId)));
   ipcMain.handle('gemini:analysis:apply',async(_event,jobId:string,stage?:string)=>analysis.applyResult(String(jobId),stage===undefined?undefined:stageArg(stage)));
+  ipcMain.handle('gemini:image:start',async(_event,projectId:string,sceneId:string)=>analysis.startImage(String(projectId),String(sceneId)));
+  ipcMain.handle('gemini:image:latest',async(_event,projectId:string,sceneId?:string)=>jobQueue.latest(String(projectId),'image',sceneId?String(sceneId):undefined)||null);
+  ipcMain.handle('gemini:image:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='image'));
   ipcMain.handle('gemini:probe',async()=>geminiAdapter.probe());
 }
 let analysis: AnalysisService;
@@ -84,7 +87,7 @@ function broadcastJobs(){
 }
 function setupGeminiAutomation(){
   analysis=createAnalysisService({
-    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject
+    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject, saveGeneratedImageAsset
     // 저장 결과는 job-update(outcome='applied', appliedRevision)로 renderer에 전달됩니다.
   });
   jobQueue.subscribe(broadcastJobs);

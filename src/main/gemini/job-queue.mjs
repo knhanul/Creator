@@ -3,10 +3,11 @@
  * Typed wrapper: job-queue.ts
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-const NON_EXECUTABLE = new Set(['image', 'video', 'music']);
+/** 아직 미구현된 생성 작업 종류 (Phase 5 MVP에서 image는 활성화, video·music은 후속) */
+const NON_EXECUTABLE = new Set(['video', 'music']);
 /** 같은 작품·같은 단계에서 새 요청을 막는 '진행 중' 상태 */
 const ACTIVE_STATES = new Set(['queued', 'dispatching', 'waiting', 'needs_confirmation', 'cancelling']);
 /** 전송 여부 불명 오류 코드 (사용자가 Gemini 화면에서 전송을 확인하면 재전송 없이 대기로 전환 가능) */
@@ -79,21 +80,26 @@ export class GeminiJobQueue {
   list() { return this.jobs.map(j => ({ ...j })); }
   get(jobId) { const j = this.jobs.find(x => x.jobId === jobId); return j ? { ...j } : undefined; }
 
-  /** 같은 작품·같은 종류의 진행 중 작업 (중복 요청 방지) */
-  findActive(projectId, kind) {
-    const j = this.jobs.filter(x => x.projectId === projectId && x.kind === kind && ACTIVE_STATES.has(x.state)).pop();
+  /** 같은 작품·같은 종류(이미지는 같은 sceneId까지)의 진행 중 작업 (중복 요청 방지) */
+  findActive(projectId, kind, sceneId) {
+    const j = this.jobs
+      .filter(x => x.projectId === projectId && x.kind === kind && (sceneId === undefined || x.sceneId === sceneId) && ACTIVE_STATES.has(x.state))
+      .pop();
     return j ? { ...j } : undefined;
   }
 
-  /** 같은 작품·같은 종류의 가장 최근 작업 */
-  latest(projectId, kind) {
-    const list = this.jobs.filter(x => x.projectId === projectId && (!kind || x.kind === kind));
+  /** 같은 작품·같은 종류(이미지는 sceneId 지정 가능)의 가장 최근 작업 */
+  latest(projectId, kind, sceneId) {
+    const list = this.jobs.filter(
+      x => x.projectId === projectId && (!kind || x.kind === kind) && (sceneId === undefined || x.sceneId === sceneId)
+    );
     const j = list[list.length - 1];
     return j ? { ...j } : undefined;
   }
 
   async enqueue(input) {
-    const executable = !NON_EXECUTABLE.has(input.kind);
+    const missingSceneForImage = input.kind === 'image' && (!input.sceneId || !String(input.sceneId).trim());
+    const executable = !NON_EXECUTABLE.has(input.kind) && !missingSceneForImage;
     const now = new Date().toISOString();
     const job = {
       jobId: randomUUID(),
@@ -109,8 +115,12 @@ export class GeminiJobQueue {
       cancelRequested: false,
       externalCancelConfirmed: false,
       sendConfirmed: false,
-      errorCode: executable ? undefined : 'NOT_IMPLEMENTED',
-      errorMessage: executable ? undefined : '이 생성 기능은 아직 검증되지 않아 실행할 수 없습니다.',
+      errorCode: executable ? undefined : (missingSceneForImage ? 'SCENE_ID_REQUIRED' : 'NOT_IMPLEMENTED'),
+      errorMessage: executable
+        ? undefined
+        : missingSceneForImage
+        ? '이미지 생성 작업에는 장면 ID(sceneId)가 필요합니다.'
+        : '이 생성 기능은 아직 검증되지 않아 실행할 수 없습니다.',
       phase: executable ? 'queued' : 'error',
       needsUser: false,
     };
@@ -184,12 +194,13 @@ export class GeminiJobQueue {
     }
   }
 
-  /** 응답 수신. jobId·requestId(그리고 주어지면 projectId)가 모두 맞아야 반영합니다. */
+  /** 응답 수신. jobId·requestId(그리고 주어지면 projectId·sceneId)가 모두 맞아야 반영합니다. */
   async onResponse(jobId, requestId, text, complete, extra = {}) {
     const job = this.jobs.find(j => j.jobId === jobId);
     if (!job) return 'ignored';
     if (job.requestId !== requestId) return 'ignored';
     if (extra.projectId !== undefined && extra.projectId !== job.projectId) return 'ignored';
+    if (job.sceneId && extra.sceneId !== undefined && extra.sceneId !== job.sceneId) return 'ignored';
     if (job.state === 'completed' || job.state === 'cancelled' || job.state === 'failed') return 'ignored';
     if (job.state !== 'waiting' && job.state !== 'needs_confirmation' && job.state !== 'dispatching') return 'ignored';
     if (complete) {
@@ -199,6 +210,10 @@ export class GeminiJobQueue {
       job.resultText = text;
       job.codeBlocks = Array.isArray(extra.codeBlocks) ? extra.codeBlocks.map(String) : [];
       if (extra.isolation) job.isolation = extra.isolation;
+      if (extra.imageDataUrl) job.imageDataUrl = String(extra.imageDataUrl);
+      if (extra.imageUrl) job.imageUrl = String(extra.imageUrl);
+      if (extra.downloadPath) job.downloadPath = String(extra.downloadPath);
+      if (extra.mimeType) job.imageMimeType = String(extra.mimeType);
       if (job.sendConfirmed === false) job.sendConfirmed = true; // 응답이 왔다는 것은 전송되었다는 증거
       job.completedAt = new Date().toISOString();
       job.updatedAt = job.completedAt;
@@ -389,9 +404,14 @@ export class GeminiJobQueue {
     const body = JSON.stringify(snapshot, null, 2);
     this.writing = this.writing.then(async () => {
       await mkdir(dirname(this.storePath), { recursive: true });
-      const tmp = this.storePath + '.tmp';
+      const tmp = this.storePath + '.tmp-' + randomUUID();
       await writeFile(tmp, body, 'utf8');
-      await rename(tmp, this.storePath);
+      try {
+        await rename(tmp, this.storePath);
+      } catch {
+        await copyFile(tmp, this.storePath);
+        await unlink(tmp).catch(() => {});
+      }
     });
     await this.writing;
     for (const fn of this.listeners) { try { fn(); } catch { /* ignore */ } }

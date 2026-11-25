@@ -12,6 +12,27 @@ import { makeAIPrompt } from './prompts';
 export const AI_STAGES: readonly AIStage[] = ['analysis', 'storyboard', 'prompt', 'editplan'] as const;
 export const isAIStage = (k: unknown): k is AIStage => typeof k === 'string' && (AI_STAGES as readonly string[]).includes(k);
 
+/** Phase 5 MVP: 장면의 imagePrompt(+negativePrompt·화면비)로 Gemini 웹 이미지 생성 요청문을 만든다 */
+export function makeImageGenerationPrompt(project: StudioProject, sceneId: string): string {
+  const scene = project.scenes.find(s => s.id === sceneId);
+  if (!scene) {
+    throw new Error(`장면(${sceneId})을 찾을 수 없습니다.`);
+  }
+  const basePrompt = (scene.imagePrompt || '').trim();
+  if (!basePrompt) {
+    throw new Error(`${scene.id} 장면의 이미지 생성 프롬프트가 비어 있습니다. 생성 프롬프트 단계에서 먼저 프롬프트를 준비해 주세요.`);
+  }
+  const lines = [
+    `Generate a single illustration image (${project.brief.aspectRatio} aspect ratio).`,
+    `Image prompt: ${basePrompt}`
+  ];
+  if (scene.negativePrompt?.trim()) {
+    lines.push(`Negative prompt (avoid): ${scene.negativePrompt.trim()}`);
+  }
+  lines.push('Important: Do not render any text, letters, subtitles, or watermarks inside the image.');
+  return lines.join('\n');
+}
+
 export interface StageMeta {
   name: string; schema: string; startLabel: string; restartLabel: string; doneLabel: string; resultLabel: string;
   /** 다시 실행하면 사라지는 것 (확인 창 문구). null = 확인 없이 시작 */
@@ -187,7 +208,11 @@ export const ERROR_GUIDE: Record<string, { cause: string; fix: string }> = {
   NEWER_RESULT: { cause: '이 요청 이후 같은 단계의 다른 결과가 이미 적용되어 있습니다.', fix: '덮어쓰려면 「이 결과 적용」을 누르세요. 그대로 두려면 닫으면 됩니다.' },
   NEWER_ANALYSIS: { cause: '이 요청 이후 다른 기획 분석 결과가 이미 적용되어 있습니다.', fix: '덮어쓰려면 「이 결과 적용」을 누르세요. 그대로 두려면 닫으면 됩니다.' },
   PROJECT_NOT_FOUND: { cause: '요청한 작품을 찾을 수 없습니다(보관·삭제됨).', fix: '작품을 복원한 뒤 다시 요청해 주세요.' },
-  SAVE_FAILED: { cause: '결과를 작품 파일에 저장하지 못했습니다.', fix: '작품을 다시 열고 「응답 다시 가져오기」 또는 「이 결과 적용」을 눌러 주세요.' }
+  SAVE_FAILED: { cause: '결과를 작품 파일에 저장하지 못했습니다.', fix: '작품을 다시 열고 「응답 다시 가져오기」 또는 「이 결과 적용」을 눌러 주세요.' },
+  NO_IMAGE_GENERATED: { cause: 'Gemini가 이미지를 생성하지 않고 텍스트로만 응답했습니다.', fix: '프롬프트가 이미지 생성 정책에 저촉되었거나 모델이 텍스트로만 답했을 수 있습니다. Gemini 탭의 응답을 확인하고 프롬프트를 다듬은 뒤 다시 시도해 주세요.' },
+  IMAGE_DATA_MISSING: { cause: 'Gemini에서 이미지 생성은 감지되었으나 이미지 파일 데이터를 가져오지 못했습니다.', fix: 'Gemini 탭에서 생성된 이미지를 직접 다운로드한 뒤 「미디어 가져오기」로 프로젝트에 추가해 주세요.' },
+  SCENE_NOT_FOUND: { cause: '이미지를 연결할 대상 장면을 프로젝트에서 찾을 수 없습니다.', fix: '스토리보드에서 장면 목록을 확인한 뒤 다시 시도해 주세요.' },
+  EMPTY_IMAGE_PROMPT: { cause: '이 장면의 이미지 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계에서 해당 장면의 이미지 프롬프트를 먼저 생성하거나 입력해 주세요.' }
 };
 
 export function guideFor(job: GeminiJobRecord | null | undefined): { cause: string; fix: string } | null {

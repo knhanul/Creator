@@ -33,6 +33,11 @@ const api:StudioAPI={
       fetchResult:(jobId)=>ipcRenderer.invoke('gemini:analysis:fetch',jobId),
       applyResult:(jobId,stage)=>ipcRenderer.invoke('gemini:analysis:apply',jobId,stage)
     },
+    image:{
+      start:(projectId,sceneId)=>ipcRenderer.invoke('gemini:image:start',projectId,sceneId),
+      latest:(projectId,sceneId)=>ipcRenderer.invoke('gemini:image:latest',projectId,sceneId),
+      listForProject:(projectId)=>ipcRenderer.invoke('gemini:image:list',projectId)
+    },
     probe:()=>ipcRenderer.invoke('gemini:probe'),
     onJobUpdate:(cb)=>{const h=(_e:unknown,job:GeminiJobRecord)=>cb(job);ipcRenderer.on('gemini:job-update',h);return()=>{ipcRenderer.removeListener('gemini:job-update',h);};}
   }

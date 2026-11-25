@@ -110,7 +110,7 @@ export type SendState = 'sent' | 'not_sent' | 'uncertain';
 export interface PromptSubmitRequest extends BaseMessage {
   type: 'PROMPT_SUBMIT_REQUEST';
   /** marker: Gemini 대화에서 이번 요청의 질문 블록을 식별하는 표식(프롬프트 끝에 한 줄로 붙음) */
-  payload: { prompt: string; stage: string; jobId: string; projectId: string; marker: string };
+  payload: { prompt: string; stage: string; jobId: string; projectId: string; sceneId?: string; marker: string };
 }
 
 export interface PromptSubmitResult extends BaseMessage {
@@ -123,7 +123,20 @@ export interface PromptSubmitResult extends BaseMessage {
 
 export interface ResponseReceived extends BaseMessage {
   type: 'RESPONSE_RECEIVED';
-  payload: { jobId: string; text: string; complete: boolean; codeBlocks?: string[]; replayed?: boolean; isolation?: string };
+  payload: {
+    jobId: string;
+    sceneId?: string;
+    text: string;
+    complete: boolean;
+    codeBlocks?: string[];
+    replayed?: boolean;
+    isolation?: string;
+    /** 이미지 생성 완료 시 확보된 데이터 URL(data:image/...) · 원본 URL · 또는 Chrome 다운로드 로컬 경로 */
+    imageDataUrl?: string;
+    imageUrl?: string;
+    downloadPath?: string;
+    mimeType?: string;
+  };
 }
 
 export interface JobProgress extends BaseMessage {

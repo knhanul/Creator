@@ -150,6 +150,7 @@ export class GeminiAdapter {
       stage: job.stage,
       jobId: job.jobId,
       projectId: job.projectId,
+      ...(job.sceneId ? { sceneId: job.sceneId } : {}),
       marker: makeRequestMarker(requestId)
     }, { requestId, projectId: job.projectId, jobId: job.jobId, sceneId: job.sceneId });
     let sent = false;

@@ -43,13 +43,23 @@ await test('큐 등록 및 영구 저장', async () => {
   assert.equal(raw.jobs.length, 1);
 });
 
-await test('미구현 생성 기능은 실행 불가로 실패 처리', async () => {
+await test('미구현 생성 기능(video·music) 및 sceneId 없는 image는 실행 불가로 실패 처리, sceneId 있는 image는 큐 등록', async () => {
   const q = new GeminiJobQueue(join(dir, 'b.json'));
   await q.load();
-  const img = await q.enqueue({ projectId: 'p1', kind: 'image', prompt: 'img', sceneId: 's1' });
-  assert.equal(img.executable, false);
-  assert.equal(img.state, 'failed');
-  assert.equal(img.errorCode, 'NOT_IMPLEMENTED');
+  const vid = await q.enqueue({ projectId: 'p1', kind: 'video', prompt: 'vid', sceneId: 's1' });
+  assert.equal(vid.executable, false);
+  assert.equal(vid.state, 'failed');
+  assert.equal(vid.errorCode, 'NOT_IMPLEMENTED');
+
+  const noSceneImg = await q.enqueue({ projectId: 'p1', kind: 'image', prompt: 'img' });
+  assert.equal(noSceneImg.executable, false);
+  assert.equal(noSceneImg.state, 'failed');
+  assert.equal(noSceneImg.errorCode, 'SCENE_ID_REQUIRED');
+
+  const okImg = await q.enqueue({ projectId: 'p1', kind: 'image', prompt: 'img', sceneId: 'S01' });
+  assert.equal(okImg.executable, true);
+  assert.equal(okImg.state, 'queued');
+  assert.equal(okImg.sceneId, 'S01');
 });
 
 await test('동시에 하나의 작업만 dispatch', async () => {
