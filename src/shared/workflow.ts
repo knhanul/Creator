@@ -16,8 +16,18 @@ export function makeProject(id: string, input: Brief, timestamp = now()): Studio
     assembly: { clips: [], subtitleMode: 'original', transitionDefault: 'fade', bgmAssetId: null },
     originalHistory: [] };
 }
+/** 「새 작품」을 누르면 바로 만들어지는 빈 작품의 기본값 */
+export const NEW_DRAFT_BRIEF: Brief = { ...DEFAULT_BRIEF, genre: 'poetry' };
+export const UNTITLED = '제목 없는 작품';
 export function summarize(p: StudioProject): ProjectSummary {
-  return { id: p.id, title: p.brief.title || '제목 없는 작품', genre: p.brief.genre, audience: p.brief.audience, updatedAt: p.updatedAt, createdAt: p.createdAt, sceneCount: p.scenes.length, mediaCount: p.assets.length, archived: p.archived };
+  return { id: p.id, title: p.brief.title.trim() || UNTITLED, genre: p.brief.genre, audience: p.brief.audience, updatedAt: p.updatedAt, createdAt: p.createdAt, sceneCount: p.scenes.length, mediaCount: p.assets.length, archived: p.archived, draft: !stageComplete(p, 'brief') };
+}
+/** 아무것도 입력하지 않은 빈 작품인가 (이럴 때만 자동으로 지움) */
+export function isEmptyDraft(p: StudioProject): boolean {
+  const b = p.brief;
+  return !b.title.trim() && !b.originalText.trim() && !b.author.trim() && !b.source.trim() && !b.sourceUrl.trim()
+    && !b.originalMeta && !p.analysis && p.scenes.length === 0 && p.assets.length === 0
+    && !(p.originalHistory && p.originalHistory.length) && !p.archived;
 }
 function isRecord(x: unknown): x is Record<string, unknown> { return !!x && typeof x === 'object' && !Array.isArray(x); }
 function str(x: unknown, label: string): string { if (typeof x !== 'string' || !x.trim()) throw Error(`${label}: 비어 있거나 문자열이 아닙니다.`); return x.trim(); }

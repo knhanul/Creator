@@ -30,7 +30,10 @@ export interface Brief {
   aspectRatio: '16:9' | '9:16' | '1:1';
   /** 확정된 기준 원문 출처·저작권·검증·해시·버전 정보 (기존 프로젝트 하위 호환: optional) */
   originalMeta?: OriginalSourceMeta;
+  /** 자동으로 채운 칸과 그 출처 이름 (사용자가 고치면 해당 칸 표시는 사라짐 · 기존 프로젝트 하위 호환: optional) */
+  autoFilled?: Partial<Record<AutoFillField, string>>;
 }
+export type AutoFillField = 'title' | 'author' | 'source' | 'sourceUrl' | 'originalText';
 export interface Choice { id: string; label: string; description: string }
 export interface AnalysisResult { schema: 'creator.analysis.v1'; summary: string; emotion: string; keywords: string[]; styles: Choice[]; directions: Choice[]; cautions: string[]; }
 export interface StoryScene { id: string; title: string; narration: string; visual: string; durationSec: number; kind: 'image' | 'video'; }
@@ -56,7 +59,7 @@ export interface StudioProject {
   /** 기준 원문 변경 후 재검토가 필요한 후속 단계 표시 (기존 프로젝트 하위 호환: optional) */
   reviewNeeded?: StageReviewFlags;
 }
-export interface ProjectSummary { id: string; title: string; genre: Genre; audience: Audience; updatedAt: string; createdAt: string; sceneCount: number; mediaCount: number; archived: boolean; }
+export interface ProjectSummary { id: string; title: string; genre: Genre; audience: Audience; updatedAt: string; createdAt: string; sceneCount: number; mediaCount: number; archived: boolean; /** 제목·원문이 아직 비어 있는 작성 중 작품 */ draft?: boolean; }
 export interface AppInfo { version: string; dataRoot: string; platform: string; }
 export interface OperationResult { success: boolean; message?: string; }
 export interface GeminiStatus {
@@ -111,6 +114,8 @@ export type StudioAPI = {
     save(project: StudioProject): Promise<StudioProject>;
     archive(projectId: string, archive: boolean): Promise<StudioProject>;
     exportFolder(projectId: string): Promise<string | null>;
+    /** 아무것도 입력하지 않은 작성 중 작품이면 지움 (지웠으면 true) */
+    discardDraft(projectId: string): Promise<boolean>;
   };
   assets: { import(projectId: string, targetSceneId?: string): Promise<StudioProject | null>; reveal(projectId: string, assetId: string): Promise<void>; };
   clipboard: { write(text: string): Promise<void> };

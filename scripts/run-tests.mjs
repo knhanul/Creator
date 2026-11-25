@@ -41,4 +41,32 @@ pReady.assets=pReady.scenes.map((s,i)=>({id:`media-${i}`,kind:s.kind,name:`scene
 pReady.scenes=pReady.scenes.map((s,i)=>({...s,assetId:`media-${i}`}));
 test('더빙 v2 초안 프로젝트·SRT 생성',()=>{const draft=toComposerDraft(pReady);assert.ok(draft);assert.equal(draft.project.version,2);assert.equal(draft.project.clips.length,3);assert.ok(draft.srt.includes('-->'));});
 
+
+// ── 리모델링: 새 작품(빈 작품) · 자동 저장 버전 묶기 · 단계 안내 ──
+const {isEmptyDraft,NEW_DRAFT_BRIEF,summarize}=loadTS(join(root,'src/shared/workflow.ts'));
+const {applyBriefAutosave,userFieldsToOverwrite,clearAutoFilled}=loadTS(join(root,'src/shared/brief-edit.ts'));
+const {stepGuide,withRo}=loadTS(join(root,'src/shared/step-guide.ts'));
+test('받침에 맞춘 조사',()=>{assert.equal(withRo('기획 분석'),'기획 분석으로');assert.equal(withRo('스토리보드'),'스토리보드로');assert.equal(withRo('최종 편집안'),'최종 편집안으로');});
+const draft0=makeProject('22222222-2222-2222-2222-222222222222',NEW_DRAFT_BRIEF);
+test('빈 새 작품은 빈 작품으로 판정',()=>assert.equal(isEmptyDraft(draft0),true));
+test('빈 새 작품은 목록에서 작성 중·제목 없는 작품',()=>{const s=summarize(draft0);assert.equal(s.draft,true);assert.equal(s.title,'제목 없는 작품');});
+test('제목만 써도 빈 작품 아님(지우지 않음)',()=>assert.equal(isEmptyDraft({...draft0,brief:{...draft0.brief,title:'서시'}}),false));
+test('보관한 작품은 지우지 않음',()=>assert.equal(isEmptyDraft({...draft0,archived:true}),false));
+let s1=applyBriefAutosave(draft0,{...draft0.brief,title:'서시'},{continueSession:false});
+test('원문 없이 제목만 저장하면 버전 없음',()=>{assert.equal(s1.startedSession,false);assert.equal(s1.project.brief.originalMeta,undefined);assert.equal(s1.project.brief.title,'서시');});
+let s2=applyBriefAutosave(s1.project,{...s1.project.brief,originalText:'죽는 날까지'},{continueSession:false});
+test('원문을 처음 입력하면 v1 확정',()=>{assert.equal(s2.startedSession,true);assert.equal(s2.project.brief.originalMeta.version,1);assert.equal((s2.project.originalHistory||[]).length,0);});
+let s3=applyBriefAutosave(s2.project,{...s2.project.brief,originalText:'죽는 날까지 하늘을'},{continueSession:true});
+test('같은 편집 중 이어 쓴 원문은 버전이 늘지 않음',()=>{assert.equal(s3.project.brief.originalMeta.version,1);assert.equal(s3.project.brief.originalText,'죽는 날까지 하늘을');assert.equal((s3.project.originalHistory||[]).length,0);});
+let s4=applyBriefAutosave(s3.project,{...s3.project.brief,originalText:'죽는 날까지 하늘을 우러러'},{continueSession:false});
+test('새 편집에서 고치면 v2 + 이전 원문 이력 보존',()=>{assert.equal(s4.project.brief.originalMeta.version,2);assert.equal(s4.project.originalHistory.length,1);assert.equal(s4.project.originalHistory[0].originalText,'죽는 날까지 하늘을');});
+test('원문 외 칸만 바꾸면 확정 정보 유지',()=>{const r=applyBriefAutosave(s4.project,{...s4.project.brief,audience:'adult'},{continueSession:false});assert.equal(r.project.brief.originalMeta.version,2);assert.equal(r.project.brief.audience,'adult');});
+test('직접 쓴 칸은 덮어쓰기 확인 대상',()=>assert.deepEqual(userFieldsToOverwrite({...NEW_DRAFT_BRIEF,title:'내 제목',author:''},{title:'진달래꽃',author:'김소월'}),['title']));
+test('자동 입력한 칸은 확인 없이 바꿈',()=>assert.deepEqual(userFieldsToOverwrite({...NEW_DRAFT_BRIEF,title:'진달래꽃',autoFilled:{title:'위키문헌'}},{title:'진달래꽃 (원문)'}),[]));
+test('고친 칸은 자동 입력 표시 제거',()=>assert.equal(clearAutoFilled({...NEW_DRAFT_BRIEF,autoFilled:{title:'위키문헌'}},'title').autoFilled,undefined));
+test('작품 정보 단계: 비면 다음 버튼 잠금 + 빠진 항목 안내',()=>{const g=stepGuide(draft0,'brief');assert.equal(g.ready,false);assert.deepEqual(g.missing,['작품 제목','낭독할 원문']);assert.equal(g.next,'analysis');});
+test('작품 정보 단계: 채우면 준비 완료',()=>{const g=stepGuide(s4.project,'brief');assert.equal(g.ready,true);assert.ok(g.hint.startsWith('준비 완료'));});
+test('기획 분석 단계: 화풍·연출 고르면 준비 완료',()=>{const g=stepGuide(p1,'analysis');assert.equal(g.ready,true);});
+test('더빙 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
+
 console.log(`${checks} tests completed`);

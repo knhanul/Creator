@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
-import { archiveProject, createProject, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
+import { archiveProject, cleanupEmptyDrafts, createProject, discardDraftIfEmpty, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
@@ -28,6 +28,7 @@ function registerHandlers(){
   ipcMain.handle('projects:read',async(_event,id:string)=>readProject(id));
   ipcMain.handle('projects:save',async(_event,p)=>saveProject(p));
   ipcMain.handle('projects:archive',async(_event,id:string,archive:boolean)=>archiveProject(id,archive));
+  ipcMain.handle('projects:discard-draft',async(_event,id:string)=>discardDraftIfEmpty(id));
   ipcMain.handle('projects:export',async(_event,id:string)=>exportFolder(id));
   ipcMain.handle('assets:import',async(_event,id:string,targetSceneId?:string)=>importAssets(id,targetSceneId?String(targetSceneId):undefined));
   ipcMain.handle('assets:reveal',async(_event,id:string,assetId:string)=>revealAsset(id,assetId));
@@ -105,7 +106,7 @@ function setupGeminiAutomation(){
 }
 let jobQueue: InstanceType<typeof GeminiJobQueue>;
 async function createWindow(){
-  win=new BrowserWindow({width:1500,height:960,minWidth:1080,minHeight:720,show:false,title:BRAND.productKo,
+  win=new BrowserWindow({width:1500,height:960,minWidth:1280,minHeight:720,show:false,title:BRAND.productKo,
     backgroundColor: '#F8FAFC', // Default light-blue; renderer applies stored theme before paint
     autoHideMenuBar:true,icon:app.isPackaged?join(process.resourcesPath,'app.png'):join(app.getAppPath(),'resources/app.png'),
     webPreferences:{preload:join(__dirname,'../preload/index.js'),sandbox:false,nodeIntegration:false,contextIsolation:true,webSecurity:true}});
@@ -131,6 +132,7 @@ app.whenReady().then(async()=>{
       const file=resolveAssetPath(projectId,a.relativePath);return net.fetch(pathToFileURL(file).toString());
     }catch{return new Response('Not found',{status:404});}
   });
+  await cleanupEmptyDrafts().catch(err=>console.error('Draft cleanup failed',err));
   registerHandlers();await createWindow();
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)void createWindow();});
 }).catch(err=>{console.error(err);void dialog.showErrorBox('실행 실패',String(err));app.quit();});

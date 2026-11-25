@@ -1,9 +1,9 @@
 import { app, dialog, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { cp, copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { cp, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { AssetKind, Brief, StudioProject, ProjectSummary } from '../shared/types';
-import { makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
+import { isEmptyDraft, makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
 import { migrateProjectDocument } from '../shared/original-versioning';
 import { INTERNAL } from '../shared/brand';
 
@@ -41,8 +41,9 @@ async function persist(p:StudioProject):Promise<void>{
   try { await rename(temp,target); }
   catch(err) { const { unlink }=await import('node:fs/promises'); await copyFile(temp,target);await unlink(temp); }
 }
+/** 「새 작품」: 입력 창 없이 바로 빈 작품(작성 중)을 만들고, 내용은 작품 정보 화면에서 채운다. */
 export async function createProject(brief:Brief):Promise<StudioProject>{
-  if(!brief.title.trim()||!brief.originalText.trim()) throw Error('제목과 원문을 입력하세요.');
+  if(!brief||typeof brief!=='object') throw Error('작품 정보 형식이 올바르지 않습니다.');
   await ensureRoot();const p=makeProject(randomUUID(),brief);
   await mkdir(projectDir(p.id),{recursive:true});await persist(p);return p;
 }
@@ -54,6 +55,25 @@ export async function saveProject(p:StudioProject):Promise<StudioProject>{
   for(const asset of p.assets){ if(!current.assets.some(x=>x.id===asset.id && x.relativePath===asset.relativePath)) throw Error('미디어 파일은 가져오기 기능으로만 등록할 수 있습니다.'); }
   const next:StudioProject={...p,revision:current.revision+1,updatedAt:new Date().toISOString()};
   await persist(next);return next;
+}
+/** 아무것도 입력하지 않은 작성 중 작품만 지운다. 하나라도 입력했으면 지우지 않는다. */
+export async function discardDraftIfEmpty(id:string):Promise<boolean>{
+  let p:StudioProject;
+  try { p=await readProject(id); } catch { return false; }
+  if(!isEmptyDraft(p)) return false;
+  await rm(projectDir(id),{recursive:true,force:true});
+  return true;
+}
+/** 앱을 닫는 사이 남은 빈 작품 정리 (시작할 때 한 번) */
+export async function cleanupEmptyDrafts():Promise<number>{
+  await ensureRoot();
+  const { readdir }=await import('node:fs/promises');
+  let removed=0;
+  for(const dir of await readdir(projectsRoot(),{withFileTypes:true})){
+    if(!dir.isDirectory()||!projectRegex.test(dir.name))continue;
+    try{ if(await discardDraftIfEmpty(dir.name)) removed++; }catch(err){ console.error('Draft cleanup failed',dir.name,err); }
+  }
+  return removed;
 }
 export async function archiveProject(id:string,archive:boolean):Promise<StudioProject>{
   const p=await readProject(id);return saveProject({...p,archived:archive});
