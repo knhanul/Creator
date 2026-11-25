@@ -43,12 +43,15 @@
       S('button[aria-label*="전송"]', '한국어 UI 변형 추정 (진단 필요)'),
       S('button.send-button:not(.stop)', '[A][C] 클래스 — 대체 수단')
     ],
-    /** 응답 생성 중 표시(중지 버튼). 보이면 "생성 중"으로 판단 */
+    /** 응답 생성 중 표시(중지 버튼). 보이면 "생성 중"으로 판단
+     *  (사이드바 '중지' 포함 대화 제목 등 오탐 방지를 위해 "중지" 단독 부분 일치는 사용하지 않음) */
     stopButton: [
       S('button[data-test-id="stop-button"]', '[B] data-test-id'),
-      S('button[aria-label*="Stop" i]', '[B] 영문 "Stop response"'),
-      S('button[aria-label*="중지"]', '한국어 UI "대답 생성 중지" 추정 (진단 필요)'),
-      S('button[aria-label*="멈추"]', '한국어 UI 변형 추정 (진단 필요)'),
+      S('button[aria-label="Stop response" i]', '[B] 영문 정확 일치'),
+      S('button[aria-label*="Stop generating" i]', '영문 "Stop generating"'),
+      S('button[aria-label="대답 생성 중지"]', '한국어 UI 정확 일치'),
+      S('button[aria-label="응답 중지"]', '한국어 UI 정확 일치'),
+      S('button[aria-label*="생성 중지"]', '한국어 UI "생성 중지" 부분 일치'),
       S('button.send-button.stop', '클래스 — 대체 수단')
     ],
     /** 대화의 사용자 질문 블록 */

@@ -199,6 +199,28 @@ await test('Gemini가 이전 답변 생성 중이면 GEMINI_BUSY', async () => {
   assert.equal(r.errorCode, 'GEMINI_BUSY');
 });
 
+await test('사이드바 "중지" 포함 대화 제목 더보기 버튼은 GEMINI_BUSY 오탐하지 않음', async () => {
+  const { g, doc } = setup(html, { intro: '정상 응답' });
+  const nav = doc.createElement('nav');
+  nav.setAttribute('aria-label', '대화 목록');
+  const moreBtn = doc.createElement('button');
+  moreBtn.setAttribute('aria-label', '낭중지추 유의어 안내 옵션 더보기');
+  moreBtn.innerHTML = '<mat-icon fonticon="more_vert">more_vert</mat-icon>';
+  nav.appendChild(moreBtn);
+  doc.body.prepend(nav);
+
+  // 전역에도 "중지" 포함 더보기 버튼이 있을 때 오탐하지 않아야 함
+  const strayMore = doc.createElement('button');
+  strayMore.setAttribute('aria-label', '중지된 작업 옵션 더보기');
+  doc.body.prepend(strayMore);
+
+  assert.equal(g.probe().summary.stopButton, null);
+  const r = await g.submit({ prompt: '테스트', marker });
+  assert.equal(r.sendState, 'sent');
+  const out = await g.watch(r.ctx);
+  assert.equal(out.ok, true);
+});
+
 await test('응답이 끝나지 않으면 RESPONSE_TIMEOUT(사용자 확인 필요)', async () => {
   const { g } = setup(html, { intro: '끝나지 않는 응답', neverFinish: true });
   const r = await g.submit({ prompt: '테스트', marker });

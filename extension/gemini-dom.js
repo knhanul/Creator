@@ -73,8 +73,92 @@
     function label(el) { return ((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('data-test-id') || '') + ' ' + (el.className && el.className.baseVal === undefined ? el.className : '')).trim(); }
     function isEnabled(el) { return !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }
     function findSend() { return find('sendButton', null, (el) => !STOP_LIKE.test(el.getAttribute('aria-label') || '') && !/\bstop\b/.test(String(el.className || ''))); }
-    function findStop() { return find('stopButton'); }
     function findComposer() { return find('composer', null, (el) => el.getAttribute('contenteditable') !== 'false'); }
+
+    /**
+     * 사이드바 '중지' 포함 제목 오탐 방지:
+     * 사이드바·대화 목록·더보기(more_vert) 메뉴 버튼은 절대 응답 생성 중지 버튼으로 보지 않는다.
+     */
+    function isNonStopMenuOrSidebar(el) {
+      if (!el) return true;
+      if (el.closest && el.closest('nav, aside, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav')) {
+        return true;
+      }
+      const aria = (el.getAttribute('aria-label') || '').trim();
+      if (/(더보기|more\s*options|more_vert|옵션|menu)/i.test(aria)) return true;
+      try {
+        const icons = el.querySelectorAll('mat-icon');
+        for (const ic of icons) {
+          const iconName = ((ic.getAttribute('fonticon') || '') + ' ' + (ic.textContent || '')).trim().toLowerCase();
+          if (/\b(?:more_vert|more_horiz|menu)\b/.test(iconName)) return true;
+        }
+      } catch { /* ignore */ }
+      return false;
+    }
+
+    /** 입력창(composer) 근처(같은 입력 영역 조상 4단계 이내)에 있는지 확인 */
+    function isNearComposer(el, composerEl) {
+      if (!el || !composerEl) return false;
+      let cur = composerEl.parentElement;
+      for (let depth = 0; depth < 4 && cur; depth++) {
+        const tag = (cur.tagName || '').toUpperCase();
+        if (tag === 'BODY' || tag === 'MAIN' || tag === 'CHAT-APP') break;
+        if (cur.querySelector && cur.querySelector('model-response, user-query')) break;
+        if (cur.contains(el)) return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    }
+
+    /** 명확히 "응답 생성 중지" 의미의 버튼인지 확인 */
+    function isExplicitStopButton(el) {
+      if (!el) return false;
+      const testId = (el.getAttribute('data-test-id') || '').trim();
+      if (testId === 'stop-button') return true;
+      if (el.classList && el.classList.contains('send-button') && el.classList.contains('stop')) return true;
+      const aria = (el.getAttribute('aria-label') || '').trim();
+      return /^(?:stop response|stop generating.*|대답 생성 중지|응답 중지|응답 생성 중지)$/i.test(aria);
+    }
+
+    function hasRenderSize(el) {
+      // 실제 브라우저(레이아웃 엔진 활성)에서는 크기 0x0 요소 제외; jsdom 모형(clientWidth===0)에서는 생략
+      if (doc.documentElement && doc.documentElement.clientWidth > 0) {
+        return el.offsetWidth > 0 && el.offsetHeight > 0;
+      }
+      return true;
+    }
+
+    /**
+     * 사이드바 '중지' 포함 제목 오탐 방지:
+     * 실제 입력창 근처의 크기 있는 중지 버튼 또는 명확한 stop-button만 GEMINI_BUSY로 인정한다.
+     */
+    function findStop() {
+      const comp = findComposer();
+      const scope = comp ? (() => {
+        let cur = comp.el.parentElement;
+        let best = null;
+        for (let depth = 0; depth < 4 && cur; depth++) {
+          const tag = (cur.tagName || '').toUpperCase();
+          if (tag === 'BODY' || tag === 'MAIN' || tag === 'CHAT-APP') break;
+          if (cur.querySelector && cur.querySelector('model-response, user-query')) break;
+          best = cur;
+          cur = cur.parentElement;
+        }
+        return best;
+      })() : null;
+
+      const filter = (el) => {
+        if (isNonStopMenuOrSidebar(el)) return false;
+        if (!hasRenderSize(el)) return false;
+        return isNearComposer(el, comp && comp.el) || isExplicitStopButton(el);
+      };
+
+      if (scope) {
+        const near = find('stopButton', scope, filter);
+        if (near) return near;
+      }
+      return find('stopButton', null, (el) => !isNonStopMenuOrSidebar(el) && hasRenderSize(el) && isExplicitStopButton(el));
+    }
 
     function composerText(el) {
       if (!el) return '';
