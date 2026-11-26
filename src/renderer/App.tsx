@@ -12,6 +12,7 @@ import {BRAND} from '../shared/brand';
 import brandLogo from './assets/brand-logo.svg?url';
 import {AUDIENCES,GENRES,NEW_DRAFT_BRIEF,STAGE_ORDER,UNTITLED,isEmptyDraft,readyForHandoff,stageComplete} from '../shared/workflow';
 import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,getProjectBgmPrompt,guideFor,isAIStage,makeImageGenerationPrompt,makeMusicGenerationPrompt,makeVideoGenerationPrompt,phaseView} from '../shared/gemini-analysis';
+import {findSceneReferenceImage} from '../shared/reference-image';
 import type {AIStage,Brief,Genre,MediaAsset,ProjectSummary,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
 import {AIDock,type AINavTarget} from './components/AIDialog';
@@ -218,13 +219,14 @@ function App(){
       flash(r.reused?(r.message||`${sceneId} 이미지 생성 작업이 이미 진행 중입니다.`):`${sceneId} 장면 이미지 생성 요청을 Gemini 작업 큐에 등록했습니다.`,'info');
     }catch(e){flash(String(e),'error');}
   };
-  const startSceneVideo=async(sceneId:string)=>{
+  const startSceneVideo=async(sceneId:string,options?:{useReferenceImage?:boolean})=>{
     if(!project)return;
     try{
-      const r=await window.studio.gemini.video.start(project.id,sceneId);
+      const r=await window.studio.gemini.video.start(project.id,sceneId,options);
       if(!r.ok){flash(r.message||'동영상 생성을 시작하지 못했습니다.','error');return;}
       if(r.job&&r.job.sceneId)setVideoJobs(o=>({...o,[r.job!.sceneId!]:r.job!}));
-      flash(r.reused?(r.message||`${sceneId} 동영상 생성 작업이 이미 진행 중입니다.`):`${sceneId} 장면 동영상 생성 요청을 Gemini 작업 큐에 등록했습니다.`,'info');
+      const viaRef=!!options?.useReferenceImage;
+      flash(r.reused?(r.message||`${sceneId} 동영상 생성 작업이 이미 진행 중입니다.`):`${sceneId} 장면 ${viaRef?'기준 이미지로 동영상':'동영상'} 생성 요청을 Gemini 작업 큐에 등록했습니다.`,'info');
     }catch(e){flash(String(e),'error');}
   };
   const startProjectMusic=async()=>{
@@ -247,7 +249,7 @@ function App(){
   };
   const copySceneVideoPrompt=async(sceneId:string)=>{
     if(!project)return;
-    try{await copy(makeVideoGenerationPrompt(project,sceneId));}
+    try{await copy(makeVideoGenerationPrompt(project,sceneId,{hasReferenceImage:!!findSceneReferenceImage(project,sceneId)}));}
     catch(e){
       const sc=project.scenes.find(x=>x.id===sceneId);
       if(sc?.videoPrompt?.trim())await copy(sc.videoPrompt.trim());
@@ -466,14 +468,20 @@ function App(){
                     const mainPv=phaseView(mainJob);const otherPv=phaseView(otherJob);
                     const mainPrompt=(isVideo?s.videoPrompt:s.imagePrompt)?.trim()||'';
                     const otherPrompt=(isVideo?s.imagePrompt:s.videoPrompt)?.trim()||'';
-                    const startMain=()=>isVideo?startSceneVideo(s.id):startSceneImage(s.id);
+                    const refImage=isVideo?findSceneReferenceImage(project,s.id):null;
+                    const videoLinked=isVideo&&linked?.kind==='video';
+                    const startMain=()=>isVideo?startSceneVideo(s.id,refImage?{useReferenceImage:true}:undefined):startSceneImage(s.id);
                     const startOther=()=>isVideo?startSceneImage(s.id):startSceneVideo(s.id);
+                    const startTextVideo=()=>startSceneVideo(s.id,{useReferenceImage:false});
                     const copyMain=()=>void (isVideo?copySceneVideoPrompt(s.id):copySceneImagePrompt(s.id));
                     const copyOther=()=>void (isVideo?copySceneImagePrompt(s.id):copySceneVideoPrompt(s.id));
                     const mainActive=busyOf(mainJob);const otherActive=busyOf(otherJob);
                     const mainWorking=mainActive&&!needsUserOf(mainPv);
                     const otherName=label[isVideo?'image':'video'].name;
-                    const onImport=async()=>{const res=await studio.importAssets(s.id);if(res){const linkedNow=res.scenes.find(x=>x.id===s.id)?.assetId;if(linkedNow)setActiveAsset(linkedNow);}};
+                    const onImport=async()=>{const res=await studio.importAssets(s.id);if(res){const linkedNow=res.scenes.find(x=>x.id===s.id)?.assetId||res.scenes.find(x=>x.id===s.id)?.referenceImageAssetId;if(linkedNow)setActiveAsset(linkedNow);}};
+                    const mainLabel=isVideo
+                      ?(refImage?(videoLinked?'기준 이미지로 동영상 다시 생성':'기준 이미지로 동영상 생성'):(videoLinked?'동영상 다시 생성':'Gemini로 동영상 생성'))
+                      :(linked?`${label[mainKind].name} 다시 생성`:'Gemini로 이미지 생성');
                     return <div key={s.id} className={`scene-image-gen-row ${linked?'has-asset':''}`}>
                       <div className="scene-image-gen-thumb" onClick={()=>{if(linked)setActiveAsset(linked.id);}}>
                         <Photo project={project} asset={linked}/>
@@ -483,6 +491,7 @@ function App(){
                           <strong>{s.id} · {s.title}</strong>
                           <KindBadge kind={s.kind}/>
                           {linked?<Tag tone="success"><Check size={12}/> {linked.name}</Tag>:<Tag tone="muted">미디어 미연결</Tag>}
+                          {refImage&&<Tag tone="accent">기준 이미지 연결됨 · {refImage.name}</Tag>}
                           {mainPv&&<Tag tone={mainPv.tone==='danger'?'warning':mainPv.tone}>{label[mainKind].name} · {mainPv.label}</Tag>}
                           {otherPv&&<Tag tone={otherPv.tone==='danger'?'warning':otherPv.tone}>{otherName} · {otherPv.label}</Tag>}
                         </div>
@@ -495,12 +504,15 @@ function App(){
                           {!mainPrompt?<Button size="sm" kind="outline" onClick={()=>go('prompt')}>프롬프트 작성</Button>
                             :mainWorking?<Button size="sm" kind="secondary" disabled>{isVideo?<Film size={14}/>:<Sparkles size={14}/>} {mainPv?.label||'생성 중…'}</Button>
                             :mainActive?null
-                            :<Button size="sm" onClick={()=>void startMain()}>{isVideo?<Film size={14}/>:<Sparkles size={14}/>} {linked?`${label[mainKind].name} 다시 생성`:isVideo?'Gemini로 동영상 생성':'Gemini로 이미지 생성'}</Button>}
+                            :<Button size="sm" onClick={()=>void startMain()}>{isVideo?<Film size={14}/>:<Sparkles size={14}/>} {mainLabel}</Button>}
+                          {isVideo&&!refImage&&!mainWorking&&!mainActive&&<Button size="sm" kind="outline" disabled={!otherPrompt||otherActive} title={otherPrompt?'':'이미지 프롬프트가 없습니다'} onClick={()=>void startSceneImage(s.id)}><ImageIcon size={14}/> 기준 이미지 먼저 만들기</Button>}
                           <details className="more-menu">
                             <summary aria-label="더 보기" title="더 보기"><MoreHorizontal size={15}/></summary>
                             <div className="more-menu-list">
                               {mainPrompt&&<button type="button" onClick={copyMain}><Copy size={13}/> {label[mainKind].name} 프롬프트 복사</button>}
-                              <button type="button" disabled={!otherPrompt||otherActive} title={otherPrompt?'':`${otherName} 프롬프트가 없습니다`} onClick={()=>void startOther()}>{isVideo?<ImageIcon size={13}/>:<Film size={13}/>} {isVideo?'이미지로도 만들기':'동영상으로도 만들기'}</button>
+                              {isVideo&&refImage&&mainPrompt&&<button type="button" disabled={mainActive} onClick={()=>void startTextVideo()}><Film size={13}/> 텍스트만으로 동영상 생성</button>}
+                              {isVideo&&refImage&&<button type="button" disabled={!otherPrompt||otherActive} title={otherPrompt?'':'이미지 프롬프트가 없습니다'} onClick={()=>void startSceneImage(s.id)}><ImageIcon size={13}/> 기준 이미지 다시 만들기</button>}
+                              {!isVideo&&<button type="button" disabled={!otherPrompt||otherActive} title={otherPrompt?'':`${otherName} 프롬프트가 없습니다`} onClick={()=>void startOther()}><Film size={13}/> 동영상으로도 만들기</button>}
                               {otherPrompt&&<button type="button" onClick={copyOther}><Copy size={13}/> {otherName} 프롬프트 복사</button>}
                               <button type="button" onClick={()=>void onImport()}><Upload size={13}/> 파일 가져와서 연결</button>
                             </div>
@@ -542,7 +554,7 @@ function App(){
               return <>{sceneCard}{bgmCard}</>;
             })()}
             <div className="media-layout"><div className="media-list"><div className="subsection-head"><h3>프로젝트 미디어</h3><Tag>{project.assets.length}개 파일</Tag></div>{project.assets.length?<div className="asset-grid">{project.assets.map(a=><button key={a.id} className={`asset-card ${activeAsset===a.id?'selected':''}`} onClick={()=>setActiveAsset(a.id)}><div className="asset-preview"><Photo project={project} asset={a}/></div><div className="asset-info"><span>{a.name}</span><small>{a.kind.toUpperCase()} · {fileSize(a.bytes)}</small></div></button>)}</div>:<Empty title="미디어를 가져오세요" description="위 장면별 「Gemini로 이미지 생성」을 사용하거나, 다운로드한 이미지·영상·음악 파일을 이 프로젝트에 복사해 저장합니다." action={<Button kind="secondary" onClick={()=>void studio.importAssets()}><Upload size={15}/> 파일 선택</Button>}/>}</div>
-              <aside className="media-inspector"><div className="subsection-head"><h3>파일 정보</h3></div>{activeMedia?<><div className="inspector-preview"><Photo project={project} asset={activeMedia}/></div><h3 className="inspector-filename">{activeMedia.name}</h3><div className="inspector-props"><div><span>유형</span><b>{activeMedia.kind}</b></div><div><span>파일 크기</span><b>{fileSize(activeMedia.bytes)}</b></div><div><span>연결된 장면</span><b>{project.scenes.find(s=>s.assetId===activeMedia.id)?.id||'없음'}</b></div></div>{activeMedia.kind==='audio'&&<audio controls src={mediaUrl(project,activeMedia)} style={{width:'100%'}}/>}<div className="subsection-head"><h3>장면에 연결</h3></div>{activeMedia.kind==='audio'?<p className="muted-text" style={{marginBottom:16}}>오디오 파일은 최종 편집안의 배경음악 선택에서 연결합니다.</p>:<div className="scene-link-list">{project.scenes.map(s=><button className={`scene-link ${s.assetId===activeMedia.id?'selected':''}`} key={s.id} onClick={()=>void mutate(p=>({...p,scenes:p.scenes.map(scene=>scene.id===s.id?{...scene,assetId:activeMedia.id}:scene)}))}><span>{s.id} · {s.title}</span>{s.assetId===activeMedia.id&&<Check size={15}/>}</button>)}</div>}<Button kind="outline" onClick={()=>void window.studio.assets.reveal(project.id,activeMedia.id)}><FolderOpen size={15}/> 탐색기에서 보기</Button></>:<p className="inspector-empty">파일을 선택하면 상세 정보와 장면 연결 설정이 나타납니다.</p>}</aside></div>
+              <aside className="media-inspector"><div className="subsection-head"><h3>파일 정보</h3></div>{activeMedia?<><div className="inspector-preview"><Photo project={project} asset={activeMedia}/></div><h3 className="inspector-filename">{activeMedia.name}</h3><div className="inspector-props"><div><span>유형</span><b>{activeMedia.kind}</b></div><div><span>파일 크기</span><b>{fileSize(activeMedia.bytes)}</b></div><div><span>연결된 장면</span><b>{project.scenes.find(s=>s.assetId===activeMedia.id||s.referenceImageAssetId===activeMedia.id)?.id||'없음'}</b></div></div>{activeMedia.kind==='audio'&&<audio controls src={mediaUrl(project,activeMedia)} style={{width:'100%'}}/>}<div className="subsection-head"><h3>장면에 연결</h3></div>{activeMedia.kind==='audio'?<p className="muted-text" style={{marginBottom:16}}>오디오 파일은 최종 편집안의 배경음악 선택에서 연결합니다.</p>:<div className="scene-link-list">{project.scenes.map(s=><button className={`scene-link ${s.assetId===activeMedia.id?'selected':''}`} key={s.id} onClick={()=>void mutate(p=>({...p,scenes:p.scenes.map(scene=>scene.id===s.id?{...scene,assetId:activeMedia.id}:scene)}))}><span>{s.id} · {s.title}</span>{s.assetId===activeMedia.id&&<Check size={15}/>}</button>)}</div>}<Button kind="outline" onClick={()=>void window.studio.assets.reveal(project.id,activeMedia.id)}><FolderOpen size={15}/> 탐색기에서 보기</Button></>:<p className="inspector-empty">파일을 선택하면 상세 정보와 장면 연결 설정이 나타납니다.</p>}</aside></div>
           </div>})}
         {project&&view==='assembly'&&renderStep('assembly',{
           actions:<><Button size="sm" kind="outline" onClick={()=>void mutate(p=>({...p,assembly:{...p.assembly,clips:p.scenes.map(s=>({sceneId:s.id,durationSec:s.durationSec,transition:p.assembly.transitionDefault}))}}))} disabled={!project.scenes.length}><ListOrdered size={14}/> 장면 순서로 구성</Button>{stageButton('editplan',!project.scenes.length)}<Button size="sm" kind="outline" onClick={()=>openStage('editplan',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></>,

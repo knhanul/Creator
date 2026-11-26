@@ -41,7 +41,7 @@ const api:StudioAPI={
       listForProject:(projectId)=>ipcRenderer.invoke('gemini:image:list',projectId)
     },
     video:{
-      start:(projectId,sceneId)=>ipcRenderer.invoke('gemini:video:start',projectId,sceneId),
+      start:(projectId,sceneId,options)=>ipcRenderer.invoke('gemini:video:start',projectId,sceneId,options),
       latest:(projectId,sceneId)=>ipcRenderer.invoke('gemini:video:latest',projectId,sceneId),
       listForProject:(projectId)=>ipcRenderer.invoke('gemini:video:list',projectId)
     },

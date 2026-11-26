@@ -6,7 +6,7 @@
  *
  * 의존성을 주입받으므로 Electron 없이 mock으로 테스트할 수 있습니다(scripts/test-gemini-automation.mjs).
  */
-import type { AIStage, AssetKind, GeminiAnalysisStartResult, GeminiJobKind, GeminiJobRecord, MediaAsset, StudioProject } from '../../shared/types';
+import type { AIStage, AssetKind, GeminiAnalysisStartResult, GeminiJobKind, GeminiJobRecord, MediaAsset, ReferenceImagePayload, StudioProject } from '../../shared/types';
 import type { ProtocolMessage } from '../../shared/gemini-protocol';
 import type { JobResult, ProviderStatus } from './adapter';
 import { makeAIPrompt } from '../../shared/prompts';
@@ -19,6 +19,7 @@ import {
   makeMusicGenerationPrompt,
   makeVideoGenerationPrompt
 } from '../../shared/gemini-analysis';
+import { findSceneReferenceImage } from '../../shared/reference-image';
 import { makeSourceLookupPrompt, normalizeSourceQuery, type SourceLookupQuery } from '../../shared/gemini-source';
 
 /** GeminiJobQueue(job-queue.mjs) 중 이 서비스가 쓰는 부분 */
@@ -27,7 +28,7 @@ export interface QueueLike {
   get(jobId: string): GeminiJobRecord | undefined;
   findActive(projectId: string, kind: string, sceneId?: string): GeminiJobRecord | undefined;
   latest(projectId: string, kind?: string, sceneId?: string): GeminiJobRecord | undefined;
-  enqueue(input: { projectId: string; kind: GeminiJobKind; prompt: string; sceneId?: string }): Promise<GeminiJobRecord>;
+  enqueue(input: { projectId: string; kind: GeminiJobKind; prompt: string; sceneId?: string; referenceImage?: ReferenceImagePayload }): Promise<GeminiJobRecord>;
   tick(provider: { submit(job: GeminiJobRecord): Promise<JobResult> }): Promise<void>;
   onResponse(
     jobId: string,
@@ -56,7 +57,7 @@ export interface QueueLike {
 }
 export interface AdapterLike {
   getStatus(): Promise<ProviderStatus>;
-  submitPrompt(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage: string; prompt: string }): Promise<JobResult>;
+  submitPrompt(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage: string; prompt: string; referenceImage?: ReferenceImagePayload }): Promise<JobResult>;
   requestResult(job: { jobId: string; requestId: string; projectId: string; sceneId?: string; stage?: string }): Promise<{ ok: boolean; message: string }>;
 }
 export interface AnalysisServiceDeps {
@@ -78,6 +79,10 @@ export interface AnalysisServiceDeps {
   ): Promise<{ project: StudioProject; asset: MediaAsset }>;
   /** 결과가 작품에 저장되었을 때 (renderer가 작품을 다시 읽도록) */
   onProjectUpdated?(project: StudioProject, job: GeminiJobRecord): void;
+  /** 프로젝트 자산 파일을 읽어 기준 이미지 첨부에 사용 */
+  readAssetBuffer?(projectId: string, relativePath: string): Promise<Buffer>;
+  /** Native Messaging 1MB 한도에 맞게 기준 이미지를 인코딩 */
+  encodeReferenceImage?(input: { buffer: Buffer; mimeType?: string; name?: string }): Promise<ReferenceImagePayload>;
 }
 
 const RECEIVABLE_PHASES = new Set(['waiting', 'collecting']);
@@ -105,7 +110,8 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
         projectId: job.projectId,
         ...(job.sceneId ? { sceneId: job.sceneId } : {}),
         stage: job.kind,
-        prompt: job.prompt
+        prompt: job.prompt,
+        ...(job.referenceImage ? { referenceImage: job.referenceImage } : {})
       });
       return diagnostics && !r.diagnostics ? { ...r, diagnostics } : r;
     }
@@ -275,7 +281,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
    * - 같은 작품·같은 장면의 진행 중 video 작업이 있으면 새로 보내지 않음
    * - sceneId 필수, scene.videoPrompt 필수
    */
-  async function startVideo(projectId: string, sceneId: string): Promise<GeminiAnalysisStartResult> {
+  async function startVideo(projectId: string, sceneId: string, options?: { useReferenceImage?: boolean }): Promise<GeminiAnalysisStartResult> {
     const cleanSceneId = String(sceneId || '').trim();
     if (!cleanSceneId) return { ok: false, message: '동영상을 생성할 장면 ID가 필요합니다.' };
     const key = `${projectId}\u0000video\u0000${cleanSceneId}`;
@@ -305,8 +311,34 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
           message: `이미 진행 중인 ${cleanSceneId} 장면 동영상 생성 작업이 있어 새로 보내지 않았습니다.`
         };
       }
-      const prompt = makeVideoGenerationPrompt(project, cleanSceneId);
-      const job = await queue.enqueue({ projectId, kind: 'video', sceneId: cleanSceneId, prompt });
+
+      let referenceImage: ReferenceImagePayload | undefined;
+      if (options?.useReferenceImage) {
+        const refAsset = findSceneReferenceImage(project, cleanSceneId);
+        if (!refAsset) {
+          return { ok: false, message: '기준 이미지가 없습니다. 먼저 「기준 이미지 먼저 만들기」로 이미지를 만들거나 가져와 주세요.' };
+        }
+        if (!deps.readAssetBuffer || !deps.encodeReferenceImage) {
+          return { ok: false, message: '기준 이미지를 읽어 첨부할 준비가 되어 있지 않습니다.' };
+        }
+        try {
+          const buffer = await deps.readAssetBuffer(projectId, refAsset.relativePath);
+          referenceImage = await deps.encodeReferenceImage({ buffer, mimeType: undefined, name: refAsset.name });
+        } catch (e) {
+          return { ok: false, message: '기준 이미지를 준비하지 못했습니다: ' + (e instanceof Error ? e.message : String(e)) };
+        }
+        if (scene.referenceImageAssetId !== refAsset.id) {
+          try {
+            project = await deps.saveProject({
+              ...project,
+              scenes: project.scenes.map(s => s.id === cleanSceneId ? { ...s, referenceImageAssetId: refAsset.id } : s)
+            });
+          } catch { /* 발견만 하고 저장에 실패해도 생성은 진행 */ }
+        }
+      }
+
+      const prompt = makeVideoGenerationPrompt(project, cleanSceneId, { hasReferenceImage: !!referenceImage });
+      const job = await queue.enqueue({ projectId, kind: 'video', sceneId: cleanSceneId, prompt, ...(referenceImage ? { referenceImage } : {}) });
       void kick();
       return { ok: true, job };
     } finally {

@@ -110,6 +110,7 @@ export class GeminiJobQueue {
       kind: input.kind,
       executable,
       prompt: input.prompt,
+      ...(input.referenceImage ? { referenceImage: input.referenceImage } : {}),
       state: executable ? 'queued' : 'failed',
       createdAt: now,
       updatedAt: now,

@@ -16,6 +16,7 @@ import { GeminiJobQueue } from '../src/main/gemini/job-queue.mjs';
 import { loadTS } from './load-ts.mjs';
 
 const root = resolve(import.meta.dirname, '..');
+const EXT_VERSION = JSON.parse(readFileSync(join(root, 'extension/manifest.json'), 'utf8')).version;
 const read = (p) => readFileSync(join(root, p), 'utf8');
 const { createMessage, checkPeerVersions, classifySubmitResult, AUTOMATION_PROTOCOL } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
 const { ERROR_GUIDE, guideFor } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
@@ -126,7 +127,7 @@ await test('연결 확인: 0.1.0 백그라운드는 버전을 보고하지 않�
   const issue = checkPeerVersions({ host: { protocol: 2, version: '0.2.1' }, extension: st.payload.extension ?? null, content: st.payload.content ?? null });
   assert.equal(issue.code, 'EXTENSION_OUTDATED');
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /chrome:\/\/extensions/);
-  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /서비스 워커/); assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /GOMO background protocol 2 build 0\.2\.7/);
+  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /서비스 워커/); assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, new RegExp(`GOMO background protocol 2 build ${EXT_VERSION.replace(/\\./g, '\\.')}`));
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Chrome을 완전히 종료/);
 });
 

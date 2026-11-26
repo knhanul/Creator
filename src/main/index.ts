@@ -1,13 +1,14 @@
 import { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell, dialog, nativeTheme } from 'electron';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
 import { archiveProject, cleanupEmptyDrafts, createProject, discardDraftIfEmpty, exportFolder, importAssets, importProject, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
 import { createAnalysisService, type AnalysisService } from './gemini/analysis-service';
+import { encodeReferenceImageForNativeMessaging, mimeFromFileName, resizeWithElectronNativeImage } from './gemini/encode-reference-image';
 import { createDefaultSourceService } from './sources/source-service';
 import { isAIStage } from '../shared/gemini-analysis';
 import type { AIStage } from '../shared/types';
@@ -64,13 +65,13 @@ function registerHandlers(){
   ipcMain.handle('gemini:status',async()=>geminiAdapter.getStatus());
   ipcMain.handle('gemini:ping',async()=>geminiAdapter.ping());
   ipcMain.handle('gemini:submit',async(_event,job)=>geminiAdapter.submitPrompt(job));
-  ipcMain.handle('gemini:jobs:list',async()=>jobQueue.list());
+  ipcMain.handle('gemini:jobs:list',async()=>jobQueue.list().map((j:GeminiJobRecord)=>jobForRenderer(j)));
   ipcMain.handle('gemini:jobs:enqueue',async(_event,input)=>jobQueue.enqueue(input));
   // 재시도·재전송은 사용자가 버튼으로 명시적으로 고른 경우에만 호출되며, 호출 후 대기열을 실행합니다.
-  ipcMain.handle('gemini:jobs:retry',async(_event,jobId)=>{const j=await jobQueue.retry(jobId);if(j)void analysis.kick();return j;});
-  ipcMain.handle('gemini:jobs:cancel',async(_event,jobId)=>jobQueue.cancel(jobId));
-  ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>{const j=await jobQueue.confirmResend(jobId);if(j)void analysis.kick();return j;});
-  ipcMain.handle('gemini:jobs:continue',async(_event,jobId)=>jobQueue.continueWaiting(jobId));
+  ipcMain.handle('gemini:jobs:retry',async(_event,jobId)=>{const j=await jobQueue.retry(jobId);if(j)void analysis.kick();return j?jobForRenderer(j):j;});
+  ipcMain.handle('gemini:jobs:cancel',async(_event,jobId)=>{const j=await jobQueue.cancel(jobId);return j?jobForRenderer(j):j;});
+  ipcMain.handle('gemini:jobs:confirm',async(_event,jobId)=>{const j=await jobQueue.confirmResend(jobId);if(j)void analysis.kick();return j?jobForRenderer(j):j;});
+  ipcMain.handle('gemini:jobs:continue',async(_event,jobId)=>{const j=await jobQueue.continueWaiting(jobId);return j?jobForRenderer(j):j;});
   // stage 생략 = 기획 분석 (기존 호출 호환). 스토리보드·생성 프롬프트·최종 편집 구성도 같은 경로
   const stageArg=(stage:unknown):AIStage=>isAIStage(stage)?stage:'analysis';
   ipcMain.handle('gemini:analysis:start',async(_event,projectId:string,stage?:string)=>analysis.start(String(projectId),stageArg(stage)));
@@ -80,9 +81,9 @@ function registerHandlers(){
   ipcMain.handle('gemini:image:start',async(_event,projectId:string,sceneId:string)=>analysis.startImage(String(projectId),String(sceneId)));
   ipcMain.handle('gemini:image:latest',async(_event,projectId:string,sceneId?:string)=>jobQueue.latest(String(projectId),'image',sceneId?String(sceneId):undefined)||null);
   ipcMain.handle('gemini:image:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='image'));
-  ipcMain.handle('gemini:video:start',async(_event,projectId:string,sceneId:string)=>analysis.startVideo(String(projectId),String(sceneId)));
-  ipcMain.handle('gemini:video:latest',async(_event,projectId:string,sceneId?:string)=>jobQueue.latest(String(projectId),'video',sceneId?String(sceneId):undefined)||null);
-  ipcMain.handle('gemini:video:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='video'));
+  ipcMain.handle('gemini:video:start',async(_event,projectId:string,sceneId:string,options?:{useReferenceImage?:boolean})=>{const r=await analysis.startVideo(String(projectId),String(sceneId),options&&typeof options==='object'?{useReferenceImage:!!options.useReferenceImage}:undefined);return r.job?{...r,job:jobForRenderer(r.job)}:r;});
+  ipcMain.handle('gemini:video:latest',async(_event,projectId:string,sceneId?:string)=>{const j=jobQueue.latest(String(projectId),'video',sceneId?String(sceneId):undefined);return j?jobForRenderer(j):null;});
+  ipcMain.handle('gemini:video:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='video').map(jobForRenderer));
   ipcMain.handle('gemini:music:start',async(_event,projectId:string)=>analysis.startMusic(String(projectId)));
   ipcMain.handle('gemini:music:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'music')||null);
   ipcMain.handle('gemini:music:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='music'));
@@ -93,17 +94,31 @@ function registerHandlers(){
 let analysis: AnalysisService;
 /** 바뀐 작업만 renderer에 알림 (모달을 닫아도 main의 큐가 상태를 계속 보관) */
 const lastBroadcast=new Map<string,string>();
+function jobForRenderer(job:GeminiJobRecord):GeminiJobRecord{
+  if(!job.referenceImage?.dataUrl)return job;
+  const {dataUrl:_omit,...meta}=job.referenceImage;
+  return {...job,referenceImage:{...meta,dataUrl:''}};
+}
 function broadcastJobs(){
   if(!win||win.isDestroyed())return;
   for(const job of jobQueue.list() as GeminiJobRecord[]){
     if(lastBroadcast.get(job.jobId)===job.updatedAt+job.phase)continue;
     lastBroadcast.set(job.jobId,job.updatedAt+job.phase);
-    win.webContents.send('gemini:job-update',job);
+    win.webContents.send('gemini:job-update',jobForRenderer(job));
   }
 }
 function setupGeminiAutomation(){
   analysis=createAnalysisService({
-    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject, saveGeneratedImageAsset, saveGeneratedMediaAsset
+    queue: jobQueue, adapter: geminiAdapter, readProject, saveProject, saveGeneratedImageAsset, saveGeneratedMediaAsset,
+    async readAssetBuffer(projectId, relativePath){
+      return readFile(resolveAssetPath(projectId, relativePath));
+    },
+    encodeReferenceImage(input){
+      return encodeReferenceImageForNativeMessaging({
+        ...input,
+        mimeType: input.mimeType || mimeFromFileName(input.name)
+      }, { resize: resizeWithElectronNativeImage });
+    }
     // 저장 결과는 job-update(outcome='applied', appliedRevision)로 renderer에 전달됩니다.
   });
   jobQueue.subscribe(broadcastJobs);

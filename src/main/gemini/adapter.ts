@@ -31,6 +31,8 @@ export interface PromptJob {
   sceneId?: string;
   /** 큐 작업의 requestId. 응답 매칭에 그대로 쓰입니다. 없으면 새로 만듭니다(레거시 gemini:submit). */
   requestId?: string;
+  /** 이미지→동영상용 기준 이미지 (이미 650~700KB 이하로 인코딩된 dataUrl) */
+  referenceImage?: { name: string; mimeType: string; dataUrl: string };
 }
 
 export interface JobResult {
@@ -151,7 +153,8 @@ export class GeminiAdapter {
       jobId: job.jobId,
       projectId: job.projectId,
       ...(job.sceneId ? { sceneId: job.sceneId } : {}),
-      marker: makeRequestMarker(requestId)
+      marker: makeRequestMarker(requestId),
+      ...(job.referenceImage ? { referenceImage: job.referenceImage } : {})
     }, { requestId, projectId: job.projectId, jobId: job.jobId, sceneId: job.sceneId });
     let sent = false;
     try {

@@ -110,7 +110,7 @@ export type SendState = 'sent' | 'not_sent' | 'uncertain';
 export interface PromptSubmitRequest extends BaseMessage {
   type: 'PROMPT_SUBMIT_REQUEST';
   /** marker: Gemini 대화에서 이번 요청의 질문 블록을 식별하는 표식(프롬프트 끝에 한 줄로 붙음) */
-  payload: { prompt: string; stage: string; jobId: string; projectId: string; sceneId?: string; marker: string };
+  payload: { prompt: string; stage: string; jobId: string; projectId: string; sceneId?: string; marker: string; referenceImage?: { name: string; mimeType: string; dataUrl: string } };
 }
 
 export interface PromptSubmitResult extends BaseMessage {

@@ -86,7 +86,7 @@ export function applyAIResponse(project: StudioProject, stage: AIStage, answer: 
     if(mismatch)throw Error(`${mismatch.id} 낭독 문장이 등록된 원문과 정확히 일치하지 않습니다. 원문을 임의로 변경하지 마세요.`);
     const byId = new Map(p.scenes.map(s=>[s.id,s])); p.scenes=story.scenes.map(s => { const previous=byId.get(s.id);
       const same=!!previous&&previous.narration===s.narration&&previous.visual===s.visual&&previous.kind===s.kind;
-      return {...s,imagePrompt:same?previous!.imagePrompt:'',videoPrompt:same?previous!.videoPrompt:'',negativePrompt:same?previous!.negativePrompt:'',assetId:same?previous!.assetId:null,status:same?previous!.status:'draft'}; }); p.ai.prompt=emptyStage(); p.ai.editplan=emptyStage(); p.assembly.clips=[]; }
+      return {...s,imagePrompt:same?previous!.imagePrompt:'',videoPrompt:same?previous!.videoPrompt:'',negativePrompt:same?previous!.negativePrompt:'',assetId:same?previous!.assetId:null,referenceImageAssetId:same?previous!.referenceImageAssetId:null,status:same?previous!.status:'draft'}; }); p.ai.prompt=emptyStage(); p.ai.editplan=emptyStage(); p.assembly.clips=[]; }
   if (stage === 'prompt') { const prompts=validatePrompts(result,p.scenes); const map=new Map(prompts.items.map(x=>[x.sceneId,x])); p.scenes=p.scenes.map(s=> ({...s,...{ imagePrompt:map.get(s.id)?.imagePrompt||'',videoPrompt:map.get(s.id)?.videoPrompt||'',negativePrompt:map.get(s.id)?.negativePrompt||''},status:'ready'})); p.bgmPrompt=prompts.bgmPrompt||''; }
   if (stage === 'editplan') { const plan=validateEditPlan(result,p.scenes); p.assembly.clips=plan.clips; }
   p.ai[stage]={ raw:answer, updatedAt:now(), status:'approved' };

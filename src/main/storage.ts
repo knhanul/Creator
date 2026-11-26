@@ -8,6 +8,7 @@ import { isEmptyDraft, makeProject, summarize, toHandoff, toComposerDraft } from
 import { migrateProjectDocument } from '../shared/original-versioning';
 import { INTERNAL } from '../shared/brand';
 import { bgmFileName, sceneAssetBase, splitExt, versionedFileName } from '../shared/asset-naming';
+import { linkSceneMediaAsset } from '../shared/reference-image';
 
 const projectRegex=/^[0-9a-f-]{36}$/i;
 const ensureId=(id:string)=> {if (!projectRegex.test(id)) throw Error('유효하지 않은 작품 ID입니다.');return id;};
@@ -122,7 +123,11 @@ export async function importAssets(id:string,targetSceneId?:string):Promise<Stud
     if(source===forScene)lastImportedForScene=unique;
   }
   if(targetSceneId&&lastImportedForScene){
-    p.scenes=p.scenes.map(sc=>sc.id===targetSceneId?{...sc,assetId:lastImportedForScene,status:'complete' as const}:sc);
+    const imported=p.assets.find(a=>a.id===lastImportedForScene);
+    p.scenes=p.scenes.map(sc=>{
+      if(sc.id!==targetSceneId||!imported)return sc;
+      return linkSceneMediaAsset(sc,imported,p.assets);
+    });
   }
   const next={...p,revision:p.revision+1,updatedAt:new Date().toISOString()};
   await persist(next);return next;
@@ -175,7 +180,7 @@ export function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; mimeType:
 
 /**
  * Phase 5 공용: Gemini에서 생성된 이미지·동영상·배경음악 파일을 프로젝트 내부 `assets/<kind>/` 하위에 저장한다.
- * - image / video: sceneId 필수, 저장 후 해당 scene.assetId에 자동 연결
+ * - image / video: sceneId 필수, 저장 후 장면에 연결(영상 장면의 기준 이미지는 동영상이 생겨도 유지)
  * - audio (배경음악): 장면에는 연결하지 않고 project.assets에만 추가 (최종 편집안 BGM 선택 목록에 표시)
  */
 export async function saveGeneratedMediaAsset(
@@ -247,7 +252,7 @@ export async function saveGeneratedMediaAsset(
 
   const nextScenes =
     sceneIdx >= 0
-      ? p.scenes.map((s, idx) => (idx === sceneIdx ? { ...s, assetId: asset.id, status: 'complete' as const } : s))
+      ? p.scenes.map((s, idx) => (idx === sceneIdx ? linkSceneMediaAsset(s, asset, [...p.assets, asset]) : s))
       : p.scenes;
 
   const next: StudioProject = {

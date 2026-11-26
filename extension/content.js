@@ -33,7 +33,7 @@
     active = ids(msg);
     let res;
     try {
-      res = await dom.submit({ prompt: msg.prompt, marker: msg.marker, stage: msg.stage });
+      res = await dom.submit({ prompt: msg.prompt, marker: msg.marker, stage: msg.stage, referenceImage: msg.referenceImage });
     } catch (e) {
       active = null;
       return { success: false, sendState: 'uncertain', errorCode: 'SUBMIT_EXCEPTION', needsUser: true, message: String(e && e.message || e), ...ids(msg) };

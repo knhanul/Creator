@@ -21,7 +21,8 @@
     stableMs: 2500,             // 텍스트 변화 없음 유지 시간
     noImageIdleMs: 12000,       // 이미지 응답 생성 종료 후 이미지/텍스트가 모두 없을 때 대기 상한
     maxWaitMs: 8 * 60 * 1000,   // 전체 응답 대기 상한
-    progressThrottleMs: 1500
+    progressThrottleMs: 1500,
+    attachWaitMs: 2500        // 기준 이미지 첨부 미리보기 확인 대기
   };
 
   function createGeminiDom(opts) {
@@ -974,6 +975,142 @@
       return toolSelectFail(target, selected.reason, selected.stats);
     }
 
+
+    function fileFromReferenceImage(ref) {
+      if (!ref || !ref.dataUrl) return null;
+      const m = String(ref.dataUrl).match(/^data:([^;]+);base64,([\s\S]+)$/i);
+      if (!m) return null;
+      const mime = ref.mimeType || m[1] || 'image/png';
+      let b64 = m[2].replace(/\s+/g, '');
+      let raw;
+      try {
+        if (typeof win.atob === 'function') {
+          const bin = win.atob(b64);
+          raw = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) raw[i] = bin.charCodeAt(i);
+        } else if (typeof Buffer !== 'undefined') {
+          raw = Uint8Array.from(Buffer.from(b64, 'base64'));
+        }
+      } catch { return null; }
+      if (!raw || !raw.byteLength) return null;
+      const name = ref.name || 'reference.jpg';
+      try { return new win.File([raw], name, { type: mime }); }
+      catch {
+        try { return new File([raw], name, { type: mime }); }
+        catch { return null; }
+      }
+    }
+
+    function makeDataTransfer(file) {
+      let dt = null;
+      try { if (typeof win.DataTransfer === 'function') dt = new win.DataTransfer(); } catch { dt = null; }
+      if (!dt) return null;
+      try {
+        if (dt.items && dt.items.add) dt.items.add(file);
+      } catch { /* jsdom 등에서 실패할 수 있음 */ }
+      return dt;
+    }
+
+    function hasAttachedPreview(area, fileName) {
+      const root = area || doc;
+      if (queryAllDeep(root, '[data-gomo-attached]').length) return true;
+      const imgs = queryAllDeep(root, 'img');
+      for (const img of imgs) {
+        const src = (img.getAttribute && img.getAttribute('src')) || img.src || '';
+        if (/^(blob:|data:)/i.test(src)) return true;
+      }
+      const want = normalize(fileName || '');
+      if (!want) return false;
+      const chips = queryAllDeep(root, 'button, [role="button"], [class*="chip"], [class*="attachment"], [class*="preview"], [class*="thumbnail"], span, div');
+      for (const el of chips) {
+        const t = normalize((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-tooltip') || '')) || elementText(el) || '');
+        if (!t) continue;
+        if (t === want || t.includes(want)) return true;
+        if (/(첨부 제거|첨부 삭제|remove attachment|remove file|detach file)/i.test(t)) return true;
+      }
+      return false;
+    }
+
+    function setInputFiles(input, file) {
+      const dt = makeDataTransfer(file);
+      let assigned = false;
+      if (dt && dt.files) {
+        try { input.files = dt.files; assigned = !!(input.files && input.files.length); } catch { assigned = false; }
+        if (!assigned) {
+          try { Object.defineProperty(input, 'files', { configurable: true, value: dt.files }); assigned = true; } catch { /* ignore */ }
+        }
+      }
+      if (!assigned) {
+        try { Object.defineProperty(input, 'files', { configurable: true, value: { 0: file, length: 1, item: (i) => (i === 0 ? file : null) } }); assigned = true; } catch { /* ignore */ }
+      }
+      try { input.dispatchEvent(new win.Event('change', { bubbles: true })); } catch { /* ignore */ }
+      try { input.dispatchEvent(new win.Event('input', { bubbles: true })); } catch { /* ignore */ }
+      return assigned;
+    }
+
+    function attachData(ev, key, dt) {
+      if (!dt) return ev;
+      try { if (!ev[key]) Object.defineProperty(ev, key, { configurable: true, value: dt }); } catch { /* ignore */ }
+      return ev;
+    }
+    function dispatchPasteOrDrop(target, type, file) {
+      if (!target) return false;
+      const dt = makeDataTransfer(file);
+      try {
+        if (type === 'paste') {
+          let ev = null;
+          try { if (typeof win.ClipboardEvent === 'function') ev = new win.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }); } catch { ev = null; }
+          if (!ev) ev = new win.Event('paste', { bubbles: true, cancelable: true });
+          attachData(ev, 'clipboardData', dt);
+          return target.dispatchEvent(ev);
+        }
+        let ev = null;
+        try { if (typeof win.DragEvent === 'function') ev = new win.DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }); } catch { ev = null; }
+        if (!ev) ev = new win.Event(type, { bubbles: true, cancelable: true });
+        attachData(ev, 'dataTransfer', dt);
+        return target.dispatchEvent(ev);
+      } catch { return false; }
+    }
+
+    /**
+     * Gemini 입력창에 기준 이미지를 첨부한다.
+     * 1) input[type=file]  2) paste  3) drag/drop
+     * 미리보기가 확인되지 않으면 실패(텍스트만 보내지 않음).
+     */
+    async function attachImageToComposer(composer, area, referenceImage) {
+      const file = fileFromReferenceImage(referenceImage);
+      if (!file) {
+        return { ok: false, errorCode: 'IMAGE_ATTACH_FAILED', method: null, message: '기준 이미지 데이터가 올바르지 않습니다.' };
+      }
+      const scope = area || findComposerArea(composer) || composer;
+      const waitMs = timing.attachWaitMs || 2500;
+      const check = () => hasAttachedPreview(scope, file.name || referenceImage.name);
+
+      const inputs = queryAllDeep(scope, 'input[type="file"]');
+      for (const input of inputs) {
+        try { setInputFiles(input, file); } catch { continue; }
+        if (await waitFor(check, waitMs)) return { ok: true, method: 'file-input' };
+      }
+
+      try { if (composer && composer.focus) composer.focus(); } catch { /* ignore */ }
+      dispatchPasteOrDrop(composer, 'paste', file);
+      if (scope && scope !== composer) dispatchPasteOrDrop(scope, 'paste', file);
+      if (await waitFor(check, waitMs)) return { ok: true, method: 'paste' };
+
+      for (const evName of ['dragenter', 'dragover', 'drop']) {
+        dispatchPasteOrDrop(composer, evName, file);
+        if (scope && scope !== composer) dispatchPasteOrDrop(scope, evName, file);
+      }
+      if (await waitFor(check, waitMs)) return { ok: true, method: 'drop' };
+
+      return {
+        ok: false,
+        errorCode: 'IMAGE_ATTACH_FAILED',
+        method: null,
+        message: '기준 이미지를 Gemini 입력창에 자동으로 첨부하지 못했습니다. 이미지를 직접 붙여넣거나 「… → 텍스트만으로 동영상 생성」을 이용해 주세요.'
+      };
+    }
+
     /**
      * 전송. 결과 sendState: 'sent' | 'not_sent' | 'uncertain'.
      * 'not_sent'는 클릭 전에 멈춘 경우에만 사용합니다. 클릭 후 증거가 없으면 'uncertain'.
@@ -988,16 +1125,22 @@
       if (!composerHit) return fail('NO_INPUT', 'Gemini 입력창을 찾지 못했습니다(셀렉터 미일치 가능).', true);
       if (normalize(composerText(composerHit.el))) return fail('COMPOSER_NOT_EMPTY', 'Gemini 입력창에 작성 중인 내용이 있어 덮어쓰지 않았습니다.', true);
       const composer = composerHit.el;
+      const area = findComposerArea(composer);
+      if (params && params.referenceImage) {
+        const attached = await attachImageToComposer(composer, area, params.referenceImage);
+        if (!attached.ok) return fail('IMAGE_ATTACH_FAILED', attached.message || '기준 이미지를 Gemini 입력창에 자동으로 첨부하지 못했습니다. 이미지를 직접 붙여넣거나 「… → 텍스트만으로 동영상 생성」을 이용해 주세요.', true);
+      }
+      const usedComposer = (findComposer() && findComposer().el) || composer;
       const text = params.marker ? `${params.prompt}\n\n${params.marker}` : params.prompt;
       const baseline = snapshot();
-      const ins = await insertPrompt(composer, text, params.marker);
+      const ins = await insertPrompt(usedComposer, text, params.marker);
       if (!ins.ok) {
-        clearComposer(composer);
+        clearComposer(usedComposer);
         return Object.assign(fail('INSERT_FAILED', '입력창에 프롬프트를 넣지 못했습니다(입력 방식 미지원 가능). 전송하지 않았습니다.', true), { attempts: ins.attempts });
       }
       const btn = await waitFor(() => { const b = findSend(); return b && isEnabled(b.el) ? b : null; }, timing.sendEnableWaitMs);
       if (!btn) {
-        clearComposer(composer);
+        clearComposer(usedComposer);
         return Object.assign(fail('NO_SEND_BUTTON', '전송 버튼을 찾지 못했거나 비활성 상태입니다. 전송하지 않았습니다.', true), { insertMethod: ins.method });
       }
       const blockedNow = detectBlocked();
@@ -1757,7 +1900,7 @@
       };
     }
 
-    return { submit, watch, watchImage, watchVideo, watchMusic, collectMedia, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label, ensureToolMode, readActiveToolMode, targetModeForStage, findComposerArea, findToolMenuButton };
+    return { submit, watch, watchImage, watchVideo, watchMusic, collectMedia, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label, ensureToolMode, readActiveToolMode, targetModeForStage, findComposerArea, findToolMenuButton, attachImageToComposer, hasAttachedPreview };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };

@@ -13,6 +13,7 @@ import { installGeminiSimulator } from '../fixtures/gemini-dom/gemini-simulator.
 import { loadTS } from './load-ts.mjs';
 
 const root = resolve(import.meta.dirname, '..');
+const EXT_VERSION = JSON.parse(readFileSync(join(root, 'extension/manifest.json'), 'utf8')).version;
 const read = (p) => readFileSync(join(root, p), 'utf8');
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
 const wait = (ms = 10) => new Promise(r => setTimeout(r, ms));
@@ -34,7 +35,7 @@ function background(onTabMessage) {
   const chrome = {
     runtime: {
       lastError: undefined, id: 'ekibpgmnknamcpplppceoaogmcbcabbo',
-      connectNative: () => port, getManifest: () => ({ version: '0.2.7' }),
+      connectNative: () => port, getManifest: () => ({ version: EXT_VERSION }),
       onInstalled: { addListener() {} }, onStartup: { addListener() {} },
       onMessage: { addListener: (f) => runtimeListeners.push(f) }
     },

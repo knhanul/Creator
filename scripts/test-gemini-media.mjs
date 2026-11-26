@@ -17,6 +17,10 @@ const { DEFAULT_BRIEF, makeProject, applyAIResponse } = loadTS(join(root, 'src/s
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
 const { bgmFileName, sceneAssetBase, versionedFileName } = loadTS(join(root, 'src/shared/asset-naming.ts'));
 const { getProjectBgmPrompt, makeVideoGenerationPrompt, makeMusicGenerationPrompt } = loadTS(join(root, 'src/shared/gemini-analysis.ts'));
+const { linkSceneMediaAsset } = loadTS(join(root, 'src/shared/reference-image.ts'));
+const { encodeReferenceImageForNativeMessaging } = loadTS(join(root, 'src/main/gemini/encode-reference-image.ts'));
+const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'gomo-phase5-media-'));
 let passed = 0;
@@ -134,13 +138,20 @@ function makeEnv(tag) {
     const asset = { id: unique, kind, name, relativePath: relative, bytes: buffer.byteLength, importedAt: new Date().toISOString() };
     p.assets.push(asset);
     if (sceneIdx >= 0) {
-      p.scenes[sceneIdx] = { ...p.scenes[sceneIdx], assetId: asset.id, status: 'complete' };
+      p.scenes[sceneIdx] = linkSceneMediaAsset(p.scenes[sceneIdx], asset, p.assets);
     }
     const saved = await saveProject(p);
     return { project: saved, asset };
   }
 
-  return { dir, projects, p1, adapter, readProject, saveProject, saveGeneratedMediaAsset };
+  async function readAssetBuffer(projectId, relativePath) {
+    const full = resolve(join(dir, projectId, relativePath));
+    return readFileSync(full);
+  }
+  async function encodeReferenceImage(input) {
+    return encodeReferenceImageForNativeMessaging(input);
+  }
+  return { dir, projects, p1, adapter, readProject, saveProject, saveGeneratedMediaAsset, readAssetBuffer, encodeReferenceImage };
 }
 
 await test('1. 동영상·배경음악 프롬프트 생성 및 기존 ai.prompt.raw bgmPrompt 폴백 조회', () => {
@@ -401,6 +412,98 @@ await test('5. Extension DOM watchVideo & watchMusic: 다운로드 버튼 클릭
   assert.equal(outM.ok, false);
   assert.equal(outM.errorCode, 'NO_MUSIC_GENERATED');
   assert.equal(outM.needsUser, true);
+});
+
+
+await test('6. 기준 이미지로 동영상 시작: 프롬프트 지시 + job.referenceImage 첨부, 텍스트만은 첨부 없음', async () => {
+  const env = makeEnv('t6');
+  const imgPath = join(env.dir, env.p1.id, 'assets/image/S01_image.png');
+  mkdirSync(dirname(imgPath), { recursive: true });
+  writeFileSync(imgPath, TINY_PNG);
+  const p = await env.readProject(env.p1.id);
+  const asset = { id: 'ref-img-1', kind: 'image', name: 'S01_image.png', relativePath: 'assets/image/S01_image.png', bytes: TINY_PNG.byteLength, importedAt: new Date().toISOString() };
+  p.assets.push(asset);
+  p.scenes[0].assetId = asset.id;
+  await env.saveProject(p);
+
+  const queue = new GeminiJobQueue(join(env.dir, 'jobs.json'));
+  await queue.load();
+  const service = createAnalysisService({
+    queue,
+    adapter: env.adapter,
+    readProject: env.readProject,
+    saveProject: env.saveProject,
+    saveGeneratedMediaAsset: env.saveGeneratedMediaAsset,
+    readAssetBuffer: env.readAssetBuffer,
+    encodeReferenceImage: env.encodeReferenceImage
+  });
+
+  const missing = await service.startVideo(env.p1.id, 'S01', { useReferenceImage: true });
+  // 방금 저장한 이미지가 있으므로 성공해야 함
+  assert.equal(missing.ok, true, missing.message);
+  assert.ok(missing.job.prompt.includes('Animate the attached reference image'));
+  assert.ok(missing.job.referenceImage, '기준 이미지가 job에 실려야 함');
+  assert.equal(missing.job.referenceImage.name, 'S01_image.png');
+  assert.ok(missing.job.referenceImage.dataUrl.startsWith('data:image/png;base64,'));
+  await service.kick();
+  assert.equal(env.adapter.submitted.length, 1);
+  assert.ok(env.adapter.submitted[0].referenceImage);
+  assert.ok(env.adapter.submitted[0].prompt.includes('Keep the exact characters, art style, composition, and colors'));
+
+  // 진행 중 작업이 끝난 뒤 텍스트만으로 다시 생성
+  const job = queue.get(missing.job.jobId);
+  await queue.setOutcome(job.jobId, job.requestId, { state: 'completed', phase: 'done', outcome: 'applied' });
+
+  const textOnly = await service.startVideo(env.p1.id, 'S01', { useReferenceImage: false });
+  assert.equal(textOnly.ok, true, textOnly.message);
+  assert.equal(!!textOnly.job.referenceImage, false);
+  assert.equal(textOnly.job.prompt.includes('Animate the attached reference image'), false);
+  assert.ok(textOnly.job.prompt.includes('Generate a short cinematic video'));
+});
+
+await test('7. 동영상이 저장되어도 기준 이미지 자산과 referenceImageAssetId는 유지', async () => {
+  const env = makeEnv('t7');
+  const imgPath = join(env.dir, env.p1.id, 'assets/image/S01_image.png');
+  mkdirSync(dirname(imgPath), { recursive: true });
+  writeFileSync(imgPath, TINY_PNG);
+  const p = await env.readProject(env.p1.id);
+  const asset = { id: 'ref-keep', kind: 'image', name: 'S01_image.png', relativePath: 'assets/image/S01_image.png', bytes: TINY_PNG.byteLength, importedAt: new Date().toISOString() };
+  p.assets.push(asset);
+  p.scenes[0].assetId = asset.id;
+  p.scenes[0].referenceImageAssetId = asset.id;
+  await env.saveProject(p);
+
+  const queue = new GeminiJobQueue(join(env.dir, 'jobs-keep.json'));
+  await queue.load();
+  const service = createAnalysisService({
+    queue,
+    adapter: env.adapter,
+    readProject: env.readProject,
+    saveProject: env.saveProject,
+    saveGeneratedMediaAsset: env.saveGeneratedMediaAsset
+  });
+  const started = await service.startVideo(env.p1.id, 'S01');
+  await service.kick();
+  const job = queue.get(started.job.jobId);
+  const downloadedMp4 = join(env.dir, 'keep.mp4');
+  writeFileSync(downloadedMp4, Buffer.from('FAKE_MP4'));
+  const applied = await service.handleMessage({
+    protocolVersion: 1,
+    requestId: job.requestId,
+    jobId: job.jobId,
+    projectId: env.p1.id,
+    sceneId: 'S01',
+    type: 'DOWNLOAD_EVENT',
+    timestamp: new Date().toISOString(),
+    payload: { downloadId: 2, state: 'complete', downloadPath: downloadedMp4, jobId: job.jobId, sceneId: 'S01' }
+  });
+  assert.equal(applied, 'applied');
+  const saved = await env.readProject(env.p1.id);
+  const scene = saved.scenes.find(s => s.id === 'S01');
+  const videoAsset = saved.assets.find(a => a.id === scene.assetId);
+  assert.equal(videoAsset.kind, 'video');
+  assert.equal(scene.referenceImageAssetId, 'ref-keep');
+  assert.ok(saved.assets.some(a => a.id === 'ref-keep' && a.kind === 'image'), '기준 이미지 자산이 삭제되면 안 됨');
 });
 
 console.log(`\n${passed} phase5-gemini-media (video+music) checks passed`);
