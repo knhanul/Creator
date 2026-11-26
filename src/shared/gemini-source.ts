@@ -9,6 +9,7 @@
 import type { Genre } from './types';
 import type { OriginalFetchResult, TextVerificationIssue } from './source-types';
 import { GENRES } from './workflow';
+import { bibleTranslationLabel, normalizeBibleTranslationId } from './bible-catalog';
 import { evaluateRightsEvidence } from './copyright';
 import { compareEditions, verifyOriginalText } from './text-verify';
 
@@ -16,15 +17,18 @@ export const SOURCE_SCHEMA = 'creator.source.v1';
 export const GEMINI_SOURCE_ID = 'gemini';
 export const GEMINI_SOURCE_NAME = 'Gemini 원문 찾기';
 
-export interface SourceLookupQuery { title: string; author?: string; genre?: Genre | 'all'; }
+export interface SourceLookupQuery { title: string; author?: string; genre?: Genre | 'all'; bibleTranslation?: string; }
 
 export function normalizeSourceQuery(q: SourceLookupQuery): SourceLookupQuery {
   const genre = q.genre && q.genre !== 'all' && q.genre in GENRES ? q.genre : 'all';
-  return { title: String(q.title || '').trim().slice(0, 200), author: String(q.author || '').trim().slice(0, 100), genre };
+  const out: SourceLookupQuery = { title: String(q.title || '').trim().slice(0, 200), author: String(q.author || '').trim().slice(0, 100), genre };
+  if (genre === 'bible') out.bibleTranslation = normalizeBibleTranslationId(q.bibleTranslation);
+  return out;
 }
 
 export function makeSourceLookupPrompt(input: SourceLookupQuery): string {
   const q = normalizeSourceQuery(input);
+  if (q.genre === 'bible') return makeBibleSourceLookupPrompt(q);
   const genreLabel = q.genre && q.genre !== 'all' ? GENRES[q.genre] : '';
   return [
     '당신은 문학 원문을 정확히 옮겨 적는 편집자입니다. 아래 작품의 원문 전문을 찾아 주세요.',
@@ -58,6 +62,46 @@ export function makeSourceLookupPrompt(input: SourceLookupQuery): string {
     '  "truncated": false,',
     '  "note": "",',
     '  "originalText": "1행\\n2행\\n\\n2연 1행"',
+    '}',
+    '```'
+  ].join('\n');
+}
+
+
+function makeBibleSourceLookupPrompt(q: SourceLookupQuery): string {
+  const translation = bibleTranslationLabel(q.bibleTranslation);
+  return [
+    '당신은 성경 본문을 정확히 옮겨 적는 편집자입니다. 아래 범위의 성경 본문을 지정한 번역본 그대로 찾아 주세요.',
+    '',
+    `- 본문: ${q.title}`,
+    `- 번역본: ${translation}`,
+    '- 갈래: 성경',
+    '',
+    '규칙',
+    '1. 반드시 위에서 지정한 번역본의 본문만 옮겨 적으세요. 다른 번역본과 섞거나 임의로 번역하지 마세요.',
+    '2. 원문을 한 글자도 바꾸지 마세요. 요약·발췌·해설·현대어 풀이·맞춤법 교정·절 추가·절 생략 금지. 지정한 범위의 처음부터 끝까지 적습니다.',
+    '3. 절 번호를 유지하세요. 각 절은 새 줄로 시작하고, 절 번호와 본문을 함께 적습니다.',
+    '4. 제목·번역본 이름·설명·주석은 originalText에 넣지 않습니다.',
+    '5. 본문을 확실히 알지 못하면 지어내지 말고 found를 false로, 이유를 note에 적습니다.',
+    '6. 너무 길어 전문을 다 적을 수 없으면 앞에서부터 적고 truncated를 true로 표시합니다.',
+    '',
+    '답변은 아래 형식의 JSON 코드 블록 하나만 출력하세요. 문자열 안의 줄바꿈은 \\n 으로 적습니다.',
+    '```json',
+    '{',
+    `  "schema": "${SOURCE_SCHEMA}",`,
+    '  "found": true,',
+    '  "title": "본문 제목 (예: 시편 23편 1~6절)",',
+    '  "author": "",',
+    '  "translator": "번역본 이름",',
+    '  "edition": "번역본 이름",',
+    '  "publishedYear": "",',
+    '  "authorDeathYear": null,',
+    '  "isTranslation": true,',
+    '  "isForeignWork": false,',
+    '  "sourceUrl": "원문을 확인한 공개 페이지 https 주소 (없으면 빈 문자열)",',
+    '  "truncated": false,',
+    '  "note": "",',
+    '  "originalText": "1 본문 첫째 절\\n2 본문 둘째 절"',
     '}',
     '```'
   ].join('\n');

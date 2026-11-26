@@ -7,6 +7,7 @@ import {AUTO_FILL_FIELDS,AUTO_FILL_LABELS,clearAutoFilled,userFieldsToOverwrite}
 import {stepGuide} from '../../shared/step-guide';
 import {ORIGINAL_FILE_HINT,ORIGINAL_FILE_LABEL,isSupportedOriginalFileName} from '../../shared/original-fetch';
 import {sourceResultFromGemini} from '../../shared/gemini-source';
+import {BIBLE_EDITION_CHOICES,normalizeBibleTranslationId,toCatalogBibleTranslationId} from '../../shared/bible-catalog';
 import {guideFor,phaseView} from '../../shared/gemini-analysis';
 import {OriginalSourcePanel,type ApprovedOriginalPayload} from '../components/OriginalSourcePanel';
 import {ActionBar,DocHeader,StepLayout,type SaveState} from '../components/Shell';
@@ -99,7 +100,9 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
     pendingRef.current=false;pendingCb.current(false);
     const autoFilled:Partial<Record<AutoFillField,string>>={...(draftRef.current.autoFilled||{})};
     for(const f of AUTO_FILL_FIELDS){if((incoming[f]||'').trim())autoFilled[f]=payload.meta.providerName;else delete autoFilled[f];}
-    const base:Brief={...draftRef.current,...incoming,genre:payload.genre??draftRef.current.genre,autoFilled:Object.keys(autoFilled).length?autoFilled:undefined,originalFileName:undefined} as Brief;
+    const pickedTranslation=payload.meta.bibleRef?.translationId;
+    const base:Brief={...draftRef.current,...incoming,genre:payload.genre??draftRef.current.genre,autoFilled:Object.keys(autoFilled).length?autoFilled:undefined,originalFileName:undefined,
+      bibleTranslation:pickedTranslation&&BIBLE_EDITION_CHOICES.some(c=>c.id===pickedTranslation)?pickedTranslation:draftRef.current.bibleTranslation} as Brief;
     setDraft(base);sessionRef.current=false;setUnlocked(false);setFinderOpen(false);
     void onApproveOriginal(projectId,payload,base);
     return true;
@@ -189,7 +192,9 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
         flash(status.versionIssue?.message||status.message||'제미나이가 연결되어 있지 않습니다. Chrome에서 확장 프로그램을 켜고 Gemini 탭을 연 뒤, 필요하면 SETUP_GEMINI.bat을 실행해 주세요.','error');
         return;
       }
-      const r=await window.studio.gemini.source.start(projectId,{title:draft.title,author:draft.author,genre:draft.genre});
+      const r=await window.studio.gemini.source.start(projectId,draft.genre==='bible'
+        ?{title:draft.title,genre:draft.genre,bibleTranslation:normalizeBibleTranslationId(draft.bibleTranslation)}
+        :{title:draft.title,author:draft.author,genre:draft.genre});
       if(!r.ok){flash(r.message||'제미나이로 원문을 가져오지 못했습니다.','error');return;}
       if(r.job)setOriginalJob(r.job);
       flash(r.reused?(r.message||'이미 원문을 가져오는 중입니다.'):'제미나이에 원문 요청을 보냈어요. 응답이 오면 본문에 채워집니다.','info');
@@ -204,7 +209,10 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
       setOriginalJob(prev=>!prev||prev.jobId===j.jobId||j.createdAt>=prev.createdAt?j:prev);
       if(appliedOriginalJobs.current.has(j.jobId))return;
       if(j.state==='completed'&&(j.outcome==='received'||!j.outcome)){
-        const q={title:draftRef.current.title,author:draftRef.current.author,genre:draftRef.current.genre};
+        const cur=draftRef.current;
+        const q=cur.genre==='bible'
+          ?{title:cur.title,genre:cur.genre,bibleTranslation:normalizeBibleTranslationId(cur.bibleTranslation)}
+          :{title:cur.title,author:cur.author,genre:cur.genre};
         const res=sourceResultFromGemini(j,q);
         appliedOriginalJobs.current.add(j.jobId);
         if(!res.ok||!res.originalText?.trim()){flash(res.errorMessage||'제미나이 응답에서 원문을 찾지 못했습니다.','error');return;}
@@ -245,50 +253,53 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
   return <StepLayout header={header} panel={panel} actionBar={actionBar} focusKey={`brief-${projectId}`} fill>
     <div className="brief-sheet">
       <div className="brief-grid">
-        <Field label="장르"><select value={draft.genre} onChange={e=>set('genre',e.target.value as Genre)}>{Object.entries(GENRES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field>
+        <Field label="장르"><select value={draft.genre} onChange={e=>{
+          const genre=e.target.value as Genre;
+          if(genre==='bible'){
+            setDraft(d=>({...d,genre,bibleTranslation:normalizeBibleTranslationId(d.bibleTranslation)}));
+            markPending();
+          }else set('genre',genre);
+        }}>{Object.entries(GENRES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field>
         <Field label="시청 대상"><select value={draft.audience} onChange={e=>set('audience',e.target.value as Audience)}>{Object.entries(AUDIENCES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field>
         <Field label="작품 제목" badge={autoBadge('title')} className="span-2">
-          <input value={draft.title} onChange={e=>set('title',e.target.value)} placeholder={isBible?'본문을 가져오면 자동으로 채워져요 (예: 시편 23편 1~6절)':'작품 제목 (예: 서시, 진달래꽃)'} data-skip-focus={isBible?'':undefined}/>
+          <input value={draft.title} onChange={e=>set('title',e.target.value)} placeholder={isBible?'예: 시편 23편 1~6절, 요한복음 3장 16절':'작품 제목 (예: 서시, 진달래꽃)'}/>
         </Field>
-        {!isBible&&<Field label="저자" badge={autoBadge('author')} className="span-2"><input value={draft.author} onChange={e=>set('author',e.target.value)} placeholder="저자 (예: 윤동주, 김소월)"/></Field>}
+        {isBible
+          ?<Field label="번역본" className="span-2"><select value={normalizeBibleTranslationId(draft.bibleTranslation)} onChange={e=>set('bibleTranslation',e.target.value)}>{BIBLE_EDITION_CHOICES.map(t=><option value={t.id} key={t.id}>{t.label}</option>)}</select></Field>
+          :<Field label="저자" badge={autoBadge('author')} className="span-2"><input value={draft.author} onChange={e=>set('author',e.target.value)} placeholder="저자 (예: 윤동주, 김소월)"/></Field>}
       </div>
 
-      {!isBible&&<div className="brief-source-actions">
-        <Button type="button" kind="primary" onClick={()=>void startGeminiOriginal()} disabled={jobActive||!draft.title.trim()} title="입력한 장르·저자·제목으로 제미나이에서 원문을 가져와 본문에 채웁니다">
+      <div className="brief-source-actions">
+        <Button type="button" kind="primary" onClick={()=>void startGeminiOriginal()} disabled={jobActive||!draft.title.trim()} title={isBible?'입력한 제목과 선택한 번역본으로 제미나이에서 성경 본문을 가져와 본문에 채웁니다':'입력한 장르·저자·제목으로 제미나이에서 원문을 가져와 본문에 채웁니다'}>
           {jobActive?<><Sparkles size={14} className="spin"/> 원문 가져오는 중</>:<><Sparkles size={14}/> 제미나이로 원문 가져오기</>}
         </Button>
-        <Button type="button" kind="outline" size="sm" aria-expanded={finderOpen} title="위키문헌·구텐베르크·공유마당 검색이나 URL에서 원문을 찾아 칸을 채웁니다" onClick={()=>{if(!finderOpen)setFinderKey(k=>k+1);setFinderOpen(v=>!v);}}>
+        <Button type="button" kind="outline" size="sm" aria-expanded={finderOpen} title={isBible?'성경 책·장·절 선택이나 URL에서 본문을 찾아 칸을 채웁니다':'위키문헌·구텐베르크·공유마당 검색이나 URL에서 원문을 찾아 칸을 채웁니다'} onClick={()=>{if(!finderOpen)setFinderKey(k=>k+1);setFinderOpen(v=>!v);}}>
           {finderOpen?<><X size={14}/> 찾기 닫기</>:<><Search size={14}/> 원문 찾아 채우기</>}
         </Button>
         {jobActive&&<Button type="button" kind="ghost" size="sm" onClick={()=>void cancelOriginal()}>취소</Button>}
         {jobView&&<span className={`muted-text brief-job-status tone-${jobView.tone}`}>{jobView.label}</span>}
-      </div>}
+      </div>
 
-      {isBible&&<div className="bible-inline">
-        <OriginalSourcePanel
-          key={`bible-${projectId}`}
-          tabs={['bible']}
-          defaultGenre="bible"
-          initialBible={bibleRef?{translationId:bibleRef.translationId,testament:bibleRef.testament,bookId:bibleRef.bookId,chapter:bibleRef.chapter,startVerse:bibleRef.startVerse,endVerse:bibleRef.endVerse}:undefined}
-          onApprove={handleApprove}
-          resetAfterApprove
-          flash={flash}
-          compact
-        />
-      </div>}
-
-      {!isBible&&finderOpen&&<div className="finder-inline" role="region" aria-label="원문 찾아 채우기">
+      {finderOpen&&<div className="finder-inline" role="region" aria-label="원문 찾아 채우기">
         <OriginalSourcePanel
           key={`finder-${projectId}-${finderKey}`}
           projectId={projectId}
-          tabs={['gemini','search','url']}
+          tabs={isBible?['bible','gemini','url']:['gemini','search','url']}
           defaultGenre={draft.genre}
           initialQuery={draft.title}
-          initialAuthor={draft.author}
+          initialAuthor={isBible?undefined:draft.author}
+          initialBible={isBible?{
+            translationId:bibleRef?.translationId||toCatalogBibleTranslationId(draft.bibleTranslation),
+            testament:bibleRef?.testament||'old',
+            bookId:bibleRef?.bookId||19,
+            chapter:bibleRef?.chapter||23,
+            startVerse:bibleRef?.startVerse||1,
+            endVerse:bibleRef?.endVerse||6
+          }:undefined}
           onApprove={handleApprove}
           onSwitchManual={()=>setFinderOpen(false)}
           switchLabel="닫기"
-          autoSearch
+          autoSearch={!isBible}
           flash={flash}
           compact
         />
@@ -340,7 +351,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
           value={draft.originalText}
           readOnly={locked}
           onChange={e=>set('originalText',e.target.value)}
-          placeholder={isBible?'위에서 성경 범위를 고르고 「성경 본문 가져오기」를 누르면 여기에 채워져요. 직접 붙여넣거나 파일을 첨부해도 돼요.':`원문을 붙여넣거나 직접 입력하세요. 「제미나이로 원문 가져오기」나 파일 첨부·드래그앤드랍으로 채울 수도 있어요.\n${ORIGINAL_FILE_HINT}`}
+          placeholder={`원문을 붙여넣거나 직접 입력하세요. 「제미나이로 원문 가져오기」나 파일 첨부·드래그앤드랍으로 채울 수도 있어요.\n${ORIGINAL_FILE_HINT}`}
           spellCheck={false}
         />
       </div>

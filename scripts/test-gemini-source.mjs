@@ -32,6 +32,25 @@ await test('프롬프트: 제목·저자·스키마 포함, 같은 검색어면 
   assert.ok(p.includes('님의 침묵') && p.includes('한용운') && p.includes(SOURCE_SCHEMA));
   assert.equal(p, makeSourceLookupPrompt({ ...Q, title: '  님의 침묵 ' }));
   assert.notEqual(p, makeSourceLookupPrompt({ ...Q, author: '김소월' }));
+  assert.ok(!p.includes('번역본'), '문학 원문 프롬프트에는 성경 번역본을 넣지 않음');
+});
+
+await test('프롬프트: 성경 장르는 선택한 번역본을 명시하고 기본값은 개역개정', () => {
+  const psalm = { title: '시편 23편 1~6절', genre: 'bible' };
+  const p = makeSourceLookupPrompt(psalm);
+  assert.ok(p.includes('시편 23편 1~6절'));
+  assert.ok(p.includes('개역개정'), '번역본을 안 주면 개역개정이 기본');
+  assert.ok(p.includes('지정한 번역본'));
+  assert.ok(p.includes(SOURCE_SCHEMA));
+  assert.equal(p, makeSourceLookupPrompt({ ...psalm, bibleTranslation: 'NKRV' }));
+  const krv = makeSourceLookupPrompt({ ...psalm, bibleTranslation: 'KRV' });
+  assert.ok(krv.includes('개역한글'));
+  assert.ok(!krv.includes('개역개정'), '개역한글을 고르면 개역개정을 넣지 않음');
+  assert.notEqual(p, krv);
+  const niv = makeSourceLookupPrompt({ ...psalm, bibleTranslation: 'NIV' });
+  assert.ok(niv.includes('NIV'));
+  const unknown = makeSourceLookupPrompt({ ...psalm, bibleTranslation: 'UNKNOWN' });
+  assert.equal(unknown, p, '알 수 없는 번역본은 개역개정으로 정규화');
 });
 
 await test('응답 해석: 코드 블록 JSON → 원문 검토 결과 (줄바꿈·연 구분 보존)', () => {

@@ -42,10 +42,10 @@ export function stepGuide(p: StudioProject, stage: Stage): StepGuide {
   let todo = '';
   switch (stage) {
     case 'brief':
-      if (!p.brief.title.trim()) missing.push(p.brief.genre === 'bible' ? '성경 본문 범위(제목)' : '작품 제목');
+      if (!p.brief.title.trim()) missing.push(p.brief.genre === 'bible' ? '성경 본문 제목' : '작품 제목');
       if (!p.brief.originalText.trim()) missing.push('낭독할 원문');
       todo = p.brief.genre === 'bible'
-        ? '성경 범위를 고르고 「성경 본문 가져오기」를 누르면 기획 분석으로 넘어갈 수 있어요'
+        ? '제목과 번역본을 정하고 원문을 채우면 기획 분석으로 넘어갈 수 있어요. 제미나이로 가져오거나 파일을 첨부해도 돼요'
         : '제목과 원문을 채우면 기획 분석으로 넘어갈 수 있어요. 제미나이로 가져오거나 파일을 첨부해도 돼요';
       break;
     case 'analysis':

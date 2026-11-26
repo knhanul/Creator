@@ -34,6 +34,8 @@ export interface Brief {
   autoFilled?: Partial<Record<AutoFillField, string>>;
   /** 본문을 채운 첨부 파일 이름 (기존 프로젝트 하위 호환: optional) */
   originalFileName?: string;
+  /** 성경 장르에서 선택한 번역본 ID (기본: 개역개정 NKRV. 기존 프로젝트 하위 호환: optional) */
+  bibleTranslation?: string;
 }
 export type AutoFillField = 'title' | 'author' | 'source' | 'sourceUrl' | 'originalText';
 export interface Choice { id: string; label: string; description: string }
@@ -178,7 +180,7 @@ export type StudioAPI = {
     };
     /** 장르·저자·제목으로 Gemini에서 원문 가져오기 (본문에 채운 뒤 사용자가 검토·수정) */
     source: {
-      start(projectId: string, query: { title: string; author?: string; genre?: Genre | 'all' }): Promise<GeminiAnalysisStartResult>;
+      start(projectId: string, query: { title: string; author?: string; genre?: Genre | 'all'; bibleTranslation?: string }): Promise<GeminiAnalysisStartResult>;
       latest(projectId: string): Promise<GeminiJobRecord | null>;
     };
     /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */

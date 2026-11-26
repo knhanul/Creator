@@ -119,6 +119,45 @@ export function getBibleTranslation(id: string): BibleTranslationInfo | undefine
   return BIBLE_TRANSLATIONS.find(t => t.id === id);
 }
 
+/** 작품 정보 화면의 번역본 선택 목록 (짧은 표시 이름). 기존 API용 BIBLE_TRANSLATIONS와 ID를 공유한다. */
+export interface BibleEditionChoice {
+  id: string;
+  label: string;
+  nameEn: string;
+}
+
+export const DEFAULT_BIBLE_TRANSLATION = 'NKRV';
+
+export const BIBLE_EDITION_CHOICES: readonly BibleEditionChoice[] = [
+  { id: 'NKRV', label: '개역개정', nameEn: 'New Korean Revised Version' },
+  { id: 'KRV', label: '개역한글', nameEn: 'Korean Revised Version (1961)' },
+  { id: 'RNKSV', label: '새번역', nameEn: 'Revised New Korean Standard Version' },
+  { id: 'CL', label: '공동번역', nameEn: 'Common Translation' },
+  { id: 'KLBT', label: '현대인의 성경', nameEn: "Today's Korean Living Bible" },
+  { id: 'EASY', label: '쉬운성경', nameEn: 'Easy Korean Bible' },
+  { id: 'KJV', label: 'KJV', nameEn: 'King James Version' },
+  { id: 'NIV', label: 'NIV', nameEn: 'New International Version' }
+];
+
+export function getBibleEditionChoice(id: string | undefined): BibleEditionChoice {
+  return BIBLE_EDITION_CHOICES.find(t => t.id === id) || BIBLE_EDITION_CHOICES[0];
+}
+
+export function normalizeBibleTranslationId(id: string | undefined): string {
+  return BIBLE_EDITION_CHOICES.some(t => t.id === id) ? (id as string) : DEFAULT_BIBLE_TRANSLATION;
+}
+
+export function bibleTranslationLabel(id: string | undefined): string {
+  const c = getBibleEditionChoice(id);
+  return c.nameEn ? `${c.label} (${c.nameEn})` : c.label;
+}
+
+/** 기존 성경 API 선택기(BIBLE_TRANSLATIONS)에 없는 번역본은 기타 현대 번역본으로 매핑 */
+export function toCatalogBibleTranslationId(id: string | undefined): string {
+  const normalized = normalizeBibleTranslationId(id);
+  return getBibleTranslation(normalized) ? normalized : 'MODERN_OTHER';
+}
+
 /** 구약 39권 + 신약 27권 = 66권 표준 목록 */
 export const BIBLE_BOOKS: readonly BibleBook[] = [
   // 구약 (Old Testament, 1-39)

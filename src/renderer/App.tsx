@@ -9,6 +9,7 @@ import {
   WandSparkles, X
 } from 'lucide-react';
 import {BRAND} from '../shared/brand';
+import brandLogo from './assets/brand-logo.svg?url';
 import {AUDIENCES,GENRES,NEW_DRAFT_BRIEF,STAGE_ORDER,UNTITLED,isEmptyDraft,readyForHandoff,stageComplete} from '../shared/workflow';
 import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,getProjectBgmPrompt,guideFor,isAIStage,makeImageGenerationPrompt,makeMusicGenerationPrompt,makeVideoGenerationPrompt,phaseView} from '../shared/gemini-analysis';
 import type {AIStage,Brief,Genre,MediaAsset,ProjectSummary,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
@@ -60,7 +61,7 @@ const formatTime=(d:string)=>new Date(d).toLocaleTimeString('ko-KR',{hour:'2-dig
 const fileSize=(n:number)=>n<1024*1024?`${(n/1024).toFixed(0)} KB`:`${(n/1024/1024).toFixed(1)} MB`;
 const mediaUrl=(p:StudioProject,a:MediaAsset)=>`gomo-asset://media/${p.id}/${a.id}`;
 const sceneAsset=(p:StudioProject,s:Scene)=>p.assets.find(a=>a.id===s.assetId);
-function BrandIcon({size=34}:{size?:number}){return <div className="brand-icon" style={{width:size,height:size}}><span>g</span><i/></div>;}
+function BrandIcon({size=34}:{size?:number}){return <div className="brand-icon" style={{width:size,height:size}} aria-hidden="true"><img src={brandLogo} alt="" width={size} height={size}/></div>;}
 function Photo({project,asset}:{project:StudioProject,asset?:MediaAsset}){
   if(!asset)return <div className="media-placeholder"><ImageIcon size={23}/><span>미디어 미연결</span></div>;
   if(asset.kind==='image')return <img className="media-image" src={mediaUrl(project,asset)} alt={asset.name}/>;

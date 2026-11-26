@@ -8,7 +8,7 @@ export const STAGE_NAMES = { brief: '작품 등록', analysis: '기획 분석', 
 export const STAGE_ORDER = ['brief', 'analysis', 'storyboard', 'prompt', 'media', 'assembly', 'handoff'] as const;
 const now = () => new Date().toISOString();
 const emptyStage = (): StageRecord => ({ status: 'idle', raw: '', updatedAt: null });
-export const DEFAULT_BRIEF: Brief = { genre: 'bible', audience: 'kids', title: '', author: '', source: '', sourceUrl: '', originalText: '', rightsStatus: 'unreviewed', targetDuration: 120, aspectRatio: '16:9' };
+export const DEFAULT_BRIEF: Brief = { genre: 'bible', audience: 'kids', title: '', author: '', source: '', sourceUrl: '', originalText: '', rightsStatus: 'unreviewed', targetDuration: 120, aspectRatio: '16:9', bibleTranslation: 'NKRV' };
 export function makeProject(id: string, input: Brief, timestamp = now()): StudioProject {
   return { schema: INTERNAL.projectSchema, id, revision: 1, createdAt: timestamp, updatedAt: timestamp, archived: false,
     brief: { ...input }, selection: { styleId: '', directionId: '' }, analysis: null, scenes: [], assets: [],
