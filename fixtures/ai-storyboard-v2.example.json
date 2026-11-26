@@ -1,0 +1,13 @@
+{
+  "schema": "creator.storyboard.v2",
+  "scenes": [
+    {"id":"S01","title":"새벽 정원","narration":"새벽의 작은 정원에 빛이 내려앉았다.","captions":["새벽의 작은 정원에","빛이 내려앉았다."],"visual":"안개 낀 정원 전경, 오른쪽 위에서 아침 햇살","mood":"고요한 시작","durationSec":12,"kind":"image",
+     "shots":[{"durationSec":6,"motion":"zoom_in","strength":0.08,"note":"정원 전경"},{"durationSec":6,"motion":"focus_in","strength":0.12,"focus":{"x":0.7,"y":0.35},"note":"햇살 쪽으로"}],
+     "overlay":"light_rays","overlayStrength":0.4,"tone":"warm","transitionIn":{"type":"fade_black","durationSec":1.2}},
+    {"id":"S02","title":"바람의 인사","narration":"풀잎 사이로 부드러운 바람이 지나갔다.","captions":["풀잎 사이로 부드러운 바람이 지나갔다."],"visual":"풀잎이 흔들리는 풍경","mood":"살랑임","durationSec":10,"kind":"video",
+     "shots":[{"durationSec":3,"motion":"static","source":"image"},{"durationSec":7,"motion":"static","source":"video"}],
+     "overlay":"petals","tone":"bright","transitionIn":{"type":"dissolve","durationSec":0.8}},
+    {"id":"S03","title":"새로운 하루","narration":"오늘도 좋은 이야기가 시작된다.","captions":["오늘도 좋은 이야기가","다르게 시작된다."],"visual":"환하게 열린 오솔길","durationSec":11,"kind":"image",
+     "overlay":"sparkle","tone":"golden","transitionIn":"crossfade"}
+  ]
+}

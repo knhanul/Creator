@@ -10,6 +10,7 @@ import type {
   SourceSearchResponse,
   StageReviewFlags
 } from './source-types';
+import type { SceneEffects, TransitionType } from './effects';
 
 export type Genre = 'bible' | 'poetry' | 'essay' | 'novel' | 'classic';
 export type Audience = 'preschool' | 'kids' | 'teens' | 'adult' | 'family';
@@ -39,18 +40,29 @@ export interface Brief {
 }
 export type AutoFillField = 'title' | 'author' | 'source' | 'sourceUrl' | 'originalText';
 export interface Choice { id: string; label: string; description: string }
-export interface AnalysisResult { schema: 'creator.analysis.v1'; summary: string; emotion: string; keywords: string[]; styles: Choice[]; directions: Choice[]; cautions: string[]; }
-export interface StoryScene { id: string; title: string; narration: string; visual: string; durationSec: number; kind: 'image' | 'video'; }
-export interface StoryboardResult { schema: 'creator.storyboard.v1'; scenes: StoryScene[]; }
+/** 스타일 바이블: 모든 이미지·영상 프롬프트에 반복해 넣는 화풍·색·빛·주인공·금지 요소 (기존 분석 하위 호환: optional) */
+export interface VisualBible { styleSentence: string; palette: string[]; lighting: string; character: string; avoid: string[]; motionStyle: string; }
+export interface AnalysisResult { schema: 'creator.analysis.v1'; summary: string; emotion: string; keywords: string[]; styles: Choice[]; directions: Choice[]; cautions: string[];
+  /** 정서 흐름 (예: 고백 → 쉼 → 그늘 → 잔치 → 집으로) */
+  emotionArc?: string[];
+  visualBible?: VisualBible; }
+export interface StoryScene { id: string; title: string; narration: string; visual: string; durationSec: number; kind: 'image' | 'video';
+  /** 장면 효과: 샷(움직임)·분위기 효과·색감·전환·자막 줄 (스토리보드 v2, 기존 장면 하위 호환: optional) */
+  effects?: SceneEffects;
+  /** 이 장면의 감정·해석 메모 */
+  mood?: string; }
+export interface StoryboardResult { schema: 'creator.storyboard.v1' | 'creator.storyboard.v2'; scenes: StoryScene[]; }
 export interface PromptScene { sceneId: string; imagePrompt: string; videoPrompt?: string; negativePrompt?: string; }
 export interface PromptsResult { schema: 'creator.prompts.v1'; items: PromptScene[]; bgmPrompt: string; }
-export interface EditClip { sceneId: string; durationSec: number; transition: 'cut' | 'fade' | 'dissolve'; }
+export interface EditClip { sceneId: string; durationSec: number; transition: TransitionType;
+  /** 전환 길이(초). 없으면 장면 효과의 전환 길이 또는 기본값 */
+  transitionSec?: number; }
 export interface EditPlanResult { schema: 'creator.editplan.v1'; clips: EditClip[]; notes?: string; }
 export interface Scene extends StoryScene { imagePrompt: string; videoPrompt: string; negativePrompt: string; assetId: string | null; /** 영상 장면의 기준 이미지(이미지→동영상). 동영상이 assetId에 연결되어도 유지 */ referenceImageAssetId?: string | null; status: SceneStatus; }
 export interface MediaAsset { id: string; kind: AssetKind; name: string; relativePath: string; bytes: number; importedAt: string; }
 export interface StageRecord { status: 'idle' | 'review' | 'approved'; raw: string; updatedAt: string | null; }
 export interface AIRecords { analysis: StageRecord; storyboard: StageRecord; prompt: StageRecord; editplan: StageRecord; }
-export interface Assembly { clips: EditClip[]; subtitleMode: 'original' | 'none'; transitionDefault: 'fade' | 'cut' | 'dissolve'; bgmAssetId: string | null; }
+export interface Assembly { clips: EditClip[]; subtitleMode: 'original' | 'none'; transitionDefault: TransitionType; bgmAssetId: string | null; }
 export interface StudioProject {
   schema: 'creator.project.v1'; id: string; revision: number; createdAt: string; updatedAt: string; archived: boolean;
   brief: Brief;

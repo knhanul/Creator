@@ -39,7 +39,32 @@ test('미디어 미연결 편집안은 더빙 초안 생략',()=>assert.equal(to
 const pReady=structuredClone(p4);
 pReady.assets=pReady.scenes.map((s,i)=>({id:`media-${i}`,kind:s.kind,name:`scene-${i}.${s.kind==='image'?'png':'mp4'}`,relativePath:`assets/${s.kind}/scene-${i}.${s.kind==='image'?'png':'mp4'}`,bytes:500,importedAt:new Date().toISOString()}));
 pReady.scenes=pReady.scenes.map((s,i)=>({...s,assetId:`media-${i}`}));
-test('더빙 v2 초안 프로젝트·SRT 생성',()=>{const draft=toComposerDraft(pReady);assert.ok(draft);assert.equal(draft.project.version,2);assert.equal(draft.project.clips.length,3);assert.ok(draft.srt.includes('-->'));});
+test('더빙 v2 초안 프로젝트·SRT 생성',()=>{const draft=toComposerDraft(pReady);assert.ok(draft);assert.equal(draft.project.version,2);assert.ok(draft.project.clips.length>=3);assert.deepEqual([...new Set(draft.project.clips.map(c=>c.scene_id))],['S01','S02','S03']);assert.ok(draft.srt.includes('-->'));});
+
+// ── 화면 효과: 샷(움직임)·분위기 효과·전환·자막 줄 ──
+const fx=loadTS(join(root,'src/shared/effects.ts'));
+const {buildTimeline,withSceneEffects}=loadTS(join(root,'src/shared/workflow.ts'));
+test('v1 장면도 효과 자동 채움(샷·자막·전환)',()=>{assert.ok(p2.scenes.every(s=>s.effects&&s.effects.shots.length>=1&&s.effects.captions.length>=1&&s.effects.transitionIn));});
+test('자동 샷 길이 합 = 장면 길이',()=>{for(const s of p2.scenes){const sum=s.effects.shots.reduce((n,x)=>n+x.durationSec,0);assert.ok(Math.abs(sum-s.durationSec)<0.05,`${s.id} ${sum}`);}});
+test('이웃 샷은 같은 움직임이 아님',()=>{const all=p2.scenes.flatMap(s=>s.effects.shots.filter(x=>x.source!=='video').map(x=>x.motion));for(let i=1;i<all.length;i++)assert.notEqual(all[i],all[i-1]);});
+test('자막 줄 나누기는 글자를 바꾸지 않음',()=>{const t='여호와는 나의 목자시니 내가 부족함이 없으리로다';const caps=fx.splitCaptions(t,12);assert.ok(caps.length>=2);assert.equal(caps.join(' ').replace(/\s/g,''),t.replace(/\s/g,''));});
+const pv2=applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard-v2.example.json')));
+test('스토리보드 v2: AI 샷·효과 유지',()=>{const s=pv2.scenes[0];assert.equal(s.effects.shots.length,2);assert.equal(s.effects.shots[1].motion,'focus_in');assert.deepEqual(s.effects.shots[1].focus,{x:.7,y:.35});assert.equal(s.effects.overlay,'light_rays');assert.equal(s.effects.transitionIn.type,'fade_black');});
+test('스토리보드 v2: 원문과 다른 자막 줄은 원문으로 다시 나눔',()=>{const s=pv2.scenes[2];assert.ok(fx.captionsMatch(s.effects.captions,s.narration));assert.ok(!s.effects.captions.join('').includes('다르게'));});
+test('스토리보드 v2: 전환 별칭(crossfade→fade)',()=>assert.equal(pv2.scenes[2].effects.transitionIn.type,'fade'));
+test('스토리보드 v2: 영상 장면 정지+영상 샷',()=>{const s=pv2.scenes[1];assert.deepEqual(s.effects.shots.map(x=>x.source),['image','video']);});
+test('편집안: 확장 전환·별칭 허용',()=>{const plan=validateEditPlan({schema:'creator.editplan.v1',clips:[{sceneId:'S01',durationSec:10,transition:'fade_black',transitionSec:1.5},{sceneId:'S02',durationSec:8,transition:'crossfade'}]},p3.scenes);assert.equal(plan.clips[0].transition,'fade_black');assert.equal(plan.clips[0].transitionSec,1.5);assert.equal(plan.clips[1].transition,'fade');});
+test('편집안: 모르는 전환 거부',()=>assert.throws(()=>validateEditPlan({schema:'creator.editplan.v1',clips:[{sceneId:'S01',durationSec:10,transition:'spin'}]},p3.scenes)));
+const pfx=structuredClone(pv2);pfx.assembly.clips=pfx.scenes.map(s=>({sceneId:s.id,durationSec:s.durationSec*1.5,transition:s.effects.transitionIn.type}));
+pfx.assets=[{id:'i1',kind:'image',name:'a.png',relativePath:'assets/image/a.png',bytes:1,importedAt:''},{id:'v2',kind:'video',name:'b.mp4',relativePath:'assets/video/b.mp4',bytes:1,importedAt:''},{id:'r2',kind:'image',name:'b.png',relativePath:'assets/image/b.png',bytes:1,importedAt:''},{id:'i3',kind:'image',name:'c.png',relativePath:'assets/image/c.png',bytes:1,importedAt:''}];
+pfx.scenes[0].assetId='i1';pfx.scenes[1].assetId='v2';pfx.scenes[1].referenceImageAssetId='r2';pfx.scenes[2].assetId='i3';
+test('타임라인: 클립 길이에 맞춰 샷·자막 재배분',()=>{const tl=buildTimeline(pfx);assert.equal(tl.length,3);for(const seg of tl){assert.ok(Math.abs(seg.shots.at(-1).end-seg.end)<0.11);for(const c of seg.captions){assert.ok(c.start>=seg.start&&c.end<=seg.end+0.01);}}});
+test('composer: 샷마다 움직임·초점·효과·xfade 전환',()=>{const d=toComposerDraft(pfx);const c=d.project.clips;assert.equal(d.project.effects_spec,'gomo.effects.v1');assert.equal(c[0].motion,'zoom_in');assert.equal(c[0].transition.type,'fadeblack');assert.deepEqual(c[1].motion_focus,{x:.7,y:.35});assert.equal(c[0].overlay,'light_rays');assert.equal(c[0].tone,'warm');});
+test('composer: 영상 장면은 기준 이미지 정지 → 영상(fit_duration, 음소거)',()=>{const c=toComposerDraft(pfx).project.clips.filter(x=>x.scene_id==='S02');assert.deepEqual(c.map(x=>x.type),['image','video']);assert.equal(c[0].file,'assets/image/b.png');assert.equal(c[1].mute,true);assert.ok(c[1].fit_duration>0);});
+test('composer: 기준 이미지 없으면 영상 하나로 합침',()=>{const q=structuredClone(pfx);q.scenes[1].referenceImageAssetId=null;const c=toComposerDraft(q).project.clips.filter(x=>x.scene_id==='S02');assert.equal(c.length,1);assert.equal(c[0].type,'video');assert.equal(c[0].fit_duration,15);});
+test('composer: 자막이 줄 단위로 나뉘고 시간 순서',()=>{const items=toComposerDraft(pfx).project.subtitle.items;assert.ok(items.length>=4);for(let i=1;i<items.length;i++)assert.ok(items[i].start>=items[i-1].end);});
+test('효과 다시 채우기(자막 줄 유지)',()=>{const r=withSceneEffects(pv2,{regenerate:true});assert.deepEqual(r.scenes[0].effects.captions,pv2.scenes[0].effects.captions);assert.ok(r.scenes[0].effects.shots.length>=1);});
+test('스토리보드 프롬프트에 효과 설계 요청',()=>{const t=makeAIPrompt(p1,'storyboard');assert.ok(t.includes('creator.storyboard.v2')&&t.includes('focus_in')&&t.includes('captions'));});
 
 
 // ── 리모델링: 새 작품(빈 작품) · 자동 저장 버전 묶기 · 단계 안내 ──
