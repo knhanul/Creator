@@ -677,3 +677,32 @@ body{min-width:1280px;min-height:720px}
 .original-drop .original-text{flex:1;width:100%;min-height:180px}
 .original-drop.is-over{outline:2px dashed var(--color-primary);outline-offset:-2px;border-radius:9px;background:var(--color-primary-soft)}
 .original-drop-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--color-primary-soft) 85%,transparent);color:var(--color-primary);font-weight:700;font-size:14px;border-radius:9px;pointer-events:none;z-index:1}
+
+/* ── 화면 효과 (샷·분위기 효과·전환·자막 줄) ── */
+.effects-editor{display:grid;gap:10px;margin-top:6px;padding:12px;border:1px dashed var(--color-border-strong);border-radius:10px;background:var(--color-surface-raised)}
+.effects-editor-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.effects-editor-head small{color:var(--color-text-muted)}
+.shot-list{display:grid;gap:6px}
+.shot-list-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--color-text-secondary)}
+.shot-list-head em{font-style:normal;color:var(--color-warning)}
+.shot-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.shot-row select{width:auto;min-width:120px;padding:6px 30px 6px 9px;font-size:12px}
+.shot-no{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--color-primary-soft);color:var(--color-primary);font-size:11px;font-weight:700;flex:none}
+.shot-num{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--color-text-muted)}
+.shot-num input{width:64px;padding:6px 8px;font-size:12px}
+.effects-summary{display:grid;gap:6px;margin:8px 0 2px}
+.effects-chips{display:flex;flex-wrap:wrap;gap:4px}
+.fx-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--color-primary-soft);color:var(--color-primary);font-size:11px;font-weight:600}
+.fx-chip small{font-weight:400;opacity:.8}
+.fx-step{display:inline-flex;align-items:center;gap:4px}
+.fx-arrow{color:var(--color-text-muted);font-size:11px}
+.effects-meta{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--color-text-muted)}
+.scene-mood{font-size:12px;color:var(--color-text-secondary);margin-top:2px}
+.emotion-arc{display:flex;flex-wrap:wrap;gap:4px;margin-top:10px;font-size:12px;color:var(--color-text-secondary)}
+.emotion-arc span{padding:2px 8px;border-radius:6px;background:var(--color-hover)}
+.emotion-arc span+span::before{content:'→ ';color:var(--color-text-muted)}
+.visual-bible{margin-bottom:14px}
+.visual-bible dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:10px 0 0;font-size:13px}
+.visual-bible dt{color:var(--color-text-muted);font-weight:600}
+.visual-bible dd{margin:0;color:var(--color-text);overflow-wrap:anywhere}
+.assembly-shots{display:block;color:var(--color-text-muted);margin-top:2px}

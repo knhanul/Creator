@@ -293,7 +293,7 @@ export async function exportFolder(id:string):Promise<string|null>{
     await writeFile(join(output,'captions.srt'),composer.srt,'utf8');
   }
   await writeFile(join(output,'README_더빙프로그램_연결.txt'),
-    `고모 창작실 제작 패키지\r\n\r\n작품: ${p.brief.title}\r\n\r\n이 폴더의 gomo-handoff.json은 편집 설계를 위한 교환 데이터입니다.\r\ngomo-handoff.json은 별도 교환 포맷입니다.\r\n${composer?'composer_project.json과 captions.srt는 영상 합성기(version 2)용 호환 초안입니다. 설치된 더빙 프로그램에서 실제로 열리는지 확인 후 사용하세요.':'아직 미디어 또는 편집안이 완비되지 않아 composer_project.json은 생성하지 않았습니다. 준비 완료 후 다시 내보내 주세요.'}\r\n원문·제작 정보는 project.json에서 확인할 수 있습니다.\r\n`, 'utf8');
+    `고모 창작실 제작 패키지\r\n\r\n작품: ${p.brief.title}\r\n\r\n이 폴더의 gomo-handoff.json은 편집 설계를 위한 교환 데이터입니다.\r\ngomo-handoff.json은 별도 교환 포맷입니다.\r\n${composer?'composer_project.json과 captions.srt는 영상 합성기(version 2)용 호환 초안입니다. 설치된 더빙 프로그램에서 실제로 열리는지 확인 후 사용하세요.\r\n\r\n[화면 효과 gomo.effects.v1]\r\n한 장면(같은 이미지)을 여러 샷 클립으로 나눴습니다. 같은 장면의 클립은 scene_id가 같고 shot_index로 순서를 표시합니다.\r\n- motion / motion_strength / motion_focus: 확대·축소·좌우상하 이동·초점 다가가기(켄 번스)\r\n- overlay / overlay_strength: 빛줄기·반짝임·안개·별빛 같은 분위기 효과\r\n- tone: 색감(따뜻하게·노을·밤 등)\r\n- transition.type: FFmpeg xfade 이름(fade, fadeblack, fadewhite, circleopen, slideleft 등)\r\n자막(subtitle.items)은 원문을 줄 단위로 나눠 시간을 배분했습니다.\r\n편집 프로그램이 아직 모르는 필드는 무시해도 영상은 만들어집니다.':'아직 미디어 또는 편집안이 완비되지 않아 composer_project.json은 생성하지 않았습니다. 준비 완료 후 다시 내보내 주세요.'}\r\n원문·제작 정보는 project.json에서 확인할 수 있습니다.\r\n`, 'utf8');
   return output;
 }
 

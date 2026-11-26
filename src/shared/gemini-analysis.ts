@@ -29,8 +29,26 @@ export function makeImageGenerationPrompt(project: StudioProject, sceneId: strin
   if (scene.negativePrompt?.trim()) {
     lines.push(`Negative prompt (avoid): ${scene.negativePrompt.trim()}`);
   }
+  const bible = visualBibleLine(project);
+  if (bible) lines.push(bible);
+  lines.push(MOTION_READY_COMPOSITION);
   lines.push('Important: Do not render any text, letters, subtitles, or watermarks inside the image.');
   return lines.join('\n');
+}
+
+/** 편집기에서 확대·이동·초점 다가가기를 하므로 여유 있는 구도로 */
+export const MOTION_READY_COMPOSITION = 'Composition: wide, uncluttered framing with generous margins on all sides so the image can be slowly zoomed and panned (Ken Burns) without cropping the main subject; keep key subjects away from the edges; keep the bottom quarter simple and low-contrast for subtitles.';
+
+/** 스타일 바이블(화풍 문장·주인공 고정 묘사·금지 요소)을 생성 요청 한 줄로 */
+export function visualBibleLine(project: StudioProject): string {
+  const b = project.analysis?.visualBible;
+  if (!b) return '';
+  const parts: string[] = [];
+  if (b.styleSentence) parts.push(`Style: ${b.styleSentence}`);
+  if (b.palette?.length) parts.push(`Palette: ${b.palette.join(', ')}`);
+  if (b.character) parts.push(`Recurring character (keep identical in every scene): ${b.character}`);
+  if (b.avoid?.length) parts.push(`Always avoid: ${b.avoid.join(', ')}`);
+  return parts.join('\n');
 }
 
 /** 작품의 배경음악 프롬프트 조회 (project.bgmPrompt 우선, 없으면 기존 ai.prompt.raw JSON에서 추출) */
@@ -105,6 +123,8 @@ export function makeVideoGenerationPrompt(project: StudioProject, sceneId: strin
       ];
   const style = visualStyleConsistency(project);
   if (style) lines.push(`Visual style consistency: ${style}`);
+  const bible = visualBibleLine(project);
+  if (bible) lines.push(bible);
   if (scene.negativePrompt?.trim()) {
     lines.push(`Negative prompt (avoid): ${scene.negativePrompt.trim()}`);
   }
@@ -144,7 +164,7 @@ export const STAGE_META: Record<AIStage, StageMeta> = {
     upstreamChanged: '요청을 보낸 뒤 작품 정보(원문·장르·대상 등)가 바뀌어 자동으로 적용하지 않았습니다.'
   },
   storyboard: {
-    name: '스토리보드', schema: 'creator.storyboard.v1', startLabel: 'AI 장면 구성 시작', restartLabel: 'AI 장면 구성 다시 시작', doneLabel: '장면 구성 완료', resultLabel: 'STORYBOARD RESULT',
+    name: '스토리보드', schema: 'creator.storyboard.v2', startLabel: 'AI 장면 구성 시작', restartLabel: 'AI 장면 구성 다시 시작', doneLabel: '장면 구성 완료', resultLabel: 'STORYBOARD RESULT',
     resetWarning: p => p.scenes.length ? '다시 구성하면 바뀐 장면의 생성 프롬프트·미디어 연결과 최종 편집안이 초기화됩니다. 계속할까요?' : null,
     prerequisite: p => !p.analysis || !p.selection.styleId || !p.selection.directionId ? '기획 분석 후 화풍과 연출안을 먼저 선택해 주세요.' : null,
     upstreamChanged: '요청을 보낸 뒤 작품 정보나 선택한 화풍·연출안이 바뀌어 자동으로 적용하지 않았습니다.'
