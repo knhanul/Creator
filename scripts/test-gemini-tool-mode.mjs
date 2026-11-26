@@ -201,5 +201,55 @@ await test('칩에 mat-icon(movie)+동영상 라벨이 섞여 있어도 감지�
   assert.equal(sim.clicks, 1);
 });
 
+
+await test('open Shadow DOM 안의 팝업 메뉴에서 동영상 만들기를 찾아 전송', async () => {
+  const { g, sim, doc } = setup({ shadowPopup: true });
+  const r = await g.submit({ prompt: '쉐도우 동영상', marker, stage: 'video' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+  assert.equal(sim.toolMode, 'video');
+  assert.equal(sim.sidebarClicks, 0);
+  const host = doc.getElementById('gomo-toolbox-host');
+  assert.ok(host && host.shadowRoot, '메뉴는 open shadowRoot 안에 있어야 함');
+  assert.equal(sim.clicks, 1);
+});
+
+await test('button/role=menuitem 없이 div>span 텍스트만 있는 메뉴 항목도 클릭', async () => {
+  const { g, sim, doc } = setup({ divOnlyItems: true });
+  const r = await g.submit({ prompt: '디브 동영상', marker, stage: 'video' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+  assert.equal(sim.toolMode, 'video');
+  assert.equal(sim.sidebarClicks, 0);
+  assert.equal(doc.querySelector('.gemini-tools-panel, [role="menu"]'), null);
+});
+
+await test('실패 시 Escape가 안 먹혀도 X로 바뀐 + 버튼을 눌러 메뉴를 닫음', async () => {
+  const { g, sim, doc } = setup({ blankPopup: true, ignoreEscape: true });
+  const r = await g.submit({ prompt: '빈 메뉴', marker, stage: 'video' });
+  assert.equal(r.sendState, 'not_sent');
+  assert.equal(r.errorCode, 'TOOL_MODE_SELECT_FAILED');
+  assert.equal(sim.clicks, 0);
+  assert.equal(doc.querySelector('.blank-tool-shell'), null, '실패 후 빈 메뉴 껍데기가 남아 있으면 안 됨');
+  const plus = doc.querySelector('[data-test-id="open-tools-button"]');
+  assert.equal(plus.getAttribute('aria-expanded'), 'false');
+  assert.ok(sim.plusClicks >= 2, '열기 + 닫기(X) 클릭이 있어야 함');
+});
+
+await test('동영상 만들기 후 새 채팅 확인 다이얼로그의 새 채팅을 누르고, 사이드바 새 채팅은 누르지 않음', async () => {
+  const { g, sim, doc } = setup({ newChatConfirm: true });
+  assert.ok(doc.querySelector('[data-test-id="sidebar-new-chat"]'), '사이드바에 새 채팅 버튼이 있어야 함');
+  const r = await g.submit({ prompt: '새 채팅 동영상', marker, stage: 'video' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+  assert.equal(sim.newChatConfirmClicks, 1);
+  assert.equal(sim.sidebarNewChatClicks, 0, '사이드바 새 채팅을 누르면 안 됨');
+  assert.equal(sim.sidebarClicks, 0);
+  assert.equal(sim.toolMode, 'video');
+  assert.ok(sim.sentTexts[0].includes('새 채팅 동영상'));
+  assert.equal(doc.querySelector('[role="dialog"].new-chat-confirm, [data-test-id="confirm-new-chat"]'), null);
+  assert.equal(g.readActiveToolMode().mode, 'video');
+});
+
 console.log(`\n${checks} gemini-tool-mode (jsdom 모형) checks finished — 실제 Gemini DOM 검증 아님`);
 if (process.exitCode) process.exit(process.exitCode);

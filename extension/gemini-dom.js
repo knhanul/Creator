@@ -364,15 +364,88 @@
       return null;
     }
 
+    /** open Shadow DOM까지 재귀적으로 querySelectorAll */
+    function queryAllDeep(root, selector) {
+      const out = [];
+      const seen = new Set();
+      const visit = (node) => {
+        if (!node) return;
+        if (node.nodeType === 1 && node.matches) {
+          try { if (node.matches(selector) && !seen.has(node)) { seen.add(node); out.push(node); } } catch { /* ignore */ }
+        }
+        let matches = [];
+        try { if (node.querySelectorAll) matches = Array.from(node.querySelectorAll(selector)); } catch { matches = []; }
+        for (const el of matches) {
+          if (!seen.has(el)) { seen.add(el); out.push(el); }
+        }
+        let all = [];
+        try { if (node.querySelectorAll) all = Array.from(node.querySelectorAll('*')); } catch { all = []; }
+        for (const el of all) {
+          if (el.shadowRoot) visit(el.shadowRoot);
+        }
+      };
+      visit(root || doc);
+      return out;
+    }
+
+    function walkElementsDeep(root, fn) {
+      const visitTree = (node, includeSelf) => {
+        if (!node) return;
+        if (includeSelf && node.nodeType === 1) fn(node);
+        let all = [];
+        try { if (node.querySelectorAll) all = Array.from(node.querySelectorAll('*')); } catch { all = []; }
+        const seen = new Set();
+        for (const el of all) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          fn(el);
+          if (el.shadowRoot) visitTree(el.shadowRoot, false);
+        }
+      };
+      const startNode = root || doc;
+      visitTree(startNode, startNode.nodeType === 1);
+    }
+
+    function composedContains(root, el) {
+      if (!root || !el) return false;
+      try { if (root.contains && root.contains(el)) return true; } catch { /* ignore */ }
+      let cur = el;
+      const guard = new Set();
+      while (cur && !guard.has(cur)) {
+        guard.add(cur);
+        if (cur === root) return true;
+        const rn = cur.getRootNode && cur.getRootNode();
+        if (rn && rn !== doc && rn.host) { cur = rn.host; continue; }
+        cur = cur.parentElement || cur.parentNode;
+      }
+      return false;
+    }
+
+    function closestDeep(el, selector) {
+      let cur = el;
+      const guard = new Set();
+      while (cur && !guard.has(cur)) {
+        guard.add(cur);
+        if (cur.nodeType === 1) {
+          try { if (cur.matches && cur.matches(selector)) return cur; } catch { /* ignore */ }
+          try { const hit = cur.closest && cur.closest(selector); if (hit) return hit; } catch { /* ignore */ }
+        }
+        const rn = cur.getRootNode && cur.getRootNode();
+        if (rn && rn !== doc && rn.host) { cur = rn.host; continue; }
+        cur = cur.parentElement || cur.parentNode;
+      }
+      return null;
+    }
+
     function isInSidebar(el) {
       if (!el) return true;
-      return !!(el.closest && el.closest('nav, aside, bard-sidenav, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar'));
+      return !!closestDeep(el, 'nav, aside, bard-sidenav, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar');
     }
 
     function isExcludedFromToolMenu(el) {
       if (!el) return true;
       if (isInSidebar(el)) return true;
-      return !!(el.closest && el.closest('model-response, user-query, #chat-history, bard-sidenav, [data-test-id*="conversation"]'));
+      return !!closestDeep(el, 'model-response, user-query, #chat-history, bard-sidenav, [data-test-id*="conversation"]');
     }
 
     /** mat-icon 리가처("videocam", "movie")가 textContent에 섞이지 않도록 순수 라벨만 추출 */
@@ -414,7 +487,16 @@
 
     function clickableTarget(el) {
       if (!el) return el;
-      return (el.closest && el.closest('button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="button"], a, mat-list-item, li')) || el;
+      const hit = closestDeep(el, 'button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="button"], a, mat-list-item, li');
+      if (hit && !isInSidebar(hit)) return hit;
+      let cur = el;
+      for (let i = 0; i < 4 && cur; i++) {
+        if (cur.nodeType === 1 && cur.hasAttribute && cur.hasAttribute('tabindex') && cur !== doc.body) return cur;
+        const rn = cur.getRootNode && cur.getRootNode();
+        if (rn && rn !== doc && rn.host && !cur.parentElement) { cur = rn.host; continue; }
+        cur = cur.parentElement;
+      }
+      return el.parentElement || el;
     }
 
     /** 스크롤로 잘린 항목도 포함. 조상 aria-hidden은 오버레이가 그 안에 열리는 경우를 위해 보지 않음 */
@@ -433,9 +515,29 @@
       return true;
     }
 
+    /** Angular/Material 호환: pointer/mouse 시퀀스 후 click은 한 번만 */
+    function realClick(el) {
+      if (!el) return;
+      try {
+        if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      } catch { /* ignore */ }
+      const opts = { bubbles: true, cancelable: true, composed: true, view: win, button: 0, buttons: 1 };
+      const fire = (type) => {
+        try {
+          if (type.startsWith('pointer') && win.PointerEvent) el.dispatchEvent(new win.PointerEvent(type, Object.assign({ pointerId: 1, pointerType: 'mouse' }, opts)));
+          else el.dispatchEvent(new win.MouseEvent(type, opts));
+        } catch { /* ignore */ }
+      };
+      fire('pointerdown');
+      fire('mousedown');
+      fire('pointerup');
+      fire('mouseup');
+      el.click();
+    }
+
     function detectChipMode(el) {
       if (!el) return null;
-      if (el.closest && el.closest('[role="menu"], .cdk-overlay-pane, mat-menu, [contenteditable="true"], rich-textarea')) return null;
+      if (closestDeep(el, '[role="menu"], .cdk-overlay-pane, mat-menu, [contenteditable="true"], rich-textarea, [role="dialog"]')) return null;
       const parts = labelCandidates(el, 40);
       for (const t of parts) {
         if (/^(동영상|video)$/i.test(t)) return 'video';
@@ -470,34 +572,49 @@
           try { if (cur.matches(list[i].sel)) return cur; } catch { /* ignore */ }
         }
         const hasSend = find('sendButton', cur);
-        const hasPlus = find('toolMenuButton', cur, (el) => !isInSidebar(el) && el !== comp && !comp.contains(el));
-        if (hasSend || hasPlus) return cur;
+        const plusHit = findDeep('toolMenuButton', cur, (el) => !isInSidebar(el) && el !== comp && !composedContains(comp, el));
+        if (hasSend || plusHit) return cur;
         cur = cur.parentElement;
       }
       return last;
     }
 
     function isComposerToolButton(el, area) {
-      if (!el || !area || !area.contains(el)) return false;
+      if (!el || !area || !composedContains(area, el)) return false;
       if (isInSidebar(el)) return false;
-      if (el.closest && el.closest('rich-textarea, [contenteditable="true"]')) return false;
+      if (closestDeep(el, 'rich-textarea, [contenteditable="true"]')) return false;
       const id = el.getAttribute('data-test-id') || '';
       if (id === 'send-button' || id === 'stop-button' || id === 'tool-chip') return false;
       if (el.getAttribute('data-node-type') === 'speech_dictation_mic_button') return false;
       if (el.classList && el.classList.contains('tool-chip')) return false;
       const t = elementText(el);
-      if (/(노트북|notebook|새 대화|new chat|send message|메시지 보내기|전송|마이크|microphone|\bmic\b|stop response|생성 중지)/i.test(t)) return false;
+      if (/(노트북|notebook|새 대화|new chat|send message|메시지 보내기|전송|마이크|microphone|\bmic\b|stop response|생성 중지)/i.test(t) && !/닫기|close|추가|도구|tools|\+/i.test(t)) return false;
       return true;
+    }
+
+    function findDeep(group, scope, filter) {
+      const list = SEL[group] || [];
+      const root = scope || doc;
+      for (let i = 0; i < list.length; i++) {
+        const nodes = queryAllDeep(root, list[i].sel);
+        for (const el of nodes) {
+          if (!isVisible(el) && !isMenuItemDisplayed(el)) continue;
+          if (filter && !filter(el)) continue;
+          return { el, selector: list[i].sel, index: i };
+        }
+      }
+      return null;
     }
 
     function findToolMenuButton(area) {
       if (!area) return null;
-      const hit = find('toolMenuButton', area, (el) => isComposerToolButton(el, area));
+      const hit = findDeep('toolMenuButton', area, (el) => isComposerToolButton(el, area));
       if (hit) return hit;
-      let nodes;
-      try { nodes = area.querySelectorAll('button'); } catch { return null; }
-      for (const el of nodes) {
-        if (!isVisible(el) || !isComposerToolButton(el, area)) continue;
+      let found = null;
+      walkElementsDeep(area, (el) => {
+        if (found || (el.tagName || '').toLowerCase() !== 'button') return;
+        if (!isVisible(el) && !isMenuItemDisplayed(el)) return;
+        if (!isComposerToolButton(el, area)) return;
         const t = elementText(el);
         let icon = '';
         try {
@@ -505,10 +622,10 @@
           icon = ic ? ((ic.getAttribute('fonticon') || '') + ' ' + (ic.textContent || '')) : '';
         } catch { /* ignore */ }
         if (/^\s*(\+|x|×)\s*$/i.test(t) || /추가|도구|\btools\b|\badd\b|\bplus\b|닫기/i.test(t) || /\b(add|plus|close)\b/i.test(icon) || el.getAttribute('aria-haspopup') === 'menu' || el.getAttribute('aria-expanded') === 'true') {
-          return { el, selector: '(composer-area plus fallback)', index: -1 };
+          found = { el, selector: '(composer-area plus fallback)', index: -1 };
         }
-      }
-      return null;
+      });
+      return found;
     }
 
     function placeholderMode() {
@@ -536,19 +653,22 @@
       if (!area) return null;
       const seen = new Set();
       const candidates = [];
-      const hits = findAll('toolChip', area);
-      for (const el of (hits.els || [])) {
-        if (!isVisible(el) || !area.contains(el) || isInSidebar(el) || seen.has(el)) continue;
-        seen.add(el);
-        candidates.push(el);
-      }
-      try {
-        for (const el of area.querySelectorAll('button, [role="button"], [data-test-id*="chip"]')) {
-          if (!isVisible(el) || isInSidebar(el) || seen.has(el)) continue;
-          if (el.closest && el.closest('rich-textarea, [contenteditable="true"], [role="menu"]')) continue;
-          if (detectChipMode(el)) { seen.add(el); candidates.push(el); }
+      const list = SEL.toolChip || [];
+      for (let i = 0; i < list.length; i++) {
+        for (const el of queryAllDeep(area, list[i].sel)) {
+          if (!isVisible(el) || !composedContains(area, el) || isInSidebar(el) || seen.has(el)) continue;
+          seen.add(el);
+          candidates.push(el);
         }
-      } catch { /* ignore */ }
+      }
+      walkElementsDeep(area, (el) => {
+        const tag = (el.tagName || '').toLowerCase();
+        const role = el.getAttribute('role') || '';
+        if (tag !== 'button' && role !== 'button' && !((el.getAttribute('data-test-id') || '').includes('chip'))) return;
+        if (!isVisible(el) || isInSidebar(el) || seen.has(el)) return;
+        if (closestDeep(el, 'rich-textarea, [contenteditable="true"], [role="menu"], [role="dialog"]')) return;
+        if (detectChipMode(el)) { seen.add(el); candidates.push(el); }
+      });
       for (const el of candidates) {
         const mode = detectChipMode(el);
         if (mode) return { el, mode };
@@ -565,15 +685,13 @@
       return { mode: null, el: null, via: null };
     }
 
-    /** 모든 toolMenuItem 셀렉터를 합집합으로 모은다(findAll의 첫 일치만 쓰는 방식은 실제 Gemini에서 빈 결과를 냄) */
+    /** 모든 toolMenuItem 셀렉터를 Shadow DOM 합집합으로 모은다 */
     function findToolMenuItems() {
       const seen = new Set();
       const out = [];
       const list = SEL.toolMenuItem || [];
       for (let i = 0; i < list.length; i++) {
-        let nodes;
-        try { nodes = Array.from(doc.querySelectorAll(list[i].sel)); } catch { continue; }
-        for (const el of nodes) {
+        for (const el of queryAllDeep(doc, list[i].sel)) {
           if (seen.has(el) || !isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) continue;
           seen.add(el);
           out.push(el);
@@ -583,14 +701,26 @@
     }
 
     const MENU_OPEN_HINTS = /파일 업로드|Drive에서 파일|업로드 더보기|Google 검색|이미지 만들기|동영상 만들기|음악 만들기|Create (an?\s+)?(image|video|music|videos?)/i;
+    const NEW_CHAT_DIALOG_RE = /새 채팅을 시작하시겠습니까|이 도구를 선택하면 새 채팅|start a new chat\??|this tool will start a new chat|start new chat\?/i;
+    const NEW_CHAT_CONFIRM_RE = /^(새 채팅|new chat|start new chat)$/i;
 
     function scanClickable(pred) {
       const out = [];
-      let nodes;
-      try { nodes = doc.querySelectorAll('button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="button"], li, a, mat-list-item'); } catch { return out; }
+      const seen = new Set();
+      const nodes = [
+        ...queryAllDeep(doc, 'button'),
+        ...queryAllDeep(doc, '[role="menuitem"]'),
+        ...queryAllDeep(doc, '[role="menuitemradio"]'),
+        ...queryAllDeep(doc, '[role="option"]'),
+        ...queryAllDeep(doc, '[role="button"]'),
+        ...queryAllDeep(doc, 'li'),
+        ...queryAllDeep(doc, 'a'),
+        ...queryAllDeep(doc, 'mat-list-item')
+      ];
       for (const el of nodes) {
-        if (!isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) continue;
-        if (el.closest && el.closest('rich-textarea, [contenteditable="true"]')) continue;
+        if (seen.has(el) || !isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) continue;
+        if (closestDeep(el, 'rich-textarea, [contenteditable="true"]')) continue;
+        seen.add(el);
         const labels = labelCandidates(el, 40);
         if (!labels.length) continue;
         if (pred(labels, el)) out.push(el);
@@ -598,9 +728,35 @@
       return out;
     }
 
+    function hasOpenMenuHint() {
+      if (scanClickable((labels) => labels.some((s) => MENU_OPEN_HINTS.test(s))).length) return true;
+      let found = false;
+      walkElementsDeep(doc, (el) => {
+        if (found || !isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) return;
+        if (closestDeep(el, 'rich-textarea, [contenteditable="true"], [role="dialog"]')) return;
+        const labels = labelCandidates(el, 40);
+        if (labels.some((s) => MENU_OPEN_HINTS.test(s))) found = true;
+      });
+      return found;
+    }
+
     function isToolMenuOpen() {
       if (findToolMenuItems().length) return true;
-      return scanClickable((labels) => labels.some((s) => MENU_OPEN_HINTS.test(s))).length > 0;
+      return hasOpenMenuHint();
+    }
+
+    /** 태그/role에 의존하지 않고, 순수 라벨이 목표와 일치하는 가장 안쪽 요소를 찾는다 */
+    function findLabelElementDeep(mode) {
+      const candidates = [];
+      walkElementsDeep(doc, (el) => {
+        if (!isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) return;
+        if (closestDeep(el, 'rich-textarea, [contenteditable="true"], [role="dialog"]')) return;
+        const labels = labelCandidates(el, 40);
+        if (menuLabelMatches(labels, mode)) candidates.push(el);
+      });
+      if (!candidates.length) return null;
+      const leaf = candidates.find((el) => !candidates.some((other) => other !== el && composedContains(el, other))) || candidates[candidates.length - 1];
+      return clickableTarget(leaf);
     }
 
     function findMenuItemForMode(mode) {
@@ -609,28 +765,80 @@
         if (menuLabelMatches(labelCandidates(el, 40), mode)) return clickableTarget(el);
       }
       const found = scanClickable((labels) => menuLabelMatches(labels, mode));
-      return found.length ? clickableTarget(found[0]) : null;
+      if (found.length) return clickableTarget(found[0]);
+      return findLabelElementDeep(mode);
     }
 
-    function clickToolItem(el) {
+    function menuSearchStats(mode) {
+      const items = findToolMenuItems();
+      const matches = mode ? (scanClickable((labels) => menuLabelMatches(labels, mode)).length) : 0;
+      return { menuItemCount: items.length, labelMatches: matches };
+    }
+
+    function dialogText(el) {
+      const v = visibleLabel(el);
+      if (v.all && v.all.length > 0 && v.all.length <= 400) return v.all;
+      let raw = '';
       try {
-        if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      } catch { /* ignore */ }
-      el.click();
+        const clone = el.cloneNode(true);
+        try { clone.querySelectorAll('mat-icon, .material-icons, svg, [aria-hidden="true"]').forEach((n) => n.remove()); } catch { /* ignore */ }
+        raw = normalize(clone.textContent || '');
+      } catch { raw = normalize(el.textContent || ''); }
+      return raw.slice(0, 400);
     }
 
-    function closeToolMenu(area) {
-      // 항목을 못 찾아 isToolMenuOpen()이 false여도, 화면에 열린 팝업을 Escape로 닫는다
+    /** 「새 채팅을 시작하시겠습니까?」 확인 모달. 사이드바의 「새 채팅」은 절대 반환하지 않음 */
+    function findNewChatConfirmDialog() {
+      const hosts = [
+        ...queryAllDeep(doc, '[role="dialog"]'),
+        ...queryAllDeep(doc, 'mat-dialog-container'),
+        ...queryAllDeep(doc, '[aria-modal="true"]'),
+        ...queryAllDeep(doc, '.cdk-overlay-pane')
+      ];
+      const seen = new Set();
+      for (const dlg of hosts) {
+        if (seen.has(dlg) || isInSidebar(dlg)) continue;
+        seen.add(dlg);
+        const text = dialogText(dlg);
+        if (!NEW_CHAT_DIALOG_RE.test(text)) continue;
+        let button = null;
+        const btns = [
+          ...queryAllDeep(dlg, 'button'),
+          ...queryAllDeep(dlg, '[role="button"]')
+        ];
+        for (const el of btns) {
+          if (isInSidebar(el) || !isMenuItemDisplayed(el)) continue;
+          const labels = labelCandidates(el, 40);
+          if (labels.some((s) => NEW_CHAT_CONFIRM_RE.test(s))) { button = clickableTarget(el); break; }
+        }
+        if (button) return { dialog: dlg, button };
+      }
+      return null;
+    }
+
+    function isPlusExpanded(btn) {
+      if (!btn || !btn.el) return false;
+      const el = btn.el;
+      if (el.getAttribute('aria-expanded') === 'true') return true;
+      const t = elementText(el);
+      let icon = '';
+      try {
+        const ic = el.querySelector('mat-icon');
+        icon = ic ? ((ic.getAttribute('fonticon') || '') + ' ' + (ic.textContent || '')) : '';
+      } catch { /* ignore */ }
+      return /닫기|close|^\s*[×x]\s*$/i.test(t) || /\bclose\b/i.test(icon);
+    }
+
+    function closeToolMenu(area, opts) {
+      const force = !!(opts && opts.force);
       try {
         const ev = new win.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
         (doc.activeElement || doc.body || doc).dispatchEvent(ev);
         doc.dispatchEvent(ev);
       } catch { /* ignore */ }
-      const stillOpen = isToolMenuOpen();
       const btn = findToolMenuButton(area);
-      const expanded = btn && btn.el.getAttribute('aria-expanded') === 'true';
-      if ((stillOpen || expanded) && btn) {
-        try { btn.el.click(); } catch { /* ignore */ }
+      if ((force || isToolMenuOpen() || isPlusExpanded(btn)) && (isToolMenuOpen() || isPlusExpanded(btn)) && btn) {
+        try { realClick(btn.el); } catch { /* ignore */ }
       }
     }
 
@@ -638,11 +846,11 @@
       if (isToolMenuOpen()) return { ok: true };
       const btn = findToolMenuButton(area);
       if (!btn) return { ok: false, reason: 'no_plus_button' };
-      try { btn.el.click(); } catch { return { ok: false, reason: 'plus_click_failed' }; }
+      try { realClick(btn.el); } catch { return { ok: false, reason: 'plus_click_failed' }; }
       const opened = await waitFor(() => (isToolMenuOpen() ? true : null), timing.toolModeWaitMs || 4000);
       if (!opened) {
-        closeToolMenu(area);
-        return { ok: false, reason: 'menu_items_not_found' };
+        closeToolMenu(area, { force: true });
+        return { ok: false, reason: 'menu_items_not_found', stats: menuSearchStats() };
       }
       return { ok: true };
     }
@@ -650,47 +858,68 @@
     async function clearToolMode(area, current) {
       const chip = readActiveToolChip(area);
       if (chip && chip.el) {
-        const dismiss = find('toolChipDismiss', chip.el) || (chip.el.parentElement ? find('toolChipDismiss', chip.el.parentElement) : null);
+        const dismiss = findDeep('toolChipDismiss', chip.el) || (chip.el.parentElement ? findDeep('toolChipDismiss', chip.el.parentElement) : null);
         try {
-          if (dismiss && dismiss.el) dismiss.el.click();
-          else chip.el.click();
+          if (dismiss && dismiss.el) realClick(dismiss.el);
+          else realClick(chip.el);
         } catch { /* ignore */ }
-        const gone = await waitFor(() => (readActiveToolMode(area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
+        const gone = await waitFor(() => (readActiveToolMode(findComposerArea() || area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
         if (gone) { closeToolMenu(area); return true; }
       }
       const opened = await openToolMenu(area);
       if (opened.ok) {
         const item = findMenuItemForMode(current);
         if (item) {
-          try { clickToolItem(item); } catch { /* ignore */ }
-          const gone = await waitFor(() => (readActiveToolMode(area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
-          closeToolMenu(area);
+          try { realClick(item); } catch { /* ignore */ }
+          await acceptNewChatIfNeeded();
+          const gone = await waitFor(() => (readActiveToolMode(findComposerArea()).mode === null ? true : null), timing.toolModeWaitMs || 4000);
+          closeToolMenu(findComposerArea() || area);
           if (gone) return true;
         } else {
-          closeToolMenu(area);
+          closeToolMenu(area, { force: true });
         }
       }
-      return readActiveToolMode(area).mode === null;
+      return readActiveToolMode(findComposerArea() || area).mode === null;
+    }
+
+    async function acceptNewChatIfNeeded() {
+      const confirm = findNewChatConfirmDialog();
+      if (!confirm || !confirm.button) return false;
+      try { realClick(confirm.button); } catch { return false; }
+      return true;
     }
 
     async function selectToolMode(area, target) {
       const opened = await openToolMenu(area);
       if (!opened.ok) {
-        closeToolMenu(area);
+        closeToolMenu(area, { force: true });
         return opened;
       }
       const item = findMenuItemForMode(target);
       if (!item) {
-        closeToolMenu(area);
-        return { ok: false, reason: 'item_not_found' };
+        const stats = menuSearchStats(target);
+        closeToolMenu(area, { force: true });
+        return { ok: false, reason: 'item_not_found', stats };
       }
-      try { clickToolItem(item); } catch { closeToolMenu(area); return { ok: false, reason: 'item_click_failed' }; }
-      const ok = await waitFor(() => (readActiveToolMode(area).mode === target ? true : null), timing.toolModeWaitMs || 4000);
-      closeToolMenu(area);
-      return ok ? { ok: true } : { ok: false, reason: 'chip_not_confirmed' };
+      try { realClick(item); } catch { closeToolMenu(area, { force: true }); return { ok: false, reason: 'item_click_failed' }; }
+      let confirmClicked = false;
+      const ok = await waitFor(() => {
+        const confirm = findNewChatConfirmDialog();
+        if (confirm && confirm.button && !confirmClicked) {
+          confirmClicked = true;
+          try { realClick(confirm.button); } catch { /* ignore */ }
+          return null;
+        }
+        const fresh = findComposerArea() || area;
+        if (readActiveToolMode(fresh).mode === target) return true;
+        return null;
+      }, timing.toolModeWaitMs || 8000);
+      closeToolMenu(findComposerArea() || area);
+      if (ok) return { ok: true, newChat: confirmClicked };
+      return { ok: false, reason: confirmClicked ? 'chip_not_confirmed' : 'chip_not_confirmed', stats: menuSearchStats(target) };
     }
 
-    function toolSelectFail(target, reason) {
+    function toolSelectFail(target, reason, stats) {
       const name = (TOOL_MODE_DEFS[target] && TOOL_MODE_DEFS[target].selectName) || '해당 도구';
       const details = {
         no_composer_area: '입력창 영역을 찾지 못했습니다',
@@ -701,9 +930,15 @@
         item_click_failed: '`' + name + '` 항목을 클릭하지 못했습니다',
         chip_not_confirmed: '`' + name + '`를 눌렀지만 도구 칩이 켜진 것을 확인하지 못했습니다'
       };
-      const detail = details[reason] || '';
+      let detail = details[reason] || '';
+      if (stats && (stats.menuItemCount != null || stats.labelMatches != null)) {
+        const bits = [];
+        if (stats.menuItemCount != null) bits.push('메뉴 후보 ' + stats.menuItemCount + '개');
+        if (stats.labelMatches != null) bits.push('라벨 일치 ' + stats.labelMatches + '개');
+        if (bits.length) detail = (detail ? detail + ', ' : '') + bits.join(', ');
+      }
       const message = 'Gemini 입력창 왼쪽 `+`에서 `' + name + '`를 직접 선택한 뒤 다시 시도해 주세요.' + (detail ? ' (' + detail + ')' : '');
-      return Object.assign(fail('TOOL_MODE_SELECT_FAILED', message, true), { toolModeReason: reason || null });
+      return Object.assign(fail('TOOL_MODE_SELECT_FAILED', message, true), { toolModeReason: reason || null, toolModeStats: stats || null });
     }
 
     function toolClearFail(current) {
@@ -713,7 +948,7 @@
 
     /**
      * 전송 전 입력창 도구 모드를 목표(video/image/music/null)에 맞춘다.
-     * 사이드바의 '이미지'·'+ 새 노트북'은 절대 누르지 않는다.
+     * 사이드바의 '이미지'·'+ 새 노트북'·'새 채팅'은 절대 누르지 않는다.
      */
     async function ensureToolMode(target) {
       const area = findComposerArea();
@@ -727,15 +962,16 @@
       if (cur.mode && cur.mode !== target) {
         const prev = cur.mode;
         const cleared = await clearToolMode(area, prev);
-        if (!cleared || readActiveToolMode(area).mode) return toolClearFail(prev);
+        if (!cleared || readActiveToolMode(findComposerArea() || area).mode) return toolClearFail(prev);
       }
 
       if (!target) return { ok: true, mode: null };
 
-      const selected = await selectToolMode(area, target);
-      if (selected.ok && readActiveToolMode(area).mode === target) return { ok: true, mode: target };
+      const selected = await selectToolMode(findComposerArea() || area, target);
+      const fresh = findComposerArea();
+      if (selected.ok && readActiveToolMode(fresh).mode === target) return { ok: true, mode: target, newChat: selected.newChat };
       if (target === 'image') return { ok: true, mode: null, soft: true, toolModeReason: selected.reason };
-      return toolSelectFail(target, selected.reason);
+      return toolSelectFail(target, selected.reason, selected.stats);
     }
 
     /**

@@ -176,6 +176,29 @@ await test('1. 동영상·배경음악 프롬프트 생성 및 기존 ai.prompt.
   assert.equal(pWithPrompt.bgmPrompt, 'Saved BGM prompt');
 });
 
+await test('1-b. 확정 화풍·키워드·장르가 Visual style consistency 줄로 동영상 프롬프트에 포함됨', () => {
+  const { p1 } = makeEnv('t1b');
+  p1.analysis = {
+    schema: 'creator.analysis.v1',
+    summary: '잔잔한 아침',
+    emotion: '평온',
+    keywords: ['sunlight', 'quiet morning'],
+    styles: [{ id: 'st1', label: 'Soft watercolor', description: 'gentle pastel washes, paper texture' }],
+    directions: [{ id: 'd1', label: 'Slow pans', description: '' }],
+    cautions: []
+  };
+  p1.selection = { styleId: 'st1', directionId: 'd1' };
+  const vp = makeVideoGenerationPrompt(p1, 'S01');
+  assert.ok(vp.includes('Video prompt: Slow gentle pan across sunlit curtains swaying softly in morning breeze'));
+  assert.match(vp, /Visual style consistency:/);
+  assert.ok(vp.includes('Soft watercolor'));
+  assert.ok(vp.includes('gentle pastel washes, paper texture'));
+  assert.ok(vp.includes('sunlight'));
+  assert.ok(vp.includes('direction: Slow pans'));
+  assert.ok(vp.includes('genre:'));
+  assert.ok(vp.includes('16:9'));
+});
+
 await test('2. 장면 동영상 생성(video): 다운로드 경로 수신 → assets/video/ 저장 → scene.assetId 자동 연결', async () => {
   const env = makeEnv('t2');
   const queue = new GeminiJobQueue(join(env.dir, 'jobs.json'));

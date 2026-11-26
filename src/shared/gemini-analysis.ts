@@ -50,9 +50,39 @@ export function getProjectBgmPrompt(project: StudioProject): string {
   return '';
 }
 
+const GENRE_EN: Record<string, string> = { bible: 'biblical', poetry: 'poetry', essay: 'essay', novel: 'novel', classic: 'classic' };
+const AUDIENCE_EN: Record<string, string> = { preschool: 'preschool children', kids: 'children', teens: 'teens', adult: 'adults', family: 'family' };
+
+/**
+ * 새 Gemini 채팅으로 넘어가도 화풍이 유지되도록, 선택된 화풍·키워드와 장르·시청 대상을 한 줄로 모은다.
+ */
+export function visualStyleConsistency(project: StudioProject): string {
+  const bits: string[] = [];
+  const styleId = project.selection?.styleId;
+  const style = project.analysis?.styles?.find(s => s.id === styleId);
+  if (style) {
+    if (style.label?.trim()) bits.push(style.label.trim());
+    if (style.description?.trim()) bits.push(style.description.trim());
+  }
+  const directionId = project.selection?.directionId;
+  const direction = project.analysis?.directions?.find(d => d.id === directionId);
+  if (direction?.label?.trim()) bits.push(`direction: ${direction.label.trim()}`);
+  const keywords = project.analysis?.keywords;
+  if (Array.isArray(keywords)) {
+    const ks = keywords.map(k => String(k).trim()).filter(Boolean);
+    if (ks.length) bits.push(`keywords: ${ks.join(', ')}`);
+  }
+  const genre = project.brief?.genre;
+  if (genre) bits.push(`genre: ${GENRE_EN[genre] || genre}`);
+  const audience = project.brief?.audience;
+  if (audience) bits.push(`audience: ${AUDIENCE_EN[audience] || audience}`);
+  return bits.join('. ');
+}
+
 /**
  * Phase 5 확장: 장면의 videoPrompt(+negativePrompt·화면비)로 Gemini 웹 동영상 생성 요청문을 만든다.
  * 참고: Gemini 웹의 동영상 생성(Veo 등)은 계정 등급·지역·UI 변경에 따라 불안정하거나 제한될 수 있다.
+ * 도구 선택 시 새 채팅으로 넘어가면 앞 대화 맥락이 사라지므로, 확정 화풍·일관성 정보를 함께 넣는다.
  */
 export function makeVideoGenerationPrompt(project: StudioProject, sceneId: string): string {
   const scene = project.scenes.find(s => s.id === sceneId);
@@ -67,6 +97,8 @@ export function makeVideoGenerationPrompt(project: StudioProject, sceneId: strin
     `Generate a short cinematic video (${project.brief.aspectRatio} aspect ratio, gentle single motion, slow camera movement).`,
     `Video prompt: ${basePrompt}`
   ];
+  const style = visualStyleConsistency(project);
+  if (style) lines.push(`Visual style consistency: ${style}`);
   if (scene.negativePrompt?.trim()) {
     lines.push(`Negative prompt (avoid): ${scene.negativePrompt.trim()}`);
   }
@@ -232,11 +264,11 @@ export const ERROR_GUIDE: Record<string, { cause: string; fix: string }> = {
   HOST_NOT_CONNECTED: { cause: 'Native Host가 앱에 연결되지 않았습니다.', fix: 'Chrome을 실행하고 확장 프로그램이 켜져 있는지 확인한 뒤, 환경 설정 → AI 연결 → 연결 상태 확인을 눌러 주세요. 필요하면 npm run native:register 로 다시 등록합니다.' },
   EXTENSION_NOT_CONNECTED: { cause: 'Chrome 확장 프로그램이 응답하지 않습니다.', fix: 'chrome://extensions 에서 GOMO Gemini Connector를 새로고침하고 Chrome을 재시작해 주세요.' },
   HOST_OUTDATED: { cause: 'Native Host가 이전 버전으로 실행 중입니다(버전 확인에 응답하지 않음). Gemini에 보내지 않았습니다.', fix: '① chrome://extensions 에서 GOMO Gemini Connector의 새로고침(↻)을 누르면 Host가 새 코드로 다시 시작됩니다. ② 그래도 같으면 저장소 폴더(git pull 한 곳)에서 SETUP_GEMINI.bat 을 실행하고 Chrome을 완전히 종료했다가 다시 켜 주세요. ③ 「다시 시도」를 누르세요.' },
-  EXTENSION_OUTDATED: { cause: 'Chrome이 GOMO Gemini Connector의 이전 서비스 워커 코드를 실행 중입니다(확장 카드의 버전과 다를 수 있음). Gemini에 입력·전송하지 않았습니다.', fix: '① chrome://extensions → GOMO Gemini Connector 「세부정보」의 소스 경로가 git pull 한 저장소의 extension 폴더(예: E:\Pjt\creator\extension)인지 확인 ② 카드의 ↻ 새로고침 → 버전 0.2.6 확인 → 「서비스 워커」 링크를 눌러 콘솔에 “GOMO background protocol 2 build 0.2.6 file gomo-sw.js”가 보이는지 확인 ③ 안 보이면 확장을 「삭제」한 뒤 「압축해제된 확장 프로그램을 로드합니다」로 같은 extension 폴더를 다시 로드(예전 ID 카드가 남아 있으면 제거). 필요하면 저장소 폴더에서 SETUP_GEMINI.bat 을 실행 ④ Chrome을 완전히 종료(트레이 아이콘까지)했다가 다시 켜고 Gemini 탭 열기 ⑤ 「다시 시도」. 그래도 같으면 「진단 정보」를 복사해 보내 주세요.' },
+  EXTENSION_OUTDATED: { cause: 'Chrome이 GOMO Gemini Connector의 이전 서비스 워커 코드를 실행 중입니다(확장 카드의 버전과 다를 수 있음). Gemini에 입력·전송하지 않았습니다.', fix: '① chrome://extensions → GOMO Gemini Connector 「세부정보」의 소스 경로가 git pull 한 저장소의 extension 폴더(예: E:\Pjt\creator\extension)인지 확인 ② 카드의 ↻ 새로고침 → 버전 0.2.7 확인 → 「서비스 워커」 링크를 눌러 콘솔에 “GOMO background protocol 2 build 0.2.7 file gomo-sw.js”가 보이는지 확인 ③ 안 보이면 확장을 「삭제」한 뒤 「압축해제된 확장 프로그램을 로드합니다」로 같은 extension 폴더를 다시 로드(예전 ID 카드가 남아 있으면 제거). 필요하면 저장소 폴더에서 SETUP_GEMINI.bat 을 실행 ④ Chrome을 완전히 종료(트레이 아이콘까지)했다가 다시 켜고 Gemini 탭 열기 ⑤ 「다시 시도」. 그래도 같으면 「진단 정보」를 복사해 보내 주세요.' },
   EXTENSION_NO_REPLY: { cause: 'Native Host는 최신이지만 Chrome 확장 프로그램이 상태 요청에 응답하지 않았습니다. Gemini에 보내지 않았습니다.', fix: 'Chrome을 완전히 종료(창을 모두 닫고, 작업 표시줄 오른쪽 트레이의 Chrome 아이콘도 종료)한 뒤 다시 켜고 Gemini 탭을 연 다음 「다시 시도」를 눌러 주세요. 계속되면 아래 「진단 정보」를 복사해 보내 주세요.' },
   CONTENT_OUTDATED: { cause: 'Gemini 탭에 이전 버전의 확장 스크립트가 남아 있습니다. Gemini에 보내지 않았습니다.', fix: 'Gemini 탭을 새로고침(F5)한 뒤 「다시 시도」를 눌러 주세요.' },
-  EXTENSION_OUTDATED_UNCERTAIN: { cause: '이전 버전 확장 프로그램이 요청을 처리해서 Gemini에 입력·전송되었는지 알 수 없습니다.', fix: 'Gemini 화면에서 이번 요청이 올라갔는지 직접 확인해 주세요. chrome://extensions 에서 확장을 새로고침(0.2.6)하고 Gemini 탭을 새로고침한 뒤, 올라갔으면 「응답 기다리기」, 없으면 「다시 보내기」를 누르세요. 앱은 자동으로 다시 보내지 않습니다.' },
-  BAD_REQUEST: { cause: '요청에 jobId/requestId/projectId가 빠져 있어 전송하지 않았습니다(앱·확장 버전 불일치).', fix: 'chrome://extensions 에서 확장을 새로고침(0.2.6)하고 Gemini 탭을 새로고침한 뒤, 앱도 최신으로 다시 빌드·재시작(npm run build)하고 「다시 시도」를 눌러 주세요.' },
+  EXTENSION_OUTDATED_UNCERTAIN: { cause: '이전 버전 확장 프로그램이 요청을 처리해서 Gemini에 입력·전송되었는지 알 수 없습니다.', fix: 'Gemini 화면에서 이번 요청이 올라갔는지 직접 확인해 주세요. chrome://extensions 에서 확장을 새로고침(0.2.7)하고 Gemini 탭을 새로고침한 뒤, 올라갔으면 「응답 기다리기」, 없으면 「다시 보내기」를 누르세요. 앱은 자동으로 다시 보내지 않습니다.' },
+  BAD_REQUEST: { cause: '요청에 jobId/requestId/projectId가 빠져 있어 전송하지 않았습니다(앱·확장 버전 불일치).', fix: 'chrome://extensions 에서 확장을 새로고침(0.2.7)하고 Gemini 탭을 새로고침한 뒤, 앱도 최신으로 다시 빌드·재시작(npm run build)하고 「다시 시도」를 눌러 주세요.' },
   NO_TAB: { cause: '열려 있는 Gemini 탭이 없습니다.', fix: 'Chrome에서 https://gemini.google.com 을 열고 로그인한 뒤 다시 시작해 주세요.' },
   NO_GEMINI_TAB: { cause: '열려 있는 Gemini 탭이 없습니다.', fix: 'Chrome에서 https://gemini.google.com 을 열고 로그인한 뒤 다시 시작해 주세요.' },
   NO_CONTENT_SCRIPT: { cause: 'Gemini 탭에 확장 스크립트가 아직 로드되지 않았습니다.', fix: 'Gemini 탭을 새로고침(F5)한 뒤 다시 시작해 주세요.' },

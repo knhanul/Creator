@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GOMO Gemini Connector",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Connects GOMO Create to Gemini web via Native Messaging",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAup5jXfLFn2GCjc7W3LjJMnm1pH65pOfRzwWmUX5IaoK49IEoKGfiefdamnJVGqC1EeHcFCx9lQzEqFEuQyuHtqGqULrWJUEhDsNibdCkQ1RKJuH39IahXhzt4WffvPmxD3z98VjimSjra2a4lmLL+J5xg4WEJu0gNXIp87Pu6q7FI3xRf/HL0UxhHyhSv+NN1jU+oze22AaHKfEgIN7Fy281w3Zr0Qb6F34vn5jkc8+Z3Sv81XwPx7BNPoEdbGWzH8Vkc9pRMuqLQ759ZJ8itXTXDYt2iLU041Fr9Q4+YXqD8wLdeZRq1b95Yb+u24YE+6iKUFwSEqPg7Ll4CZUDkQIDAQAB",
   "permissions": [

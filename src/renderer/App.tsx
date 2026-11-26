@@ -428,7 +428,7 @@ function App(){
                   <div>
                     <strong>{label[kind].obj} 자동으로 받지 못했습니다</strong>
                     <p>Gemini에서 {label[kind].obj} 받아 '가져와서 연결'을 누르세요. 다운로드가 안 되면 Gemini 탭에서 F5를 누른 뒤 다시 받아 보세요.</p>
-                    {(g?.cause||job.errorMessage)&&<small className="guide-cause" title={g?.fix||''}>{g?.cause||job.errorMessage}</small>}
+                    {(g?.cause||job.errorMessage)&&<><small className="guide-cause" title={g?.fix||''}>{g?.cause||job.errorMessage}</small>{job.errorMessage&&job.errorMessage!==g?.cause&&<small className="guide-detail">{job.errorMessage}</small>}</>}
                     <div className="scene-image-gen-recovery">
                       <Button size="sm" onClick={onImport}><Upload size={13}/> {importLabel}</Button>
                       {canRefetch&&<Button size="sm" kind="secondary" title="Gemini에 다시 보내지 않고, 이미 만든 결과를 다시 받습니다" onClick={()=>void refetch(job,setState)}><RotateCcw size={13}/> 다시 가져오기</Button>}

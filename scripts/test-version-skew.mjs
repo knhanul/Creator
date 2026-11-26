@@ -126,7 +126,7 @@ await test('연결 확인: 0.1.0 백그라운드는 버전을 보고하지 않�
   const issue = checkPeerVersions({ host: { protocol: 2, version: '0.2.1' }, extension: st.payload.extension ?? null, content: st.payload.content ?? null });
   assert.equal(issue.code, 'EXTENSION_OUTDATED');
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /chrome:\/\/extensions/);
-  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /서비스 워커/); assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /GOMO background protocol 2 build 0\.2\.6/);
+  assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /서비스 워커/); assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /GOMO background protocol 2 build 0\.2\.7/);
   assert.match(ERROR_GUIDE.EXTENSION_OUTDATED.fix, /Chrome을 완전히 종료/);
 });
 

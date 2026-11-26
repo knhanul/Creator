@@ -9,7 +9,7 @@ export function installGeminiSimulator(win, opts = {}) {
   const send = doc.querySelector('button[data-test-id="send-button"]');
   const stop = doc.querySelector('button[data-test-id="stop-button"]');
   const history = doc.getElementById('chat-history');
-  const state = { sentTexts: [], clicks: 0, plusClicks: 0, sidebarClicks: 0, menuItemClicks: [], chipDismisses: 0, toolMode: o.initialToolMode || null };
+  const state = { sentTexts: [], clicks: 0, plusClicks: 0, sidebarClicks: 0, sidebarNewChatClicks: 0, menuItemClicks: [], chipDismisses: 0, newChatConfirmClicks: 0, toolMode: o.initialToolMode || null };
   const text = () => Array.from(composer.querySelectorAll('p')).map(p => p.textContent).join('\n').trim() || composer.textContent.trim();
   const refresh = () => { const has = !!text(); const en = has && !o.neverEnable; send.disabled = !en; send.setAttribute('aria-disabled', String(!en)); composer.classList.toggle('ql-blank', !has); };
   composer.addEventListener('input', refresh);
@@ -75,8 +75,12 @@ function installToolUi(doc, o, state, composer) {
   let menuOpen = false;
   let menuEl = null;
 
-  for (const el of doc.querySelectorAll('aside button, [data-test-id="sidebar-image"], [data-test-id="sidebar-new-notebook"]')) {
-    el.addEventListener('click', () => { state.sidebarClicks++; });
+  for (const el of doc.querySelectorAll('aside button, [data-test-id="sidebar-image"], [data-test-id="sidebar-new-notebook"], [data-test-id="sidebar-new-chat"]')) {
+    el.addEventListener('click', () => {
+      state.sidebarClicks++;
+      const lab = ((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '')).trim();
+      if (/새 채팅|new chat/i.test(lab)) state.sidebarNewChatClicks++;
+    });
   }
 
   function placeholderOf() {
@@ -139,6 +143,43 @@ function installToolUi(doc, o, state, composer) {
   }
   state.setToolMode = setMode;
 
+  function closeNewChatDialog() {
+    const dlg = state.newChatDialog;
+    if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
+    state.newChatDialog = null;
+  }
+
+  function startNewChat(mode) {
+    closeNewChatDialog();
+    const history = doc.getElementById('chat-history');
+    if (history) history.innerHTML = '';
+    setMode(mode);
+  }
+
+  function showNewChatDialog(pendingMode) {
+    closeNewChatDialog();
+    const dlg = doc.createElement('div');
+    dlg.setAttribute('role', 'dialog');
+    dlg.setAttribute('aria-modal', 'true');
+    dlg.className = 'cdk-overlay-pane new-chat-confirm';
+    const title = doc.createElement('h2');
+    title.textContent = '새 채팅을 시작하시겠습니까?';
+    const body = doc.createElement('p');
+    body.textContent = '이 도구를 선택하면 새 채팅이 시작됩니다. 언제든지 이 대화로 돌아올 수 있습니다.';
+    const confirm = doc.createElement('button');
+    confirm.setAttribute('data-test-id', 'confirm-new-chat');
+    confirm.textContent = '새 채팅';
+    confirm.addEventListener('click', () => {
+      state.newChatConfirmClicks++;
+      startNewChat(pendingMode);
+    });
+    const skip = doc.createElement('label');
+    skip.textContent = '다시 묻지 않음';
+    dlg.append(title, body, skip, confirm);
+    doc.body.appendChild(dlg);
+    state.newChatDialog = dlg;
+  }
+
   function closeMenu() {
     if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
     menuEl = null;
@@ -149,6 +190,20 @@ function installToolUi(doc, o, state, composer) {
     if (ic) { ic.setAttribute('fonticon', 'add'); ic.textContent = 'add'; }
   }
 
+  function menuMount() {
+    if (o.shadowPopup) {
+      let host = doc.getElementById('gomo-toolbox-host');
+      if (!host) {
+        host = doc.createElement('div');
+        host.id = 'gomo-toolbox-host';
+        doc.body.appendChild(host);
+      }
+      if (!host.shadowRoot) host.attachShadow({ mode: 'open' });
+      return host.shadowRoot;
+    }
+    return doc.body;
+  }
+
   function openMenu() {
     closeMenu();
     menuOpen = true;
@@ -156,18 +211,44 @@ function installToolUi(doc, o, state, composer) {
     plus.setAttribute('aria-label', '닫기');
     const ic = plus.querySelector('mat-icon');
     if (ic) { ic.setAttribute('fonticon', 'close'); ic.textContent = 'close'; }
+    const pane = doc.createElement('div');
+    const plain = !!o.plainPopup || !!o.divOnlyItems;
+    pane.className = o.blankPopup ? 'blank-tool-shell' : (plain ? 'gemini-tools-panel' : 'cdk-overlay-pane');
+    if (o.popupAriaHidden) pane.setAttribute('aria-hidden', 'true');
+    if (o.blankPopup) {
+      menuMount().appendChild(pane);
+      menuEl = pane;
+      return;
+    }
     const items = [
       '파일 업로드', 'Drive에서 파일 추가', '업로드 더보기',
       'Google 검색', '이미지 만들기', '동영상 만들기', '음악 만들기', 'Canvas', '개인 인텔리전스'
     ].filter((name) => !(o.noVideoMenu && name === '동영상 만들기') && !(o.noImageMenu && name === '이미지 만들기') && !(o.noMusicMenu && name === '음악 만들기'));
     const icons = { '동영상 만들기': 'videocam', '이미지 만들기': 'image', '음악 만들기': 'music_note', 'Google 검색': 'search' };
-    const pane = doc.createElement('div');
-    const plain = !!o.plainPopup;
-    pane.className = plain ? 'gemini-tools-panel' : 'cdk-overlay-pane';
-    if (o.popupAriaHidden) pane.setAttribute('aria-hidden', 'true');
     const menu = doc.createElement('div');
     if (!plain) menu.setAttribute('role', 'menu');
+    const onPick = (name) => {
+      state.menuItemClicks.push(name);
+      const map = { '이미지 만들기': 'image', '동영상 만들기': 'video', '음악 만들기': 'music' };
+      closeMenu();
+      const next = map[name];
+      if (!next) return;
+      if ((next === 'video' || next === 'music') && o.newChatConfirm) {
+        showNewChatDialog(next);
+        return;
+      }
+      setMode(state.toolMode === next ? null : next);
+    };
     for (const name of items) {
+      if (o.divOnlyItems) {
+        const row = doc.createElement('div');
+        const lab = doc.createElement('span');
+        lab.textContent = name;
+        row.appendChild(lab);
+        row.addEventListener('click', () => onPick(name));
+        menu.appendChild(row);
+        continue;
+      }
       const it = doc.createElement('button');
       if (!plain) it.setAttribute('role', 'menuitem');
       const ico = doc.createElement('mat-icon');
@@ -177,16 +258,11 @@ function installToolUi(doc, o, state, composer) {
       lab.textContent = name;
       it.appendChild(ico);
       it.appendChild(lab);
-      it.addEventListener('click', () => {
-        state.menuItemClicks.push(name);
-        const map = { '이미지 만들기': 'image', '동영상 만들기': 'video', '음악 만들기': 'music' };
-        if (map[name]) setMode(state.toolMode === map[name] ? null : map[name]);
-        closeMenu();
-      });
+      it.addEventListener('click', () => onPick(name));
       menu.appendChild(it);
     }
     pane.appendChild(menu);
-    doc.body.appendChild(pane);
+    menuMount().appendChild(pane);
     menuEl = pane;
   }
 
@@ -196,6 +272,7 @@ function installToolUi(doc, o, state, composer) {
     else openMenu();
   });
   doc.addEventListener('keydown', (e) => {
+    if (o.ignoreEscape) return;
     if (e.key === 'Escape' || e.keyCode === 27) closeMenu();
   });
 
