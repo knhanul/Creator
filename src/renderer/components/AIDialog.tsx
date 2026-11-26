@@ -22,9 +22,9 @@ function ManualPanel({project,stage,onApply,onCopy,onDone,initialAnswer}:{projec
     </div></div>;
 }
 
-export type AINavTarget='select'|'storyboard'|'prompt'|'media'|'assembly'|'handoff';
+export type AINavTarget='select'|'storyboard'|'prompt'|'assembly';
 
-/** 단계별 결과 요약과 다음 단계로 이어지는 버튼 */
+/** 단계별 결과 요약과 결과 확인·패널 닫기 버튼. 다음 단계 이동은 하단 공통 막대만 사용한다. */
 function StageResult({project,stage,onNavigate,onClose}:{project:StudioProject,stage:AIStage,onNavigate?:(t:AINavTarget)=>void,onClose:()=>void}){
   const nav=(t:AINavTarget)=>{onNavigate?.(t);onClose();};
   const meta=STAGE_META[stage];
@@ -37,17 +37,17 @@ function StageResult({project,stage,onNavigate,onClose}:{project:StudioProject,s
   if(stage==='storyboard'&&project.scenes.length){const total=project.scenes.reduce((n,s)=>n+s.durationSec,0);return <div className="automation-result">
     <div className="micro">{meta.resultLabel}</div><h3>장면 {project.scenes.length}개 · 예상 {total}초</h3><p>낭독 문장이 등록된 원문과 일치하는지 검사했습니다.</p>
     <ol className="automation-list">{project.scenes.map(s=><li key={s.id}><b>{s.id}</b> {s.title} <small>{s.kind==='video'?'영상':'이미지'} · {s.durationSec}초</small></li>)}</ol>
-    <div className="automation-cta"><span>장면표를 확인·수정한 뒤 생성 프롬프트를 만드세요.</span><Button kind="secondary" onClick={()=>nav('storyboard')}>장면표 확인하기</Button><Button onClick={()=>nav('prompt')}>생성 프롬프트로 <ArrowRight size={16}/></Button></div>
+    <div className="automation-cta"><span>장면표를 확인·수정하세요.</span><Button kind="secondary" onClick={()=>nav('storyboard')}>장면표 확인하기</Button></div>
   </div>;}
   if(stage==='prompt'&&project.scenes.some(s=>s.imagePrompt)){const n=project.scenes.filter(s=>s.imagePrompt).length;return <div className="automation-result">
     <div className="micro">{meta.resultLabel}</div><h3>장면 {n}/{project.scenes.length}개 프롬프트 생성</h3><p>장면마다 이미지·영상·제외 프롬프트를 저장했습니다.</p>
     <ol className="automation-list">{project.scenes.map(s=><li key={s.id}><b>{s.id}</b> {s.imagePrompt.slice(0,90)}{s.imagePrompt.length>90?'…':''}</li>)}</ol>
-    <div className="automation-cta"><span>프롬프트로 이미지·영상을 만든 뒤 미디어를 연결하세요.</span><Button kind="secondary" onClick={()=>nav('prompt')}>프롬프트 확인하기</Button><Button onClick={()=>nav('media')}>미디어 제작으로 <ArrowRight size={16}/></Button></div>
+    <div className="automation-cta"><span>생성된 프롬프트를 확인·수정하세요.</span><Button kind="secondary" onClick={()=>nav('prompt')}>프롬프트 확인하기</Button></div>
   </div>;}
   if(stage==='editplan'&&project.assembly.clips.length){const total=project.assembly.clips.reduce((n,c)=>n+c.durationSec,0);return <div className="automation-result">
     <div className="micro">{meta.resultLabel}</div><h3>클립 {project.assembly.clips.length}개 · {total}초</h3><p>{project.ai.editplan.raw?'편집 순서·길이·전환을 저장했습니다.':''}</p>
     <ol className="automation-list">{project.assembly.clips.map((c,i)=><li key={c.sceneId+i}><b>{c.sceneId}</b> {c.durationSec}초 · {c.transition}</li>)}</ol>
-    <div className="automation-cta"><span>편집안을 확인한 뒤 더빙 프로그램으로 전달하세요.</span><Button kind="secondary" onClick={()=>nav('assembly')}>편집안 확인하기</Button><Button onClick={()=>nav('handoff')}>더빙 전달로 <ArrowRight size={16}/></Button></div>
+    <div className="automation-cta"><span>편집안을 확인·수정하세요.</span><Button kind="secondary" onClick={()=>nav('assembly')}>편집안 확인하기</Button></div>
   </div>;}
   return null;
 }
