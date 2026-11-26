@@ -38,6 +38,7 @@ export function useStudio(){
   },[flash,refresh]);
   const archive=useCallback(async(id:string,value:boolean)=>{try{setBusy(true);await window.studio.projects.archive(id,value);if(projectRef.current?.id===id)close();await refresh();flash(value?'작품을 보관했습니다.':'작품을 복원했습니다.','success');}catch(e){flash(String(e),'error');}finally{setBusy(false);}},[close,refresh,flash]);
   const exportFolder=useCallback(async()=>{const p=projectRef.current;if(!p)return;try{setBusy(true);const out=await window.studio.projects.exportFolder(p.id);if(out)flash(`제작 패키지를 저장했습니다: ${out}`,'success');}catch(e){flash(String(e),'error');}finally{setBusy(false);}},[flash]);
+  const importProject=useCallback(async()=>{try{setBusy(true);const result=await window.studio.projects.importProject();if(result){await refresh();flash(`작품을 가져왔습니다: ${result.brief.title.trim() || '제목 없음'}`,'success');return result;}return null;}catch(e){flash(String(e),'error');return null;}finally{setBusy(false);}},[refresh,flash]);
   const current=useCallback(()=>projectRef.current,[]);
   /** 아무것도 입력하지 않은 빈 작품이면 지운다 (저장 대기열 뒤에서 실행) */
   const discardDraft=useCallback((id:string):Promise<boolean>=>{
@@ -50,5 +51,5 @@ export function useStudio(){
     return task.catch(()=>false);
   },[close,refresh,flash]);
   const copy=useCallback(async(text:string)=>{try{await window.studio.clipboard.write(text);flash('클립보드에 복사했습니다.','success');}catch(e){flash(String(e),'error');}},[flash]);
-  return {projects,project,loading,busy,toast,setToast,flash,refresh,load,close,create,mutate,importAssets,archive,exportFolder,copy,current,discardDraft};
+  return {projects,project,loading,busy,toast,setToast,flash,refresh,load,close,create,mutate,importAssets,archive,exportFolder,importProject,copy,current,discardDraft};
 }

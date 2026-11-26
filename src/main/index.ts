@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { INTERNAL, BRAND } from '../shared/brand';
-import { archiveProject, cleanupEmptyDrafts, createProject, discardDraftIfEmpty, exportFolder, importAssets, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
+import { archiveProject, cleanupEmptyDrafts, createProject, discardDraftIfEmpty, exportFolder, importAssets, importProject, listProjects, projectDir, readProject, resolveAssetPath, revealAsset, saveGeneratedImageAsset, saveGeneratedMediaAsset, saveProject } from './storage';
 import { geminiAdapter } from './gemini/adapter';
 import { pipeClient } from './gemini/pipe-client';
 import { GeminiJobQueue } from './gemini/job-queue.mjs';
@@ -30,6 +30,7 @@ function registerHandlers(){
   ipcMain.handle('projects:archive',async(_event,id:string,archive:boolean)=>archiveProject(id,archive));
   ipcMain.handle('projects:discard-draft',async(_event,id:string)=>discardDraftIfEmpty(id));
   ipcMain.handle('projects:export',async(_event,id:string)=>exportFolder(id));
+  ipcMain.handle('projects:import',async()=>importProject());
   ipcMain.handle('assets:import',async(_event,id:string,targetSceneId?:string)=>importAssets(id,targetSceneId?String(targetSceneId):undefined));
   ipcMain.handle('assets:reveal',async(_event,id:string,assetId:string)=>revealAsset(id,assetId));
   ipcMain.handle('clipboard:write',async(_event,text:string)=>clipboard.writeText(String(text)));

@@ -1,7 +1,7 @@
 import { app, dialog, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { cp, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, cp, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { AssetKind, Brief, StudioProject, ProjectSummary } from '../shared/types';
 import { isEmptyDraft, makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
@@ -290,4 +290,68 @@ export async function exportFolder(id:string):Promise<string|null>{
   await writeFile(join(output,'README_더빙프로그램_연결.txt'),
     `고모 창작실 제작 패키지\r\n\r\n작품: ${p.brief.title}\r\n\r\n이 폴더의 gomo-handoff.json은 편집 설계를 위한 교환 데이터입니다.\r\ngomo-handoff.json은 별도 교환 포맷입니다.\r\n${composer?'composer_project.json과 captions.srt는 영상 합성기(version 2)용 호환 초안입니다. 설치된 더빙 프로그램에서 실제로 열리는지 확인 후 사용하세요.':'아직 미디어 또는 편집안이 완비되지 않아 composer_project.json은 생성하지 않았습니다. 준비 완료 후 다시 내보내 주세요.'}\r\n원문·제작 정보는 project.json에서 확인할 수 있습니다.\r\n`, 'utf8');
   return output;
+}
+
+/** 다른 PC에서 내보낸 제작 패키지(또는 작품 폴더)를 가져와 로컬 작품 목록에 추가한다.
+ *  project.json + assets/ 만 복사한다. 같은 ID가 이미 있으면 새 ID를 부여해 복사본으로 가져온다.
+ */
+export async function importProject(): Promise<StudioProject | null> {
+  const picked = await dialog.showOpenDialog({
+    title: '제작 패키지 또는 작품 폴더 가져오기',
+    properties: ['openDirectory'],
+    buttonLabel: '가져오기'
+  });
+  if (picked.canceled || !picked.filePaths.length) return null;
+  const source = picked.filePaths[0];
+  const jsonPath = join(source, 'project.json');
+  try {
+    await access(jsonPath);
+  } catch {
+    throw new Error('선택한 폴더에 project.json이 없습니다.\n제작 패키지 폴더 또는 작품 폴더를 선택해 주세요.');
+  }
+  let raw: StudioProject;
+  try {
+    raw = JSON.parse(await readFile(jsonPath, 'utf8')) as StudioProject;
+  } catch {
+    throw new Error('project.json을 읽을 수 없습니다. 파일이 손상되었거나 형식이 올바르지 않습니다.');
+  }
+  if (!raw || raw.schema !== INTERNAL.projectSchema || typeof raw.id !== 'string' || !projectRegex.test(raw.id)) {
+    throw new Error('지원하지 않는 프로젝트 형식입니다. 이 창작실에서 내보낸 패키지인지 확인해 주세요.');
+  }
+
+  await ensureRoot();
+  let id = raw.id;
+  let renamed = false;
+  try {
+    await access(projectDir(id));
+    // 이미 같은 ID의 작품이 있으면 새 ID로 복사본 생성
+    id = randomUUID();
+    renamed = true;
+  } catch {
+    // 존재하지 않음 — 원래 ID 사용
+  }
+
+  const target = projectDir(id);
+  await mkdir(target, { recursive: true });
+
+  // assets/ 가 있으면 복사
+  const assetsSrc = join(source, 'assets');
+  try {
+    await access(assetsSrc);
+    await cp(assetsSrc, join(target, 'assets'), { recursive: true });
+  } catch {
+    // assets 없음 — 텍스트만 있는 작품도 허용
+  }
+
+  const now = new Date().toISOString();
+  const toSave: StudioProject = {
+    ...raw,
+    id,
+    revision: (raw.revision || 0) + 1,
+    updatedAt: now,
+    archived: false
+  };
+  const migrated = migrateProjectDocument(toSave);
+  await persist(migrated);
+  return migrated;
 }

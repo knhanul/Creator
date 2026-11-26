@@ -3,7 +3,7 @@ import {useTheme} from './theme/useTheme';
 import {THEME_META, THEMES, type ThemeId} from './theme/themes';
 import {
   Archive, ArrowDown, ArrowRight, ArrowUp, BookOpen, Check, CheckCircle2,
-  ChevronDown, Clapperboard, MoreHorizontal, Clock3, Copy, Feather, Film, FolderOpen, HardDriveDownload, Home, Image as ImageIcon, Info,
+  ChevronDown, Clapperboard, MoreHorizontal, Clock3, Copy, Feather, Film, FolderOpen, FolderInput, HardDriveDownload, Home, Image as ImageIcon, Info,
   Landmark, Layers3, LayoutGrid, ListOrdered, Mic2, MonitorPlay, Music2, NotebookPen, Palette,
   PenLine, Plus, RotateCcw, ScrollText, Search, Settings2, ShieldAlert, Sparkles, Trash2, Upload,
   WandSparkles, X
@@ -354,7 +354,7 @@ function App(){
             {projects.length?<div className="project-list">{projects.slice(0,6).map(p=><ProjectRow key={p.id} p={p} onOpen={()=>void open(p.id)}/>)}</div>:<Card><Empty title="아직 작품이 없어요" description="위에서 종류를 고르면 첫 작품이 바로 만들어져요."/></Card>}
           </section>
         </div>)}
-        {view==='projects'&&pageLayout(<Layers3 size={16}/>,'내 작품',<><div className="search-field compact"><Search size={15}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="작품 제목으로 검색"/></div><button className={`filter-btn ${showArchived?'on':''}`} onClick={()=>setShowArchived(v=>!v)}><Archive size={15}/> {showArchived?'보관한 작품 숨기기':'보관한 작품 보기'}</button><Button size="sm" onClick={()=>void newProject()}><Plus size={14}/> 새 작품</Button></>,<>
+        {view==='projects'&&pageLayout(<Layers3 size={16}/>,'내 작품',<><div className="search-field compact"><Search size={15}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="작품 제목으로 검색"/></div><button className={`filter-btn ${showArchived?'on':''}`} onClick={()=>setShowArchived(v=>!v)}><Archive size={15}/> {showArchived?'보관한 작품 숨기기':'보관한 작품 보기'}</button><Button size="sm" kind="secondary" onClick={()=>void studio.importProject()} disabled={busy}><FolderInput size={14}/> 작품 가져오기</Button><Button size="sm" onClick={()=>void newProject()} disabled={busy}><Plus size={14}/> 새 작품</Button></>,<>
           <div className="project-list">{projects.filter(p=>p.title.toLowerCase().includes(search.toLowerCase())).map(p=><ProjectRow key={p.id} p={p} onOpen={()=>void open(p.id)} onArchive={()=>{if(confirm('작품을 보관 목록으로 옮길까요? 파일은 지워지지 않아요.'))void studio.archive(p.id,true);}}/>)}{!projects.length&&<Empty title="작품이 없어요" description="「새 작품」을 누르면 바로 만들어져요." action={<Button onClick={()=>void newProject()}><Plus size={15}/> 새 작품</Button>}/>}</div>
           {showArchived&&<div className="archive-section"><div className="section-row"><h3>보관한 작품</h3><span className="muted-text">보관한 작품은 지워지지 않으며 복원할 수 있어요.</span></div><ArchivedList onRestore={id=>void studio.archive(id,false)}/></div>}
         </>)}

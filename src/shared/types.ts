@@ -118,6 +118,8 @@ export type StudioAPI = {
     save(project: StudioProject): Promise<StudioProject>;
     archive(projectId: string, archive: boolean): Promise<StudioProject>;
     exportFolder(projectId: string): Promise<string | null>;
+    /** 제작 패키지 또는 작품 폴더를 가져와 로컬 목록에 추가 */
+    importProject(): Promise<StudioProject | null>;
     /** 아무것도 입력하지 않은 작성 중 작품이면 지움 (지웠으면 true) */
     discardDraft(projectId: string): Promise<boolean>;
   };
