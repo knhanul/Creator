@@ -188,6 +188,62 @@
       S('model-response button[aria-label*="Download" i]', '모델 응답 내 Download 버튼 영문'),
       S('model-response button[aria-label*="다운로드"]', '모델 응답 내 다운로드 버튼 한국어')
     ],
+    /** 입력창을 감싸는 영역. 도구 버튼·칩은 이 범위 안에서만 찾습니다(사이드바의 '이미지'·'+ 새 노트북'과 혼동 금지). 승희님 2026-11-26 스크린샷 기준, 실제 DOM 속성은 미검증 */
+    composerArea: [
+      S('.input-area', '테스트 모형 및 일반적인 입력 영역 클래스'),
+      S('input-area', '커스텀 요소 추정'),
+      S('input-container', '커스텀 요소 추정'),
+      S('prompt-box', '커스텀 요소 추정'),
+      S('prompt-input-wrapper', '커스텀 요소 추정'),
+      S('[data-test-id*="input-area"]', 'data-test-id input-area'),
+      S('[data-test-id*="composer-container"]', 'data-test-id composer-container'),
+      S('.text-input-field', '클래스 대체 수단')
+    ],
+    /** 입력창 왼쪽 + / 도구 버튼. 반드시 composerArea 안에서만 사용 */
+    toolMenuButton: [
+      S('button[data-test-id="open-tools-button"]', '테스트 모형 및 data-test-id 추정'),
+      S('button[data-test-id*="toolbox"]', 'data-test-id toolbox'),
+      S('button[data-test-id*="tool-menu"]', 'data-test-id tool-menu'),
+      S('button[data-test-id*="plus"]', 'data-test-id plus'),
+      S('button[aria-label="추가"]', '한국어 UI 입력창 왼쪽 + (승희님 스크린샷, 진단 필요)'),
+      S('button[aria-label="+"]', 'aria-label이 + 인 버튼'),
+      S('button[aria-label="Add"]', '영문 Add'),
+      S('button[aria-label*="도구"]', '한국어 도구 메뉴 폴백'),
+      S('button[aria-label*="Tools" i]', '영문 Tools 폴백'),
+      S('button[aria-label*="Add files" i]', '영문 Add files'),
+      S('button[aria-label*="Open tools" i]', '영문 Open tools'),
+      S('button[aria-haspopup="menu"]', 'aria-haspopup 메뉴 버튼 폴백')
+    ],
+    /** 입력창 아래 + 옆에 붙는 활성 도구 칩(동영상/이미지/음악) */
+    toolChip: [
+      S('button[data-test-id="tool-chip"]', '테스트 모형 및 data-test-id 추정'),
+      S('[data-test-id*="tool-chip"]', 'data-test-id tool-chip'),
+      S('[data-test-id*="mode-chip"]', 'data-test-id mode-chip'),
+      S('.tool-chip', '클래스 대체 수단'),
+      S('button[aria-pressed="true"]', '선택된 칩 버튼')
+    ],
+    /** 도구 칩 닫기(X) 버튼 */
+    toolChipDismiss: [
+      S('button[aria-label="제거"]', '한국어 제거'),
+      S('button[aria-label*="제거"]', '한국어 제거 부분 일치'),
+      S('button[aria-label*="닫기"]', '한국어 닫기'),
+      S('button[aria-label*="해제"]', '한국어 해제'),
+      S('button[aria-label*="Remove" i]', '영문 Remove'),
+      S('button[aria-label*="Dismiss" i]', '영문 Dismiss'),
+      S('button[aria-label*="Clear" i]', '영문 Clear'),
+      S('button[aria-label*="Close" i]', '영문 Close'),
+      S('.chip-dismiss', '클래스 대체 수단')
+    ],
+    /** + 버튼으로 열리는 도구 메뉴 항목(오버레이는 입력 영역 밖 document에 붙을 수 있음) */
+    toolMenuItem: [
+      S('[role="menuitem"]', 'ARIA menuitem (승희님 스크린샷의 + 팝업)'),
+      S('[role="menu"] button', 'role=menu 안의 button'),
+      S('[role="option"]', 'ARIA option'),
+      S('.cdk-overlay-pane [role="menuitem"]', 'Angular CDK 오버레이 menuitem'),
+      S('.cdk-overlay-pane button', 'Angular CDK 오버레이 button'),
+      S('.mat-mdc-menu-item', 'Angular Material 메뉴 항목'),
+      S('mat-menu button', 'mat-menu 안의 button')
+    ],
     /** 로그인 필요 신호 (입력창이 없을 때만 의미 있음) */
     signIn: [
       S('a[href*="accounts.google.com/ServiceLogin"]', 'Google 로그인 링크'),
@@ -204,7 +260,7 @@
   /** 화면 문구 기반 차단 신호(정규식). 자동 우회하지 않고 중단만 합니다. */
   const BLOCKED_TEXT = /(unusual traffic|비정상적인 트래픽|자동화된 요청|automated queries)/i;
 
-  const api = { SELECTORS, BLOCKED_TEXT, version: '2026-11-24' };
+  const api = { SELECTORS, BLOCKED_TEXT, version: '2026-11-26' };
   root.GOMO_GEMINI_SELECTORS = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : self);

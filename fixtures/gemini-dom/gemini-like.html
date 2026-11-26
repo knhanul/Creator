@@ -10,6 +10,10 @@
 <head><title>Gemini</title></head>
 <body>
   <chat-app>
+    <aside class="sidebar" role="navigation" aria-label="사이드바">
+      <button type="button" data-test-id="sidebar-image" aria-label="이미지">이미지</button>
+      <button type="button" data-test-id="sidebar-new-notebook" aria-label="+ 새 노트북">+ 새 노트북</button>
+    </aside>
     <div id="chat-history">
       <div class="conversation-container">
         <user-query><div class="query-text"><p>이전 대화의 질문입니다</p></div></user-query>
@@ -23,6 +27,8 @@
       </div>
     </div>
     <div class="input-area">
+      <button type="button" class="plus-button" data-test-id="open-tools-button" aria-label="추가" aria-haspopup="menu" aria-expanded="false"><mat-icon fonticon="add">add</mat-icon></button>
+      <div class="tool-chips" hidden></div>
       <rich-textarea>
         <div class="ql-editor ql-blank textarea" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Enter a prompt for Gemini" data-placeholder="Ask Gemini"><p><br></p></div>
       </rich-textarea>

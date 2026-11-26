@@ -2,7 +2,8 @@
 
 > 기획 분석: 2026-11 승희님 PC에서 실제 Gemini로 확인 완료(0b3905d · 확장 0.2.3).  
 > 장면 구성·생성 프롬프트·최종 편집 구성: 같은 경로로 자동화(앱만 변경, 확장·Host 변경 없음). **실제 Gemini 미검증** → 아래 3-A 확인 필요.
-> **확장 0.2.4 (2026-11-25)**: 다운로드 재시도 추가 → **`chrome://extensions`에서 GOMO Gemini Connector를 ↻ 새로고침**해야 합니다(아래 3-B). Host는 0.2.3 그대로(재등록 필요 없음).
+> **확장 0.2.4 (2026-11-25)**: 다운로드 재시도 추가(아래 3-B). Host는 0.2.3 그대로(재등록 필요 없음).
+> **확장 0.2.5 (2026-11-26)**: 단일 대화에서 동영상·이미지·음악 도구 모드 자동 전환 → **`chrome://extensions`에서 ↻ 새로고침**하고 Gemini 탭을 F5 해야 합니다(아래 3-C). Host는 0.2.3 그대로(재등록 필요 없음).
 
 이 문서는 승희님 PC(Windows + 로그인된 Chrome + Gemini)에서 직접 확인할 항목입니다.
 개발 환경(Linux)에서는 **jsdom으로 만든 Gemini 모형**과 **가짜 확장 프로그램**으로만 검증했습니다.
@@ -25,15 +26,15 @@
    설치한 exe를 쓰고 있다면 `npm run dist:win` 으로 만든 새 설치본을 다시 설치해야 합니다(이전 exe는 이전 코드). 설치용 EXE에는 Native Host가 아직 들어 있지 않으므로 Host 등록은 저장소 폴더의 `SETUP_GEMINI.bat`으로 합니다.
 3. **Chrome 확장 새로고침 또는 다시 로드** — `chrome://extensions` (오른쪽 위 개발자 모드 켜기)
    - **이번 갱신부터 확장 ID가 고정값 `ekibpgmnknamcpplppceoaogmcbcabbo` 로 바뀝니다.** 예전에 불러온 카드의 ID가 이와 다르면 그 카드를 **제거**한 뒤 「압축해제된 확장 프로그램을 로드합니다」로 저장소의 `extension` 폴더를 다시 불러오세요.
-   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.4**인지, ID가 **`ekibpgmnknamcpplppceoaogmcbcabbo`** 인지 확인.
+   - GOMO Gemini Connector 카드의 **↻ 새로고침** → 버전이 **0.2.5**인지, ID가 **`ekibpgmnknamcpplppceoaogmcbcabbo`** 인지 확인.
    - **「서비스 워커」 링크**(뷰 검사)를 눌러 열린 콘솔 첫 줄에
-     `GOMO background protocol 2 build 0.2.4 file gomo-sw.js manifest 0.2.4` 이 보여야 합니다.
+     `GOMO background protocol 2 build 0.2.5 file gomo-sw.js manifest 0.2.5` 이 보여야 합니다.
      안 보이거나 다른 내용이면(0.2.2까지는 서비스 워커 파일이 `background.js`였음): 확장을 **삭제** → 「압축해제된 확장 프로그램을 로드합니다」로
      `<저장소>\extension` 을 다시 로드 → 콘솔 다시 확인.
    - 「세부정보」의 소스 경로가 git pull 한 저장소의 `extension` 폴더인지 확인.
    - 다르면 다른 폴더를 불러온 것입니다 → 제거 후 「압축해제된 확장 프로그램을 로드합니다」로 `<저장소>\extension` 을 다시 불러옵니다.
 4. **다른 Chrome 프로필 확인** — Chrome 오른쪽 위 프로필 아이콘에 프로필이 여러 개면, **각 프로필에서** `chrome://extensions` 를 열어
-   GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.4)하거나, 쓰지 않으면 **제거**합니다.
+   GOMO Gemini Connector가 있는지 봅니다. 있으면 그 프로필에서도 ↻ 새로고침(0.2.5)하거나, 쓰지 않으면 **제거**합니다.
 5. **Chrome 완전히 종료 후 다시 켜기**
    - 모든 Chrome 창을 닫고, 작업 표시줄 오른쪽 트레이(^)에 Chrome 아이콘이 있으면 우클릭 → 종료.
    - (선택) 남은 Host 프로세스 확인 — PowerShell:
@@ -58,9 +59,9 @@
    앱: 자동화 프로토콜 2, 연결 통로 \\.\pipe\com.gomo.create
    Host 연결 1개:
      #1 (사용 중) 연결 … · Host 0.2.3 프로토콜 2 pid 1234 시작 …
-         호출 확장: chrome-extension://<ID>/ · 확장 연결: 연결됨 · 확장 HELLO: 버전 0.2.4 프로토콜 2 (…)
+         호출 확장: chrome-extension://<ID>/ · 확장 연결: 연결됨 · 확장 HELLO: 버전 0.2.5 프로토콜 2 (…)
    Host 버전 확인 응답: 0.2.3 프로토콜 2 pid 1234 …
-   확장 상태 응답(120ms): 버전 0.2.4 프로토콜 2 빌드 0.2.4 파일 gomo-sw.js ID <ID> 서비스 워커 시작 … · Gemini 탭 1개
+   확장 상태 응답(120ms): 버전 0.2.5 프로토콜 2 빌드 0.2.5 파일 gomo-sw.js ID <ID> 서비스 워커 시작 … · Gemini 탭 1개
    Gemini 탭 스크립트: 최신 (프로토콜 2)      ← 또는 "아직 없음(전송 때 자동 주입)"
    Host 로그 파일: C:\Users\<이름>\.gomo-create\host.log
    ```
@@ -138,7 +139,7 @@
 
 ## 3-A. 이후 단계 자동화 (단계별 1회씩, 같은 작품으로 이어서)
 
-공통: `git pull` → `npm run build` → 앱 재시작. 확장은 0.2.4로 ↻ 새로고침(3-B), Host 재등록은 필요 없음.
+공통: `git pull` → `npm run build` → 앱 재시작. 확장은 0.2.5로 ↻ 새로고침(3-C), Host 재등록은 필요 없음.
 모든 단계가 같은 Gemini 탭·지금 열린 대화를 이어 씁니다. 각 요청에는 새 요청 표식이 붙어 이번 답변만 수집합니다.
 
 **장면 구성 (스토리보드)**
@@ -166,8 +167,8 @@
 
 ## 3-B. 미디어 보관함 — 파일 이름 · 장면 종류 · 다운로드 재시도 (확장 0.2.4, 실제 Gemini 미검증)
 
-준비: `git pull` → `npm run build`(또는 `npm run dev`) → 앱 재시작 → `chrome://extensions`에서 GOMO Gemini Connector **↻ 새로고침**(버전 0.2.4,
-서비스 워커 콘솔 첫 줄 `… build 0.2.4 …`) → Gemini 탭 **F5**.
+준비: `git pull` → `npm run build`(또는 `npm run dev`) → 앱 재시작 → `chrome://extensions`에서 GOMO Gemini Connector **↻ 새로고침**(버전 0.2.5,
+서비스 워커 콘솔 첫 줄 `… build 0.2.5 …`) → Gemini 탭 **F5**.
 
 **파일 이름**
 - [ ] 새로 받은 장면 이미지가 `assets\image\S04_image.png`, 동영상이 `assets\video\S04_video.mp4`, 배경음악이 `assets\audio\BGM_01.mp3`로 저장됨(무작위 글자 없음)
@@ -187,6 +188,22 @@
 - [ ] 「다시 생성」: 확인 창이 뜬 뒤에만 Gemini에 다시 보냄
 - [ ] 서비스 워커 콘솔(chrome://extensions → 서비스 워커)에 오류가 없는지
 
+
+
+## 3-C. 단일 대화 도구 모드 — 동영상·이미지·음악 자동 전환 (확장 0.2.5, 실제 Gemini 미검증)
+
+준비: `git pull` → `npm run dev` → `chrome://extensions`에서 GOMO Gemini Connector **↻ 새로고침**(버전 **0.2.5**,
+서비스 워커 콘솔 첫 줄 `… build 0.2.5 …`) → Gemini 탭 **F5**. Host 재등록(`SETUP_GEMINI.bat`)은 필요 없습니다.
+
+승희님 Gemini 화면(2026-11-26): 입력창 왼쪽 `+` → 팝업의 `이미지 만들기` / `동영상 만들기` / `음악 만들기`. 고르면 입력창 아래 `동영상`(또는 이미지·음악) 칩이 붙고 플레이스홀더가 `동영상을 설명하세요.`로 바뀝니다. 왼쪽 사이드바의 `이미지`·`+ 새 노트북`은 쓰면 안 됩니다.
+
+- [ ] 같은 Gemini 대화에서 「Gemini로 동영상 생성」→ 전송 전에 입력창 아래 `동영상` 칩이 붙고, 동영상 플레이어(`Your video is ready!`)가 나옴. 이미지만 나오거나 글로만 답하면 실패
+- [ ] 이어서 같은 대화에서 「Gemini로 이미지 생성」→ `동영상` 칩이 꺼지고 `이미지` 칩(또는 이미지 생성)으로 바뀐 뒤 전송됨
+- [ ] 미디어 생성 직후 기획 분석·프롬프트 같은 텍스트 단계를 보내면, 남아 있던 미디어 칩이 꺼진 뒤에 전송됨
+- [ ] 선택자 진단(전송 없음) 결과에 `summary.toolMenuButton`이 null이 아니고, 칩이 켜져 있으면 `summary.activeToolMode`가 `video`/`image`/`music` 중 하나
+- [ ] `+` 메뉴에 `동영상 만들기`가 없거나 자동으로 못 켜면, 앱이 프롬프트를 **보내지 않고** `TOOL_MODE_SELECT_FAILED`와 「입력창 왼쪽 `+`에서 `동영상 만들기`를 직접 선택한 뒤 다시 시도」안내를 보여 줌
+
+셀렉터를 실제 DOM과 맞추려면 진단 JSON을 복사해 보내 주세요. 확인된 셀렉터는 `extension/gemini-selectors.js`에서 `verified: true`로 바꿉니다.
 
 ## 4. 실패 상태 표시 (각 1회)
 

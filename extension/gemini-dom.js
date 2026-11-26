@@ -16,6 +16,7 @@
     pollMs: 400,
     sendEnableWaitMs: 4000,     // 입력 후 전송 버튼 활성화 대기
     sendConfirmTimeoutMs: 8000, // 클릭 후 "전송됨" 증거 대기
+    toolModeWaitMs: 4000,       // + 메뉴 열림·도구 칩 전환 대기
     firstResponseTimeoutMs: 120000, // 응답 블록이 나타나기까지
     stableMs: 2500,             // 텍스트 변화 없음 유지 시간
     noImageIdleMs: 12000,       // 이미지 응답 생성 종료 후 이미지/텍스트가 모두 없을 때 대기 상한
@@ -333,14 +334,304 @@
       return { text: blockText(clone), codeBlocks: codes, bodySelector: body ? body.selector : '(model-response 전체)' };
     }
 
+
+    const TOOL_MODE_DEFS = {
+      video: {
+        menu: [/동영상\s*만들기/, /동영상\s*생성/, /create\s*videos?/i, /^\s*video\s*$/i],
+        chip: [/^(동영상|video)$/i],
+        placeholder: [/동영상을 설명/, /describe\s+(a\s+)?video/i],
+        selectName: '동영상 만들기',
+        chipName: '동영상'
+      },
+      image: {
+        menu: [/이미지\s*만들기/, /이미지\s*생성/, /create\s*images?/i, /^\s*image\s*$/i],
+        chip: [/^(이미지|image)$/i],
+        placeholder: [/이미지를 설명/, /describe\s+(an?\s+)?image/i],
+        selectName: '이미지 만들기',
+        chipName: '이미지'
+      },
+      music: {
+        menu: [/음악\s*만들기/, /음악\s*생성/, /create\s*music/i, /create\s*audio/i, /^\s*music\s*$/i],
+        chip: [/^(음악|music)$/i],
+        placeholder: [/음악을 설명/, /describe\s+(the\s+)?music/i, /describe\s+(an?\s+)?(song|audio)/i],
+        selectName: '음악 만들기',
+        chipName: '음악'
+      }
+    };
+
+    function targetModeForStage(stage) {
+      if (stage === 'video' || stage === 'image' || stage === 'music') return stage;
+      return null;
+    }
+
+    function isInSidebar(el) {
+      if (!el) return true;
+      return !!(el.closest && el.closest('nav, aside, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar'));
+    }
+
+    function elementText(el) {
+      if (!el) return '';
+      return normalize((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '') + ' ' + (el.getAttribute('data-test-id') || ''));
+    }
+
+    function matchAny(text, regexes) {
+      return regexes.some((re) => re.test(normalize(text)));
+    }
+
+    function detectChipMode(el) {
+      if (!el) return null;
+      if (el.closest && el.closest('[role="menu"], .cdk-overlay-pane, mat-menu, [contenteditable="true"], rich-textarea')) return null;
+      const parts = [normalize(el.getAttribute('aria-label') || ''), normalize(el.textContent || '')].filter(Boolean);
+      for (const t of parts) {
+        if (/^(동영상|video)$/i.test(t)) return 'video';
+        if (/^(이미지|image)$/i.test(t)) return 'image';
+        if (/^(음악|music)$/i.test(t)) return 'music';
+      }
+      const all = normalize(parts.join(' '));
+      if (!all || /(만들기|생성|업로드|create|노트북|notebook)/i.test(all)) return null;
+      if (/(^|\s)(동영상|video)(\s|$)/i.test(all)) return 'video';
+      if (/(^|\s)(이미지|image)(\s|$)/i.test(all)) return 'image';
+      if (/(^|\s)(음악|music)(\s|$)/i.test(all)) return 'music';
+      return null;
+    }
+
+    function findComposerArea(composerEl) {
+      const comp = composerEl || (findComposer() && findComposer().el);
+      if (!comp) return null;
+      function shouldStop(el) {
+        if (!el) return true;
+        const tag = (el.tagName || '').toUpperCase();
+        if (tag === 'BODY' || tag === 'HTML' || tag === 'MAIN' || tag === 'CHAT-APP') return true;
+        if (el.id === 'chat-history') return true;
+        if (el.matches && el.matches('nav, aside, [role="navigation"], mat-sidenav, model-response, user-query, #chat-history')) return true;
+        return false;
+      }
+      const list = SEL.composerArea || [];
+      let cur = comp.parentElement;
+      let last = null;
+      while (cur && !shouldStop(cur)) {
+        last = cur;
+        for (let i = 0; i < list.length; i++) {
+          try { if (cur.matches(list[i].sel)) return cur; } catch { /* ignore */ }
+        }
+        const hasSend = find('sendButton', cur);
+        const hasPlus = find('toolMenuButton', cur, (el) => !isInSidebar(el) && el !== comp && !comp.contains(el));
+        if (hasSend || hasPlus) return cur;
+        cur = cur.parentElement;
+      }
+      return last;
+    }
+
+    function isComposerToolButton(el, area) {
+      if (!el || !area || !area.contains(el)) return false;
+      if (isInSidebar(el)) return false;
+      if (el.closest && el.closest('rich-textarea, [contenteditable="true"]')) return false;
+      const id = el.getAttribute('data-test-id') || '';
+      if (id === 'send-button' || id === 'stop-button' || id === 'tool-chip') return false;
+      if (el.getAttribute('data-node-type') === 'speech_dictation_mic_button') return false;
+      if (el.classList && el.classList.contains('tool-chip')) return false;
+      const t = elementText(el);
+      if (/(노트북|notebook|새 대화|new chat|send message|메시지 보내기|전송|마이크|microphone|\bmic\b|stop response|생성 중지)/i.test(t)) return false;
+      return true;
+    }
+
+    function findToolMenuButton(area) {
+      if (!area) return null;
+      const hit = find('toolMenuButton', area, (el) => isComposerToolButton(el, area));
+      if (hit) return hit;
+      let nodes;
+      try { nodes = area.querySelectorAll('button'); } catch { return null; }
+      for (const el of nodes) {
+        if (!isVisible(el) || !isComposerToolButton(el, area)) continue;
+        const t = elementText(el);
+        let icon = '';
+        try {
+          const ic = el.querySelector('mat-icon');
+          icon = ic ? ((ic.getAttribute('fonticon') || '') + ' ' + (ic.textContent || '')) : '';
+        } catch { /* ignore */ }
+        if (/^\s*(\+|x|×)\s*$/i.test(t) || /추가|도구|\btools\b|\badd\b|\bplus\b|닫기/i.test(t) || /\b(add|plus|close)\b/i.test(icon) || el.getAttribute('aria-haspopup') === 'menu' || el.getAttribute('aria-expanded') === 'true') {
+          return { el, selector: '(composer-area plus fallback)', index: -1 };
+        }
+      }
+      return null;
+    }
+
+    function placeholderMode() {
+      const c = findComposer();
+      if (!c) return null;
+      const ph = [c.el.getAttribute('data-placeholder'), c.el.getAttribute('placeholder'), c.el.getAttribute('aria-label'), c.el.getAttribute('aria-placeholder')]
+        .filter(Boolean).join(' ');
+      for (const mode of ['video', 'image', 'music']) {
+        if (matchAny(ph, TOOL_MODE_DEFS[mode].placeholder)) return mode;
+      }
+      return null;
+    }
+
+    function readActiveToolChip(area) {
+      if (!area) return null;
+      const seen = new Set();
+      const candidates = [];
+      const hits = findAll('toolChip', area);
+      for (const el of (hits.els || [])) {
+        if (!isVisible(el) || !area.contains(el) || isInSidebar(el) || seen.has(el)) continue;
+        seen.add(el);
+        candidates.push(el);
+      }
+      try {
+        for (const el of area.querySelectorAll('button, [role="button"], [data-test-id*="chip"]')) {
+          if (!isVisible(el) || isInSidebar(el) || seen.has(el)) continue;
+          if (el.closest && el.closest('rich-textarea, [contenteditable="true"], [role="menu"]')) continue;
+          if (detectChipMode(el)) { seen.add(el); candidates.push(el); }
+        }
+      } catch { /* ignore */ }
+      for (const el of candidates) {
+        const mode = detectChipMode(el);
+        if (mode) return { el, mode };
+      }
+      return null;
+    }
+
+    function readActiveToolMode(area) {
+      const scope = area || findComposerArea();
+      const chip = readActiveToolChip(scope);
+      if (chip) return { mode: chip.mode, el: chip.el, via: 'chip' };
+      const ph = placeholderMode();
+      if (ph) return { mode: ph, el: null, via: 'placeholder' };
+      return { mode: null, el: null, via: null };
+    }
+
+    function findToolMenuItems() {
+      const hits = findAll('toolMenuItem');
+      return (hits.els || []).filter((el) => isVisible(el) && !isInSidebar(el));
+    }
+
+    function isToolMenuOpen() {
+      return findToolMenuItems().length > 0;
+    }
+
+    function findMenuItemForMode(mode) {
+      const def = TOOL_MODE_DEFS[mode];
+      if (!def) return null;
+      for (const el of findToolMenuItems()) {
+        if (matchAny(elementText(el), def.menu)) return el;
+      }
+      return null;
+    }
+
+    function closeToolMenu(area) {
+      if (!isToolMenuOpen()) return;
+      try {
+        const ev = new win.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
+        (doc.activeElement || doc.body || doc).dispatchEvent(ev);
+        doc.dispatchEvent(ev);
+      } catch { /* ignore */ }
+      if (isToolMenuOpen()) {
+        const btn = findToolMenuButton(area);
+        if (btn) {
+          try { btn.el.click(); } catch { /* ignore */ }
+        }
+      }
+    }
+
+    async function openToolMenu(area) {
+      if (isToolMenuOpen()) return true;
+      const btn = findToolMenuButton(area);
+      if (!btn) return false;
+      try { btn.el.click(); } catch { return false; }
+      return !!(await waitFor(() => (isToolMenuOpen() ? true : null), timing.toolModeWaitMs || 4000));
+    }
+
+    async function clearToolMode(area, current) {
+      const chip = readActiveToolChip(area);
+      if (chip && chip.el) {
+        const dismiss = find('toolChipDismiss', chip.el) || (chip.el.parentElement ? find('toolChipDismiss', chip.el.parentElement) : null);
+        try {
+          if (dismiss && dismiss.el) dismiss.el.click();
+          else chip.el.click();
+        } catch { /* ignore */ }
+        const gone = await waitFor(() => (readActiveToolMode(area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
+        if (gone) { closeToolMenu(area); return true; }
+      }
+      const opened = await openToolMenu(area);
+      if (opened) {
+        const item = findMenuItemForMode(current);
+        if (item) {
+          try { item.click(); } catch { /* ignore */ }
+          const gone = await waitFor(() => (readActiveToolMode(area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
+          closeToolMenu(area);
+          if (gone) return true;
+        } else {
+          closeToolMenu(area);
+        }
+      }
+      return readActiveToolMode(area).mode === null;
+    }
+
+    async function selectToolMode(area, target) {
+      const opened = await openToolMenu(area);
+      if (!opened) return false;
+      const item = findMenuItemForMode(target);
+      if (!item) {
+        closeToolMenu(area);
+        return false;
+      }
+      try { item.click(); } catch { closeToolMenu(area); return false; }
+      const ok = await waitFor(() => (readActiveToolMode(area).mode === target ? true : null), timing.toolModeWaitMs || 4000);
+      closeToolMenu(area);
+      return !!ok;
+    }
+
+    function toolSelectFail(target) {
+      const name = (TOOL_MODE_DEFS[target] && TOOL_MODE_DEFS[target].selectName) || '해당 도구';
+      return fail('TOOL_MODE_SELECT_FAILED', 'Gemini 입력창 왼쪽 `+`에서 `' + name + '`를 직접 선택한 뒤 다시 시도해 주세요.', true);
+    }
+
+    function toolClearFail(current) {
+      const name = (TOOL_MODE_DEFS[current] && TOOL_MODE_DEFS[current].chipName) || '도구';
+      return fail('TOOL_MODE_CLEAR_FAILED', 'Gemini 입력창에 `' + name + '` 도구가 켜져 있어 자동으로 해제하지 못했습니다. 입력창 아래 칩의 닫기를 누른 뒤 다시 시도해 주세요.', true);
+    }
+
+    /**
+     * 전송 전 입력창 도구 모드를 목표(video/image/music/null)에 맞춘다.
+     * 사이드바의 '이미지'·'+ 새 노트북'은 절대 누르지 않는다.
+     */
+    async function ensureToolMode(target) {
+      const area = findComposerArea();
+      if (!area) {
+        if (target === 'video' || target === 'music') return toolSelectFail(target);
+        return { ok: true, mode: null, soft: true };
+      }
+      let cur = readActiveToolMode(area);
+      if (cur.mode === target) return { ok: true, mode: target, already: true };
+
+      if (cur.mode && cur.mode !== target) {
+        const prev = cur.mode;
+        const cleared = await clearToolMode(area, prev);
+        if (!cleared || readActiveToolMode(area).mode) return toolClearFail(prev);
+      }
+
+      if (!target) return { ok: true, mode: null };
+
+      const selected = await selectToolMode(area, target);
+      if (selected && readActiveToolMode(area).mode === target) return { ok: true, mode: target };
+      if (target === 'image') return { ok: true, mode: null, soft: true };
+      return toolSelectFail(target);
+    }
+
     /**
      * 전송. 결과 sendState: 'sent' | 'not_sent' | 'uncertain'.
      * 'not_sent'는 클릭 전에 멈춘 경우에만 사용합니다. 클릭 후 증거가 없으면 'uncertain'.
+     * 미디어 단계(video/image/music)는 전송 전에 입력창 + 메뉴에서 도구 모드를 맞춥니다.
      */
     async function submit(params) {
       const pre = preflight();
       if (!pre.ok) return pre;
-      const composer = pre.composer.el;
+      const modeRes = await ensureToolMode(targetModeForStage(params && params.stage));
+      if (!modeRes.ok) return modeRes;
+      const composerHit = findComposer();
+      if (!composerHit) return fail('NO_INPUT', 'Gemini 입력창을 찾지 못했습니다(셀렉터 미일치 가능).', true);
+      if (normalize(composerText(composerHit.el))) return fail('COMPOSER_NOT_EMPTY', 'Gemini 입력창에 작성 중인 내용이 있어 덮어쓰지 않았습니다.', true);
+      const composer = composerHit.el;
       const text = params.marker ? `${params.prompt}\n\n${params.marker}` : params.prompt;
       const baseline = snapshot();
       const ins = await insertPrompt(composer, text, params.marker);
@@ -1083,6 +1374,9 @@
         });
       }
       const composer = findComposer(); const send = findSend(); const stop = findStop();
+      const area = findComposerArea(composer && composer.el);
+      const plus = area ? findToolMenuButton(area) : null;
+      const activeTool = readActiveToolMode(area);
       return {
         kind: 'gomo.selector-probe.v1',
         selectorsVersion: cfg.version,
@@ -1095,6 +1389,9 @@
           sendButton: send ? send.selector : null,
           sendEnabled: send ? isEnabled(send.el) : null,
           stopButton: stop ? stop.selector : null,
+          toolMenuButton: plus ? plus.selector : null,
+          activeToolMode: activeTool.mode,
+          toolChipVia: activeTool.via,
           userQueries: findAll('userQuery').els.length,
           modelResponses: findAll('modelResponse').els.length,
           signIn: !!find('signIn'),
@@ -1104,7 +1401,7 @@
       };
     }
 
-    return { submit, watch, watchImage, watchVideo, watchMusic, collectMedia, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label };
+    return { submit, watch, watchImage, watchVideo, watchMusic, collectMedia, findGeneratedImages, findGeneratedMedia, findImageDownloadButton, findMediaDownloadButton, extractImageData, probe, preflight, insertPrompt, extract, locateResponse, snapshot, normalize, blockText, find, findAll, label, ensureToolMode, readActiveToolMode, targetModeForStage, findComposerArea, findToolMenuButton };
   }
 
   root.GomoGeminiDom = { createGeminiDom, DEFAULT_TIMING };
