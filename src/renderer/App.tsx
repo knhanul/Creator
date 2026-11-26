@@ -20,6 +20,7 @@ import {type ApprovedOriginalPayload} from './components/OriginalSourcePanel';
 import {RIGHTS_STATUS_META} from '../shared/copyright';
 import {approveOriginalInProject} from '../shared/original-versioning';
 import {applyBriefAutosave} from '../shared/brief-edit';
+import {notifiedError} from '../shared/brief-autosave';
 import {STEP_TITLES,TOTAL_STEPS,completedSteps,stepGuide} from '../shared/step-guide';
 import {Button,Card,Empty,Field,IconButton,Tag} from './components/UI';
 import {ActionBar,DocHeader,SAVE_LABEL,StepLayout,type SaveState} from './components/Shell';
@@ -277,27 +278,39 @@ function App(){
   const stageBanner=(st:AIStage)=>{const j=stageJobs[st];const v=phaseView(j);if(!j||!v||!(v.active||v.phase==='needs_user'||v.phase==='error'))return null;return <button className={`analysis-job-banner tone-${v.tone}`} onClick={()=>openStage(st,false)}><Sparkles size={16}/><strong>Gemini {STAGE_META[st].name} · {v.label}</strong><span>{v.active?'창을 닫아도 계속 진행됩니다.':'확인이 필요합니다.'} 눌러서 자세히 보기</span><ArrowRight size={15}/></button>;};
   const onNavigate=(t:AINavTarget)=>{if(t==='select'){goSelect();return;}void go(t);};
   const goSelect=()=>{setView('analysis');setTimeout(()=>document.querySelector('.choice-layout')?.scrollIntoView({behavior:'smooth',block:'start'}),120);};
+  /** 작품 정보 자동 저장을 끝낸다. 실패하면 오류를 알리고 false를 돌려 화면 이동을 막는다. */
+  const flushBrief=async()=>{
+    const flushed=await flushRef.current?.();
+    if(flushed&&!flushed.ok){
+      if(flushed.error&&!flushed.notified)flash(flushed.error,'error');
+      return false;
+    }
+    return true;
+  };
   /** 작성 중인 입력을 먼저 저장하고, 아무것도 입력하지 않은 빈 작품이면 지운다 */
   const leaveProject=async()=>{
-    await flushRef.current?.();
+    if(!await flushBrief())return false;
     const cur=studio.current();
     if(cur&&isEmptyDraft(cur))await studio.discardDraft(cur.id);
+    return true;
   };
   const go=async(next:View)=>{
     if(next!=='projects'&&next!=='home'&&next!=='settings'&&!studio.current()){setView('projects');return;}
-    if(next==='home'||next==='projects')await leaveProject();else await flushRef.current?.();
+    if(next==='home'||next==='projects'){if(!await leaveProject())return;}
+    else if(!await flushBrief())return;
     setView(next);
   };
-  const open=async(id:string)=>{if(studio.current()?.id!==id)await leaveProject();const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}};
+  const open=async(id:string)=>{if(studio.current()?.id!==id&&!await leaveProject())return;const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}};
   /** 「새 작품」: 입력 창 없이 바로 빈 작품을 만들고 작품 정보 화면을 연다 */
   const newProject=async(genre?:Genre)=>{
-    await leaveProject();
+    if(!await leaveProject())return;
     const p=await studio.create({...NEW_DRAFT_BRIEF,genre:genre??NEW_DRAFT_BRIEF.genre});
     if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}
   };
   const onBriefAutosave=async(projectId:string,brief:Brief,continueSession:boolean)=>{
     let started=false;
-    await mutate(p=>{const r=applyBriefAutosave(p,brief,{continueSession});started=r.startedSession;return r.project;},projectId);
+    const saved=await mutate(p=>{const r=applyBriefAutosave(p,brief,{continueSession});started=r.startedSession;return r.project;},projectId,{notify:false});
+    if(!saved)throw notifiedError('작품 정보를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
     return started;
   };
   const onApproveOriginal=async(projectId:string,payload:ApprovedOriginalPayload,base:Brief)=>{
@@ -372,12 +385,12 @@ function App(){
           onPendingChange={setBriefPending}
           onNext={()=>void go('analysis')}/>}
         {project&&view==='analysis'&&renderStep('analysis',{
-          actions:<>{analysisBusy?<Button size="sm" onClick={()=>openAnalysis(false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openAnalysis(true)}><Sparkles size={15}/> {project.analysis?'AI 기획 분석 다시 시작':'AI 기획 분석 시작'}</Button>}<Button size="sm" kind="outline" onClick={()=>openAnalysis(false)}>상세·수동 연결</Button></>,
+          actions:<>{analysisBusy?<Button size="sm" onClick={()=>openAnalysis(false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openAnalysis(true)} disabled={!stageComplete(project,'brief')} title={!stageComplete(project,'brief')?'작품 제목과 낭독 원문을 먼저 입력해 주세요.':undefined}><Sparkles size={15}/> {project.analysis?'AI 기획 분석 다시 시작':'AI 기획 분석 시작'}</Button>}<Button size="sm" kind="outline" onClick={()=>openAnalysis(false)}>상세·수동 연결</Button></>,
           body:<div className="step-body">
             {project.reviewNeeded?.analysis&&<div className="review-needed-banner"><ShieldAlert size={16}/><div><strong>기준 원문 변경 — 기획 분석 재검토 필요</strong><span>{project.reviewNeeded.reason||'기준 원문이 변경되었습니다.'} 기존 미디어 파일은 삭제되지 않습니다. 새 원문으로 기획 분석을 다시 실행하세요.</span></div></div>}
             <div className="ai-transfer-note"><Info size={14}/><span>확정된 기준 원문{project.brief.originalMeta?` (v${project.brief.originalMeta.version} · ${RIGHTS_STATUS_META[project.brief.originalMeta.rights.status].shortLabel})`:''}이 AI 기획 시작 시 외부 Gemini 서비스로 전송됩니다.</span></div>
             {stageBanner('analysis')}
-            {!project.analysis?<Card><Empty title="아직 기획안이 없습니다" description="「AI 기획 분석 시작」을 누르면 Chrome의 Gemini 탭에 요청을 보내고 응답 JSON을 검사해 바로 반영합니다. 결과를 바탕으로 화풍과 연출 방향을 선택합니다." action={<Button onClick={()=>openAnalysis(true)} disabled={analysisBusy}><WandSparkles size={16}/> AI 기획 분석 시작</Button>}/></Card>:<><div className="analysis-intro"><div className="analysis-symbol"><Palette size={29}/></div><div><div className="micro">AI ANALYSIS SUMMARY</div><h3>{project.analysis.summary}</h3><p>{project.analysis.emotion}</p><div className="keywords">{project.analysis.keywords.map(k=><span key={k}>#{k}</span>)}</div></div></div>
+            {!project.analysis?<Card><Empty title={stageComplete(project,'brief')?'아직 기획안이 없습니다':'작품 제목과 원문이 없어요'} description={stageComplete(project,'brief')?'「AI 기획 분석 시작」을 누르면 Chrome의 Gemini 탭에 요청을 보내고 응답 JSON을 검사해 바로 반영합니다. 결과를 바탕으로 화풍과 연출 방향을 선택합니다.':'작품 정보에서 제목과 낭독 원문을 입력하고 저장한 뒤 다시 와 주세요. 저장되지 않은 채로 이 단계로 오면 분석을 시작할 수 없어요.'} action={stageComplete(project,'brief')?<Button onClick={()=>openAnalysis(true)} disabled={analysisBusy}><WandSparkles size={16}/> AI 기획 분석 시작</Button>:<Button onClick={()=>void go('brief')}>1 작품 정보로 이동</Button>}/></Card>:<><div className="analysis-intro"><div className="analysis-symbol"><Palette size={29}/></div><div><div className="micro">AI ANALYSIS SUMMARY</div><h3>{project.analysis.summary}</h3><p>{project.analysis.emotion}</p><div className="keywords">{project.analysis.keywords.map(k=><span key={k}>#{k}</span>)}</div></div></div>
             <div className="choice-layout"><div><div className="choice-title"><h3>01. 화풍 선택</h3><p>모든 장면에 일관되게 적용할 스타일입니다.</p></div><div className="choice-list">{project.analysis.styles.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.styleId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('화풍을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,styleId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-v${i%3}`}><Palette size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.styleId===o.id&&<Check size={14}/>}</div></button>)}</div></div>
               <div><div className="choice-title"><h3>02. 연출 방향 선택</h3><p>장면의 흐름과 감정 전달 방식입니다.</p></div><div className="choice-list">{project.analysis.directions.map((o,i)=><button key={o.id} className={`choice-card ${project.selection.directionId===o.id?'selected':''}`} onClick={()=>{if(project.scenes.length&&!confirm('연출안을 바꾸면 승인된 장면과 후속 결과를 초기화합니다. 계속할까요?'))return;void mutate(p=>({...p,selection:{...p.selection,directionId:o.id},scenes:[],ai:{...p.ai,storyboard:{status:'idle',raw:'',updatedAt:null},prompt:{status:'idle',raw:'',updatedAt:null},editplan:{status:'idle',raw:'',updatedAt:null}},assembly:{...p.assembly,clips:[]}}));}}><div className={`choice-visual choice-d${i%3}`}><MonitorPlay size={22}/></div><div><strong>{o.label}</strong><span>{o.description}</span></div><div className="choice-check">{project.selection.directionId===o.id&&<Check size={14}/>}</div></button>)}</div></div></div>
               {!!project.analysis.cautions.length&&<div className="notice"><ShieldAlert size={17}/><div><b>제작 시 유의사항</b><p>{project.analysis.cautions.join(' · ')}</p></div></div>}

@@ -19,7 +19,8 @@ export function useStudio(){
   const close=useCallback(()=>{projectRef.current=null;setProject(null);},[]);
   const create=useCallback(async(brief:Brief)=>{try{setBusy(true);const result=await window.studio.projects.create(brief);projectRef.current=result;setProject(result);await refresh();flash('새 작품을 만들었어요. 제목과 원문을 채워 주세요. 입력하는 대로 자동 저장돼요.','success');return result;}catch(e){flash(String(e),'error');return null;}finally{setBusy(false);}},[refresh,flash]);
   /** expectedId를 주면, 그 사이 다른 작품으로 바뀌었을 때 저장하지 않는다 */
-  const mutate=useCallback((change:(p:StudioProject)=>StudioProject,expectedId?:string):Promise<StudioProject|null>=>{
+  const mutate=useCallback((change:(p:StudioProject)=>StudioProject,expectedId?:string,options?:{notify?:boolean}):Promise<StudioProject|null>=>{
+    const notify=options?.notify!==false;
     const task=queue.current.then(async()=>{
       const current=projectRef.current;if(!current)return null;
       if(expectedId&&current.id!==expectedId)return null;
@@ -28,8 +29,8 @@ export function useStudio(){
       const saved=await window.studio.projects.save(next);
       projectRef.current=saved;setProject(saved);await refresh();return saved;
     });
-    queue.current=task.catch(err=>{flash(err instanceof Error?err.message:String(err),'error');}).finally(()=>setBusy(false));
-    return task.catch(()=>null);
+    queue.current=task.catch(err=>{if(notify)flash(err instanceof Error?err.message:String(err),'error');}).finally(()=>setBusy(false));
+    return task.catch(err=>{if(notify)return null;throw err;});
   },[flash,refresh]);
   const importAssets=useCallback(async(targetSceneId?:string)=>{
     const task=queue.current.then(async()=>{const p=projectRef.current;if(!p)return null;setBusy(true);const result=await window.studio.assets.import(p.id,targetSceneId);if(result){projectRef.current=result;setProject(result);await refresh();flash(targetSceneId?`미디어를 가져와 ${targetSceneId} 장면에 연결했습니다.`:'미디어를 가져왔습니다.','success');}return result;});

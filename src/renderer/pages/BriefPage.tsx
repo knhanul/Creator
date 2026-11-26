@@ -4,6 +4,7 @@ import type {AutoFillField,Audience,Brief,Genre,GeminiJobRecord,StudioProject} f
 import {AUDIENCES,GENRES} from '../../shared/workflow';
 import {assessOriginalChangeImpact} from '../../shared/original-versioning';
 import {AUTO_FILL_FIELDS,AUTO_FILL_LABELS,clearAutoFilled,userFieldsToOverwrite} from '../../shared/brief-edit';
+import {createBriefAutosaveSession,type BriefFlushResult} from '../../shared/brief-autosave';
 import {stepGuide} from '../../shared/step-guide';
 import {ORIGINAL_FILE_HINT,ORIGINAL_FILE_LABEL,isSupportedOriginalFileName} from '../../shared/original-fetch';
 import {sourceResultFromGemini} from '../../shared/gemini-source';
@@ -17,7 +18,7 @@ import {Button,Field,Tag} from '../components/UI';
 const AUTOSAVE_MS=700;
 const formatDate=(d:string)=>new Date(d).toLocaleDateString('ko-KR',{month:'short',day:'numeric'});
 
-export type BriefFlush=()=>Promise<void>;
+export type BriefFlush=()=>Promise<BriefFlushResult>;
 
 export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,registerFlush,onAutosave,onApproveOriginal,onPendingChange,onNext}:{
   project:StudioProject,
@@ -32,14 +33,30 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
   onPendingChange:(pending:boolean)=>void,
   onNext:()=>void
 }){
-  const [draft,setDraft]=useState<Brief>(project.brief);
+  const [draft,setDraftState]=useState<Brief>(project.brief);
   const draftRef=useRef(draft);draftRef.current=draft;
-  const pendingRef=useRef(false);
-  const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
-  const sessionRef=useRef(false);
+  const savedRef=useRef(project.brief);savedRef.current=project.brief;
+  const pendingHold=useRef(false);
   const saveRef=useRef(onAutosave);saveRef.current=onAutosave;
   const pendingCb=useRef(onPendingChange);pendingCb.current=onPendingChange;
   const projectId=project.id;
+  const projectIdRef=useRef(projectId);
+  const sessionRef=useRef<ReturnType<typeof createBriefAutosaveSession>|null>(null);
+  if(!sessionRef.current){
+    sessionRef.current=createBriefAutosaveSession({
+      getDraft:()=>draftRef.current,
+      getSaved:()=>savedRef.current,
+      save:(brief,continueSession)=>saveRef.current(projectIdRef.current,brief,continueSession),
+      onPendingChange:v=>{pendingHold.current=v;pendingCb.current(v);},
+      delayMs:AUTOSAVE_MS
+    });
+  }
+  const updateDraft=(updater:(d:Brief)=>Brief)=>{
+    const next=updater(draftRef.current);
+    draftRef.current=next;
+    setDraftState(next);
+    return next;
+  };
   const [finderOpen,setFinderOpen]=useState(false);const [finderKey,setFinderKey]=useState(0);
   const [summaryOpen,setSummaryOpen]=useState(false);
   const [unlocked,setUnlocked]=useState(false);
@@ -48,36 +65,38 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
   const [originalJob,setOriginalJob]=useState<GeminiJobRecord|null>(null);
   const appliedOriginalJobs=useRef(new Set<string>());
 
-  const saveNow=async()=>{
-    if(timer.current){clearTimeout(timer.current);timer.current=null;}
-    if(!pendingRef.current)return;
-    pendingRef.current=false;
-    const started=await saveRef.current(projectId,draftRef.current,sessionRef.current);
-    if(started)sessionRef.current=true;
-    if(!pendingRef.current)pendingCb.current(false);
-  };
-  const saveNowRef=useRef(saveNow);saveNowRef.current=saveNow;
+  const saveNow=()=>sessionRef.current!.flush();
   useEffect(()=>{
-    const flush=()=>saveNowRef.current();
+    const session=sessionRef.current!;
+    const flush=()=>session.flush();
     registerFlush(flush);
     const beforeUnload=()=>{void flush();};
     window.addEventListener('beforeunload',beforeUnload);
     return()=>{registerFlush(null);window.removeEventListener('beforeunload',beforeUnload);void flush();};
   },[projectId]);
-  // 다른 작품으로 바뀌면 새로 읽기 / 밖에서 바뀐 내용은 입력 중이 아닐 때만 반영
-  useEffect(()=>{setDraft(project.brief);sessionRef.current=false;setUnlocked(false);setFinderOpen(false);setOriginalJob(null);appliedOriginalJobs.current=new Set();},[projectId]);
-  useEffect(()=>{if(!pendingRef.current&&!timer.current)setDraft(project.brief);},[JSON.stringify(project.brief)]);
+  // 다른 작품으로 바뀌면, 이전 작품 flush가 먼저 끝난 뒤에 초안을 갈아탄다
+  useEffect(()=>{
+    draftRef.current=project.brief;
+    savedRef.current=project.brief;
+    setDraftState(project.brief);
+    sessionRef.current?.reset();
+    projectIdRef.current=projectId;
+    setUnlocked(false);setFinderOpen(false);setOriginalJob(null);appliedOriginalJobs.current=new Set();
+  },[projectId]);
+  useEffect(()=>{
+    savedRef.current=project.brief;
+    if(!pendingHold.current){
+      draftRef.current=project.brief;
+      setDraftState(project.brief);
+    }
+  },[JSON.stringify(project.brief)]);
 
-  const markPending=()=>{
-    pendingRef.current=true;pendingCb.current(true);
-    if(timer.current)clearTimeout(timer.current);
-    timer.current=setTimeout(()=>{timer.current=null;void saveNowRef.current();},AUTOSAVE_MS);
-  };
+  const markPending=()=>sessionRef.current!.markPending();
   const set=<K extends keyof Brief>(k:K,v:Brief[K])=>{
-    setDraft(d=>{let next={...d,[k]:v} as Brief;if((AUTO_FILL_FIELDS as string[]).includes(k as string))next=clearAutoFilled(next,k as AutoFillField);return next;});
+    updateDraft(d=>{let next={...d,[k]:v} as Brief;if((AUTO_FILL_FIELDS as string[]).includes(k as string))next=clearAutoFilled(next,k as AutoFillField);return next;});
     markPending();
   };
-  const patch=(p:Partial<Brief>)=>{setDraft(d=>({...d,...p}));markPending();};
+  const patch=(p:Partial<Brief>)=>{updateDraft(d=>({...d,...p}));markPending();};
 
   const downstream=assessOriginalChangeImpact(project,'').hasDownstreamWork;
   const locked=downstream&&!unlocked&&!!draft.originalText.trim();
@@ -96,14 +115,12 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
     if(impact.warningMessage)parts.push(impact.warningMessage);
     else if(parts.length)parts.push('바꿀까요?');
     if(parts.length&&!confirm(parts.join('\n\n')))return false;
-    if(timer.current){clearTimeout(timer.current);timer.current=null;}
-    pendingRef.current=false;pendingCb.current(false);
     const autoFilled:Partial<Record<AutoFillField,string>>={...(draftRef.current.autoFilled||{})};
     for(const f of AUTO_FILL_FIELDS){if((incoming[f]||'').trim())autoFilled[f]=payload.meta.providerName;else delete autoFilled[f];}
     const pickedTranslation=payload.meta.bibleRef?.translationId;
     const base:Brief={...draftRef.current,...incoming,genre:payload.genre??draftRef.current.genre,autoFilled:Object.keys(autoFilled).length?autoFilled:undefined,originalFileName:undefined,
       bibleTranslation:pickedTranslation&&BIBLE_EDITION_CHOICES.some(c=>c.id===pickedTranslation)?pickedTranslation:draftRef.current.bibleTranslation} as Brief;
-    setDraft(base);sessionRef.current=false;setUnlocked(false);setFinderOpen(false);
+    updateDraft(()=>base);sessionRef.current!.noteSubmitted(base);setUnlocked(false);setFinderOpen(false);
     void onApproveOriginal(projectId,payload,base);
     return true;
   };
@@ -113,7 +130,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
     if(cur.originalText.trim()&&cur.originalText!==text){
       if(!confirm(opts.replaceConfirm))return false;
     }
-    setDraft(d=>{
+    updateDraft(d=>{
       const autoFilled:Partial<Record<AutoFillField,string>>={...(d.autoFilled||{})};
       autoFilled.originalText=opts.sourceLabel;
       const next:Brief={...d,originalText:text,originalFileName:opts.fileName,autoFilled};
@@ -122,6 +139,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
       return next;
     });
     markPending();
+    void saveNow().then(r=>{if(!r.ok&&r.error&&!r.notified)flash(r.error,'error');});
     return true;
   };
 
@@ -174,7 +192,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
     if(locked){unlock();return;}
     if(!draft.originalText.trim()&&!draft.originalFileName)return;
     if(!confirm('본문을 지울까요?'))return;
-    setDraft(d=>{
+    updateDraft(d=>{
       const autoFilled={...(d.autoFilled||{})};
       delete autoFilled.originalText;
       return {...d,originalText:'',originalFileName:undefined,autoFilled:Object.keys(autoFilled).length?autoFilled:undefined};
@@ -185,7 +203,8 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
   const startGeminiOriginal=async()=>{
     if(locked){unlock();return;}
     if(!draft.title.trim()){flash('제목을 먼저 입력해 주세요.','error');return;}
-    await saveNow();
+    const flushed=await saveNow();
+    if(!flushed.ok){if(flushed.error&&!flushed.notified)flash(flushed.error,'error');return;}
     try{
       const status=await window.studio.gemini.status();
       if(status.versionIssue||!status.connected||!status.extensionConnected||!status.geminiTabFound){
@@ -248,7 +267,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
 
   const header=<DocHeader icon={<BookOpen size={16}/>} title="작품 정보" description="장르·저자·제목으로 원문을 가져오거나, 파일을 첨부해 본문을 정합니다." project={{...project,brief:draft}} saveState={saveState} panelOpen={panelOpen} onTogglePanel={onTogglePanel}/>;
   const panel=panelOpen?<ProjectPropsPanel project={project} brief={draft} onChange={patch} onClose={onTogglePanel}/>:null;
-  const actionBar=<ActionBar guide={guide} onNext={()=>{void saveNow().then(onNext);}}/>;
+  const actionBar=<ActionBar guide={guide} onNext={()=>{void saveNow().then(r=>{if(r.ok)onNext();else if(r.error&&!r.notified)flash(r.error,'error');});}}/>;
 
   return <StepLayout header={header} panel={panel} actionBar={actionBar} focusKey={`brief-${projectId}`} fill>
     <div className="brief-sheet">
@@ -256,7 +275,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
         <Field label="장르"><select value={draft.genre} onChange={e=>{
           const genre=e.target.value as Genre;
           if(genre==='bible'){
-            setDraft(d=>({...d,genre,bibleTranslation:normalizeBibleTranslationId(d.bibleTranslation)}));
+            updateDraft(d=>({...d,genre,bibleTranslation:normalizeBibleTranslationId(d.bibleTranslation)}));
             markPending();
           }else set('genre',genre);
         }}>{Object.entries(GENRES).map(([k,v])=><option value={k} key={k}>{v}</option>)}</select></Field>
