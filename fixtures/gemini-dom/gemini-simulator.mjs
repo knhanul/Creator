@@ -100,14 +100,19 @@ function installToolUi(doc, o, state, composer) {
     if (!state.toolMode) { wrap.hidden = true; return; }
     wrap.hidden = false;
     const labels = { video: '동영상', image: '이미지', music: '음악' };
+    const chipIcons = { video: 'movie', image: 'image', music: 'music_note' };
     const chip = doc.createElement('button');
     chip.type = 'button';
     chip.className = 'tool-chip';
     chip.setAttribute('data-test-id', 'tool-chip');
     chip.setAttribute('aria-pressed', 'true');
     chip.setAttribute('aria-label', labels[state.toolMode]);
+    const ic = doc.createElement('mat-icon');
+    ic.className = 'material-icons';
+    ic.textContent = chipIcons[state.toolMode];
     const span = doc.createElement('span');
     span.textContent = labels[state.toolMode];
+    chip.appendChild(ic);
     const dismiss = doc.createElement('button');
     dismiss.type = 'button';
     dismiss.className = 'chip-dismiss';
@@ -151,18 +156,27 @@ function installToolUi(doc, o, state, composer) {
     plus.setAttribute('aria-label', '닫기');
     const ic = plus.querySelector('mat-icon');
     if (ic) { ic.setAttribute('fonticon', 'close'); ic.textContent = 'close'; }
-    const pane = doc.createElement('div');
-    pane.className = 'cdk-overlay-pane';
-    const menu = doc.createElement('div');
-    menu.setAttribute('role', 'menu');
     const items = [
       '파일 업로드', 'Drive에서 파일 추가', '업로드 더보기',
       'Google 검색', '이미지 만들기', '동영상 만들기', '음악 만들기', 'Canvas', '개인 인텔리전스'
     ].filter((name) => !(o.noVideoMenu && name === '동영상 만들기') && !(o.noImageMenu && name === '이미지 만들기') && !(o.noMusicMenu && name === '음악 만들기'));
+    const icons = { '동영상 만들기': 'videocam', '이미지 만들기': 'image', '음악 만들기': 'music_note', 'Google 검색': 'search' };
+    const pane = doc.createElement('div');
+    const plain = !!o.plainPopup;
+    pane.className = plain ? 'gemini-tools-panel' : 'cdk-overlay-pane';
+    if (o.popupAriaHidden) pane.setAttribute('aria-hidden', 'true');
+    const menu = doc.createElement('div');
+    if (!plain) menu.setAttribute('role', 'menu');
     for (const name of items) {
       const it = doc.createElement('button');
-      it.setAttribute('role', 'menuitem');
-      it.textContent = name;
+      if (!plain) it.setAttribute('role', 'menuitem');
+      const ico = doc.createElement('mat-icon');
+      ico.className = 'material-icons';
+      ico.textContent = icons[name] || 'add';
+      const lab = doc.createElement('span');
+      lab.textContent = name;
+      it.appendChild(ico);
+      it.appendChild(lab);
       it.addEventListener('click', () => {
         state.menuItemClicks.push(name);
         const map = { '이미지 만들기': 'image', '동영상 만들기': 'video', '음악 만들기': 'music' };

@@ -114,11 +114,14 @@ await test('video 요청에서 + 메뉴에 동영상 만들기가 없으면 not_
   assert.equal(r.sendState, 'not_sent');
   assert.equal(r.errorCode, 'TOOL_MODE_SELECT_FAILED');
   assert.equal(r.needsUser, true);
+  assert.equal(r.toolModeReason, 'item_not_found');
   assert.match(r.message, /동영상 만들기/);
+  assert.match(r.message, /항목을 찾지/);
   assert.equal(sim.clicks, 0);
   assert.equal(sim.sentTexts.length, 0);
   assert.equal(doc.querySelectorAll('user-query').length, 1, '새 질문이 올라가면 안 됨');
   assert.equal((doc.querySelector('rich-textarea [contenteditable]').textContent || '').trim(), '');
+  assert.equal(doc.querySelector('.cdk-overlay-pane, [role="menu"], .gemini-tools-panel, .custom-popup'), null, '실패 후에도 메뉴는 닫혀야 함');
 });
 
 await test('사이드바에 이미지와 + 새 노트북이 있어도 입력창 쪽 + 만 정확히 선택', async () => {
@@ -157,6 +160,45 @@ await test('image 요청인데 동영상 칩 해제에 실패하면 전송하지
   assert.equal(sim.clicks, 0);
   assert.equal(sim.sentTexts.length, 0);
   assert.equal(sim.toolMode, 'video');
+});
+
+
+await test('mat-icon 리가처(videocam)가 섞인 메뉴 항목도 매칭해 전송', async () => {
+  const { g, sim, doc } = setup();
+  const r = await g.submit({ prompt: '리가처 동영상', marker, stage: 'video' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+  const sample = doc.createElement('button');
+  sample.innerHTML = '<mat-icon>videocam</mat-icon><span>동영상 만들기</span>';
+  assert.ok((sample.textContent || '').includes('videocam'), '원본 textContent에는 리가처가 남아 있음');
+  assert.equal(sim.toolMode, 'video');
+  assert.equal(sim.sidebarClicks, 0);
+});
+
+await test('role=menuitem 없는 일반 팝업(사이드바/대화 본문 제외)에서도 동영상 만들기 폴백 매칭', async () => {
+  const { g, sim, doc } = setup({ plainPopup: true, popupAriaHidden: true });
+  const r = await g.submit({ prompt: '폴백 동영상', marker, stage: 'video' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+  assert.equal(sim.toolMode, 'video');
+  assert.equal(sim.sidebarClicks, 0);
+  assert.equal(sim.clicks, 1);
+  assert.equal(doc.querySelector('.gemini-tools-panel, .custom-popup, [role="menu"]'), null, '전송 후 팝업은 닫혀야 함');
+});
+
+await test('칩에 mat-icon(movie)+동영상 라벨이 섞여 있어도 감지하고 텍스트 단계에서 해제', async () => {
+  const { g, sim, doc } = setup({ initialToolMode: 'video' });
+  const chip = doc.querySelector('[data-test-id="tool-chip"]');
+  assert.ok(chip.querySelector('mat-icon'));
+  assert.equal((chip.querySelector('mat-icon').textContent || '').trim(), 'movie');
+  assert.ok((chip.textContent || '').includes('movie'), '원본 textContent에는 movie가 섞여 있음');
+  assert.equal(g.readActiveToolMode().mode, 'video');
+  assert.equal(g.readActiveToolMode().via, 'chip');
+  const r = await g.submit({ prompt: '분석해 주세요', marker, stage: 'analysis' });
+  assert.equal(r.sendState, 'sent', r.message);
+  assert.equal(sim.toolMode, null);
+  assert.equal(g.readActiveToolMode().mode, null);
+  assert.equal(sim.clicks, 1);
 });
 
 console.log(`\n${checks} gemini-tool-mode (jsdom 모형) checks finished — 실제 Gemini DOM 검증 아님`);

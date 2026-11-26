@@ -237,12 +237,24 @@
     /** + 버튼으로 열리는 도구 메뉴 항목(오버레이는 입력 영역 밖 document에 붙을 수 있음) */
     toolMenuItem: [
       S('[role="menuitem"]', 'ARIA menuitem (승희님 스크린샷의 + 팝업)'),
-      S('[role="menu"] button', 'role=menu 안의 button'),
+      S('[role="menuitemradio"]', 'ARIA menuitemradio'),
       S('[role="option"]', 'ARIA option'),
+      S('[role="menu"] button', 'role=menu 안의 button'),
+      S('[role="listbox"] [role="option"]', 'listbox option'),
       S('.cdk-overlay-pane [role="menuitem"]', 'Angular CDK 오버레이 menuitem'),
+      S('.cdk-overlay-pane [role="option"]', 'Angular CDK 오버레이 option'),
       S('.cdk-overlay-pane button', 'Angular CDK 오버레이 button'),
-      S('.mat-mdc-menu-item', 'Angular Material 메뉴 항목'),
-      S('mat-menu button', 'mat-menu 안의 button')
+      S('.cdk-overlay-pane mat-list-item', 'Angular CDK 오버레이 mat-list-item'),
+      S('toolbox-drawer button', 'Gemini toolbox-drawer 버튼 추정'),
+      S('toolbox-drawer [role="menuitem"]', 'Gemini toolbox-drawer menuitem 추정'),
+      S('mat-action-list button', 'mat-action-list 버튼'),
+      S('mat-nav-list a, mat-nav-list button', 'mat-nav-list 항목'),
+      S('mat-menu-item', 'Angular Material mat-menu-item 태그'),
+      S('.mat-mdc-menu-item', 'Angular Material 메뉴 항목 클래스'),
+      S('mat-menu button', 'mat-menu 안의 button'),
+      S('[class*="menu"] button', 'class에 menu가 들어간 컨테이너의 button 폴백'),
+      S('[class*="popup"] button', 'popup 컨테이너 button 폴백'),
+      S('[class*="overlay"] button', 'overlay 컨테이너 button 폴백')
     ],
     /** 로그인 필요 신호 (입력창이 없을 때만 의미 있음) */
     signIn: [

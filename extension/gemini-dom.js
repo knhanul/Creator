@@ -366,28 +366,83 @@
 
     function isInSidebar(el) {
       if (!el) return true;
-      return !!(el.closest && el.closest('nav, aside, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar'));
+      return !!(el.closest && el.closest('nav, aside, bard-sidenav, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar'));
+    }
+
+    function isExcludedFromToolMenu(el) {
+      if (!el) return true;
+      if (isInSidebar(el)) return true;
+      return !!(el.closest && el.closest('model-response, user-query, #chat-history, bard-sidenav, [data-test-id*="conversation"]'));
+    }
+
+    /** mat-icon 리가처("videocam", "movie")가 textContent에 섞이지 않도록 순수 라벨만 추출 */
+    function visibleLabel(el) {
+      if (!el) return { aria: '', text: '', all: '' };
+      const aria = normalize(el.getAttribute('aria-label') || '');
+      let text = '';
+      try {
+        const clone = el.cloneNode(true);
+        try {
+          clone.querySelectorAll('mat-icon, .material-icons, .material-symbols-outlined, .google-symbols, svg, [aria-hidden="true"]').forEach((n) => n.remove());
+        } catch { /* ignore */ }
+        text = normalize(clone.textContent || '');
+      } catch {
+        text = normalize(el.textContent || '');
+      }
+      return { aria, text, all: normalize([aria, text].filter(Boolean).join(' ')) };
     }
 
     function elementText(el) {
-      if (!el) return '';
-      return normalize((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '') + ' ' + (el.getAttribute('data-test-id') || ''));
+      return visibleLabel(el).all;
+    }
+
+    function labelCandidates(el, maxLen) {
+      const v = visibleLabel(el);
+      const cap = maxLen == null ? 40 : maxLen;
+      return [v.aria, v.text, v.all].filter((s) => s && s.length <= cap);
     }
 
     function matchAny(text, regexes) {
       return regexes.some((re) => re.test(normalize(text)));
     }
 
+    function menuLabelMatches(labels, mode) {
+      const def = TOOL_MODE_DEFS[mode];
+      if (!def) return false;
+      return labels.some((s) => def.menu.some((re) => re.test(s)));
+    }
+
+    function clickableTarget(el) {
+      if (!el) return el;
+      return (el.closest && el.closest('button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="button"], a, mat-list-item, li')) || el;
+    }
+
+    /** 스크롤로 잘린 항목도 포함. 조상 aria-hidden은 오버레이가 그 안에 열리는 경우를 위해 보지 않음 */
+    function isMenuItemDisplayed(el) {
+      if (!el || !el.isConnected) return false;
+      if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') return false;
+      try {
+        const st = win.getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden') return false;
+      } catch { /* ignore */ }
+      if (doc.documentElement && doc.documentElement.clientWidth > 0) {
+        const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+        const hasBox = (r && r.width > 0 && r.height > 0) || (el.offsetWidth > 0 && el.offsetHeight > 0);
+        if (!hasBox) return false;
+      }
+      return true;
+    }
+
     function detectChipMode(el) {
       if (!el) return null;
       if (el.closest && el.closest('[role="menu"], .cdk-overlay-pane, mat-menu, [contenteditable="true"], rich-textarea')) return null;
-      const parts = [normalize(el.getAttribute('aria-label') || ''), normalize(el.textContent || '')].filter(Boolean);
+      const parts = labelCandidates(el, 40);
       for (const t of parts) {
         if (/^(동영상|video)$/i.test(t)) return 'video';
         if (/^(이미지|image)$/i.test(t)) return 'image';
         if (/^(음악|music)$/i.test(t)) return 'music';
       }
-      const all = normalize(parts.join(' '));
+      const all = parts.join(' ');
       if (!all || /(만들기|생성|업로드|create|노트북|notebook)/i.test(all)) return null;
       if (/(^|\s)(동영상|video)(\s|$)/i.test(all)) return 'video';
       if (/(^|\s)(이미지|image)(\s|$)/i.test(all)) return 'image';
@@ -403,7 +458,7 @@
         const tag = (el.tagName || '').toUpperCase();
         if (tag === 'BODY' || tag === 'HTML' || tag === 'MAIN' || tag === 'CHAT-APP') return true;
         if (el.id === 'chat-history') return true;
-        if (el.matches && el.matches('nav, aside, [role="navigation"], mat-sidenav, model-response, user-query, #chat-history')) return true;
+        if (el.matches && el.matches('nav, aside, bard-sidenav, [role="navigation"], mat-sidenav, model-response, user-query, #chat-history')) return true;
         return false;
       }
       const list = SEL.composerArea || [];
@@ -459,8 +514,18 @@
     function placeholderMode() {
       const c = findComposer();
       if (!c) return null;
-      const ph = [c.el.getAttribute('data-placeholder'), c.el.getAttribute('placeholder'), c.el.getAttribute('aria-label'), c.el.getAttribute('aria-placeholder')]
-        .filter(Boolean).join(' ');
+      const nodes = [c.el];
+      if (c.el.parentElement) nodes.push(c.el.parentElement);
+      try {
+        const wrap = c.el.closest('rich-textarea, .input-area, input-area, prompt-box');
+        if (wrap && !nodes.includes(wrap)) nodes.push(wrap);
+      } catch { /* ignore */ }
+      const bits = [];
+      for (const n of nodes) {
+        if (!n || !n.getAttribute) continue;
+        bits.push(n.getAttribute('data-placeholder'), n.getAttribute('placeholder'), n.getAttribute('aria-label'), n.getAttribute('aria-placeholder'));
+      }
+      const ph = bits.filter(Boolean).join(' ');
       for (const mode of ['video', 'image', 'music']) {
         if (matchAny(ph, TOOL_MODE_DEFS[mode].placeholder)) return mode;
       }
@@ -500,45 +565,86 @@
       return { mode: null, el: null, via: null };
     }
 
+    /** 모든 toolMenuItem 셀렉터를 합집합으로 모은다(findAll의 첫 일치만 쓰는 방식은 실제 Gemini에서 빈 결과를 냄) */
     function findToolMenuItems() {
-      const hits = findAll('toolMenuItem');
-      return (hits.els || []).filter((el) => isVisible(el) && !isInSidebar(el));
+      const seen = new Set();
+      const out = [];
+      const list = SEL.toolMenuItem || [];
+      for (let i = 0; i < list.length; i++) {
+        let nodes;
+        try { nodes = Array.from(doc.querySelectorAll(list[i].sel)); } catch { continue; }
+        for (const el of nodes) {
+          if (seen.has(el) || !isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) continue;
+          seen.add(el);
+          out.push(el);
+        }
+      }
+      return out;
+    }
+
+    const MENU_OPEN_HINTS = /파일 업로드|Drive에서 파일|업로드 더보기|Google 검색|이미지 만들기|동영상 만들기|음악 만들기|Create (an?\s+)?(image|video|music|videos?)/i;
+
+    function scanClickable(pred) {
+      const out = [];
+      let nodes;
+      try { nodes = doc.querySelectorAll('button, [role="menuitem"], [role="menuitemradio"], [role="option"], [role="button"], li, a, mat-list-item'); } catch { return out; }
+      for (const el of nodes) {
+        if (!isMenuItemDisplayed(el) || isExcludedFromToolMenu(el)) continue;
+        if (el.closest && el.closest('rich-textarea, [contenteditable="true"]')) continue;
+        const labels = labelCandidates(el, 40);
+        if (!labels.length) continue;
+        if (pred(labels, el)) out.push(el);
+      }
+      return out;
     }
 
     function isToolMenuOpen() {
-      return findToolMenuItems().length > 0;
+      if (findToolMenuItems().length) return true;
+      return scanClickable((labels) => labels.some((s) => MENU_OPEN_HINTS.test(s))).length > 0;
     }
 
     function findMenuItemForMode(mode) {
-      const def = TOOL_MODE_DEFS[mode];
-      if (!def) return null;
+      if (!TOOL_MODE_DEFS[mode]) return null;
       for (const el of findToolMenuItems()) {
-        if (matchAny(elementText(el), def.menu)) return el;
+        if (menuLabelMatches(labelCandidates(el, 40), mode)) return clickableTarget(el);
       }
-      return null;
+      const found = scanClickable((labels) => menuLabelMatches(labels, mode));
+      return found.length ? clickableTarget(found[0]) : null;
+    }
+
+    function clickToolItem(el) {
+      try {
+        if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      } catch { /* ignore */ }
+      el.click();
     }
 
     function closeToolMenu(area) {
-      if (!isToolMenuOpen()) return;
+      // 항목을 못 찾아 isToolMenuOpen()이 false여도, 화면에 열린 팝업을 Escape로 닫는다
       try {
         const ev = new win.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
         (doc.activeElement || doc.body || doc).dispatchEvent(ev);
         doc.dispatchEvent(ev);
       } catch { /* ignore */ }
-      if (isToolMenuOpen()) {
-        const btn = findToolMenuButton(area);
-        if (btn) {
-          try { btn.el.click(); } catch { /* ignore */ }
-        }
+      const stillOpen = isToolMenuOpen();
+      const btn = findToolMenuButton(area);
+      const expanded = btn && btn.el.getAttribute('aria-expanded') === 'true';
+      if ((stillOpen || expanded) && btn) {
+        try { btn.el.click(); } catch { /* ignore */ }
       }
     }
 
     async function openToolMenu(area) {
-      if (isToolMenuOpen()) return true;
+      if (isToolMenuOpen()) return { ok: true };
       const btn = findToolMenuButton(area);
-      if (!btn) return false;
-      try { btn.el.click(); } catch { return false; }
-      return !!(await waitFor(() => (isToolMenuOpen() ? true : null), timing.toolModeWaitMs || 4000));
+      if (!btn) return { ok: false, reason: 'no_plus_button' };
+      try { btn.el.click(); } catch { return { ok: false, reason: 'plus_click_failed' }; }
+      const opened = await waitFor(() => (isToolMenuOpen() ? true : null), timing.toolModeWaitMs || 4000);
+      if (!opened) {
+        closeToolMenu(area);
+        return { ok: false, reason: 'menu_items_not_found' };
+      }
+      return { ok: true };
     }
 
     async function clearToolMode(area, current) {
@@ -553,10 +659,10 @@
         if (gone) { closeToolMenu(area); return true; }
       }
       const opened = await openToolMenu(area);
-      if (opened) {
+      if (opened.ok) {
         const item = findMenuItemForMode(current);
         if (item) {
-          try { item.click(); } catch { /* ignore */ }
+          try { clickToolItem(item); } catch { /* ignore */ }
           const gone = await waitFor(() => (readActiveToolMode(area).mode === null ? true : null), timing.toolModeWaitMs || 4000);
           closeToolMenu(area);
           if (gone) return true;
@@ -569,21 +675,35 @@
 
     async function selectToolMode(area, target) {
       const opened = await openToolMenu(area);
-      if (!opened) return false;
+      if (!opened.ok) {
+        closeToolMenu(area);
+        return opened;
+      }
       const item = findMenuItemForMode(target);
       if (!item) {
         closeToolMenu(area);
-        return false;
+        return { ok: false, reason: 'item_not_found' };
       }
-      try { item.click(); } catch { closeToolMenu(area); return false; }
+      try { clickToolItem(item); } catch { closeToolMenu(area); return { ok: false, reason: 'item_click_failed' }; }
       const ok = await waitFor(() => (readActiveToolMode(area).mode === target ? true : null), timing.toolModeWaitMs || 4000);
       closeToolMenu(area);
-      return !!ok;
+      return ok ? { ok: true } : { ok: false, reason: 'chip_not_confirmed' };
     }
 
-    function toolSelectFail(target) {
+    function toolSelectFail(target, reason) {
       const name = (TOOL_MODE_DEFS[target] && TOOL_MODE_DEFS[target].selectName) || '해당 도구';
-      return fail('TOOL_MODE_SELECT_FAILED', 'Gemini 입력창 왼쪽 `+`에서 `' + name + '`를 직접 선택한 뒤 다시 시도해 주세요.', true);
+      const details = {
+        no_composer_area: '입력창 영역을 찾지 못했습니다',
+        no_plus_button: '입력창 왼쪽 `+` 버튼을 찾지 못했습니다',
+        plus_click_failed: '입력창 왼쪽 `+` 버튼을 클릭하지 못했습니다',
+        menu_items_not_found: '`+` 메뉴는 열렸지만 메뉴 항목을 찾지 못했습니다',
+        item_not_found: '`+` 메뉴는 열렸지만 `' + name + '` 항목을 찾지 못했습니다',
+        item_click_failed: '`' + name + '` 항목을 클릭하지 못했습니다',
+        chip_not_confirmed: '`' + name + '`를 눌렀지만 도구 칩이 켜진 것을 확인하지 못했습니다'
+      };
+      const detail = details[reason] || '';
+      const message = 'Gemini 입력창 왼쪽 `+`에서 `' + name + '`를 직접 선택한 뒤 다시 시도해 주세요.' + (detail ? ' (' + detail + ')' : '');
+      return Object.assign(fail('TOOL_MODE_SELECT_FAILED', message, true), { toolModeReason: reason || null });
     }
 
     function toolClearFail(current) {
@@ -598,7 +718,7 @@
     async function ensureToolMode(target) {
       const area = findComposerArea();
       if (!area) {
-        if (target === 'video' || target === 'music') return toolSelectFail(target);
+        if (target === 'video' || target === 'music') return toolSelectFail(target, 'no_composer_area');
         return { ok: true, mode: null, soft: true };
       }
       let cur = readActiveToolMode(area);
@@ -613,9 +733,9 @@
       if (!target) return { ok: true, mode: null };
 
       const selected = await selectToolMode(area, target);
-      if (selected && readActiveToolMode(area).mode === target) return { ok: true, mode: target };
-      if (target === 'image') return { ok: true, mode: null, soft: true };
-      return toolSelectFail(target);
+      if (selected.ok && readActiveToolMode(area).mode === target) return { ok: true, mode: target };
+      if (target === 'image') return { ok: true, mode: null, soft: true, toolModeReason: selected.reason };
+      return toolSelectFail(target, selected.reason);
     }
 
     /**

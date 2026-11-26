@@ -34,7 +34,7 @@ function background(onTabMessage) {
   const chrome = {
     runtime: {
       lastError: undefined, id: 'ekibpgmnknamcpplppceoaogmcbcabbo',
-      connectNative: () => port, getManifest: () => ({ version: '0.2.5' }),
+      connectNative: () => port, getManifest: () => ({ version: '0.2.6' }),
       onInstalled: { addListener() {} }, onStartup: { addListener() {} },
       onMessage: { addListener: (f) => runtimeListeners.push(f) }
     },
