@@ -668,3 +668,14 @@ body{min-width:1280px;min-height:720px}
 .more-menu-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--color-text); font-size: 12px; text-align: left; white-space: nowrap; }
 .more-menu-list button:hover:not(:disabled) { background: var(--color-hover); }
 .scene-image-gen-guide .guide-cause { display: block; margin-top: 3px; color: var(--color-text-muted); font-size: 10.5px; line-height: 1.45; }
+
+.brief-source-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.brief-job-status{font-size:12px}
+.brief-job-status.tone-accent{color:var(--color-primary)}
+.brief-job-status.tone-danger,.brief-job-status.tone-warning{color:var(--color-warning,#b45309)}
+.original-file-chip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--color-text-secondary);background:var(--color-primary-soft);border:1px solid var(--color-border);border-radius:8px;padding:4px 8px 4px 12px;flex-shrink:0}
+.original-file-hint{font-size:11px;margin:0;flex-shrink:0}
+.original-drop{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.original-drop .original-text{flex:1;width:100%;min-height:180px}
+.original-drop.is-over{outline:2px dashed var(--color-primary);outline-offset:-2px;border-radius:9px;background:var(--color-primary-soft)}
+.original-drop-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--color-primary-soft) 85%,transparent);color:var(--color-primary);font-weight:700;font-size:14px;border-radius:9px;pointer-events:none;z-index:1}

@@ -46,7 +46,7 @@ export function stepGuide(p: StudioProject, stage: Stage): StepGuide {
       if (!p.brief.originalText.trim()) missing.push('낭독할 원문');
       todo = p.brief.genre === 'bible'
         ? '성경 범위를 고르고 「성경 본문 가져오기」를 누르면 기획 분석으로 넘어갈 수 있어요'
-        : '제목과 원문을 채우면 기획 분석으로 넘어갈 수 있어요 (「원문 찾아 채우기」로 자동 입력 가능)';
+        : '제목과 원문을 채우면 기획 분석으로 넘어갈 수 있어요. 제미나이로 가져오거나 파일을 첨부해도 돼요';
       break;
     case 'analysis':
       if (!p.analysis) { missing.push('AI 기획 분석 결과'); todo = '「AI 기획 분석 시작」을 누르면 화풍과 연출안 후보가 나와요'; }

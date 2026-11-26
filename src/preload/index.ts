@@ -1,4 +1,4 @@
-import {contextBridge,ipcRenderer} from 'electron';
+import {contextBridge,ipcRenderer,webUtils} from 'electron';
 import type {GeminiJobRecord,StudioAPI} from '../shared/types';
 const api:StudioAPI={
   app:{info:()=>ipcRenderer.invoke('app:info'),openFolder:(projectId)=>ipcRenderer.invoke('app:open-folder',projectId)},
@@ -12,6 +12,8 @@ const api:StudioAPI={
     compare:(primary,secondary)=>ipcRenderer.invoke('sources:compare',primary,secondary),
     importUrl:(url)=>ipcRenderer.invoke('sources:import-url',url),
     importFile:()=>ipcRenderer.invoke('sources:import-file'),
+    importFilePath:(filePath)=>ipcRenderer.invoke('sources:import-file-path',filePath),
+    pathForFile:(file)=>webUtils.getPathForFile(file),
     fetchBible:(req)=>ipcRenderer.invoke('sources:fetch-bible',req),
     openExternal:(url)=>ipcRenderer.invoke('sources:open-external',url)
   },

@@ -111,10 +111,6 @@ export function readyForHandoff(p:StudioProject): {ready:boolean; warnings:strin
   const missing=p.scenes.filter(s=> !s.assetId || !p.assets.some(a=>a.id===s.assetId));
   if(missing.length)warnings.push(`미디어 미연결 장면 ${missing.length}개가 있습니다.`);
   if(!p.assembly.clips.length)warnings.push('최종 편집안이 없습니다.');
-  if(p.brief.rightsStatus==='unreviewed')warnings.push('원문 저작권·이용 조건을 확인하지 않았습니다.');
-  const metaRights = p.brief.originalMeta?.rights.status;
-  if(metaRights==='RESTRICTED')warnings.push('원문이 이용 제한(RESTRICTED) 상태입니다. 별도 이용허락을 확인하세요.');
-  else if(metaRights==='UNKNOWN' || metaRights==='REVIEW_REQUIRED')warnings.push('원문 저작권 추가 확인이 필요합니다.');
   if(p.reviewNeeded && (p.reviewNeeded.analysis || p.reviewNeeded.storyboard || p.reviewNeeded.prompt || p.reviewNeeded.editplan || p.reviewNeeded.subtitles)) {
     warnings.push('기준 원문이 변경되어 재검토가 필요한 후속 단계가 남아 있습니다.');
   }

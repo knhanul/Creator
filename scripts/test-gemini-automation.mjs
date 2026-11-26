@@ -303,6 +303,7 @@ await test('UI 단계 라벨 8종', () => {
   assert.equal(Object.keys(PHASE_LABEL).length, 10);
 });
 
+
 console.log(`\n${checks} gemini-automation checks finished (mock adapter)`);
 rmSync(dir, { recursive: true, force: true });
 if (process.exitCode) process.exit(process.exitCode);

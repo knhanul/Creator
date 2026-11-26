@@ -32,6 +32,8 @@ export interface Brief {
   originalMeta?: OriginalSourceMeta;
   /** 자동으로 채운 칸과 그 출처 이름 (사용자가 고치면 해당 칸 표시는 사라짐 · 기존 프로젝트 하위 호환: optional) */
   autoFilled?: Partial<Record<AutoFillField, string>>;
+  /** 본문을 채운 첨부 파일 이름 (기존 프로젝트 하위 호환: optional) */
+  originalFileName?: string;
 }
 export type AutoFillField = 'title' | 'author' | 'source' | 'sourceUrl' | 'originalText';
 export interface Choice { id: string; label: string; description: string }
@@ -126,6 +128,10 @@ export type StudioAPI = {
     compare(primary: { label: string; text: string }, secondary: { label: string; text: string }): Promise<EditionComparisonSummary>;
     importUrl(url: string): Promise<OriginalFetchResult>;
     importFile(): Promise<OriginalFetchResult | null>;
+    /** 드래그앤드랍된 로컬 파일 경로에서 원문 추출 */
+    importFilePath(filePath: string): Promise<OriginalFetchResult>;
+    /** Electron 드롭 File에서 로컬 경로 (preload의 webUtils) */
+    pathForFile(file: File): string;
     fetchBible(req: BibleFetchRequest): Promise<OriginalFetchResult>;
     openExternal(url: string): Promise<OperationResult>;
   };
@@ -170,7 +176,7 @@ export type StudioAPI = {
       latest(projectId: string): Promise<GeminiJobRecord | null>;
       listForProject(projectId: string): Promise<GeminiJobRecord[]>;
     };
-    /** 작품 정보: 제목·저자로 Gemini에 원문 전문 요청 (결과는 작품에 바로 저장하지 않고 검토 카드로) */
+    /** 장르·저자·제목으로 Gemini에서 원문 가져오기 (본문에 채운 뒤 사용자가 검토·수정) */
     source: {
       start(projectId: string, query: { title: string; author?: string; genre?: Genre | 'all' }): Promise<GeminiAnalysisStartResult>;
       latest(projectId: string): Promise<GeminiJobRecord | null>;

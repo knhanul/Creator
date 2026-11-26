@@ -1,20 +1,18 @@
 /**
- * 로컬 파일에서 원문 가져오기 (TXT / UTF-8 / EUC-KR 및 선택적 DOCX 지원, PDF는 안전한 안내 표시).
+ * 로컬 파일에서 원문 가져오기.
  *
- * 원칙:
- * - 무거운 외부 라이브러리 없이 Node 표준 모듈(fs, zlib)만 사용
- * - TXT(UTF-8/UTF-16/EUC-KR)와 DOCX(word/document.xml) 지원
- * - DOCX 추출 시 표·각주·머리글/꼬리글 누락 가능성을 반드시 경고로 표시
- * - PDF는 OCR/다단/줄바꿈 깨짐 위험 때문에 무검증 자동 추출을 하지 않고 안내 표시
- * - 파일로 가져온 원문은 저작권 상태를 절대 자동 승인하지 않고 UNKNOWN으로 설정
+ * 지원: TXT / MD / SRT / HTML / HTM (UTF-8, UTF-16, EUC-KR/CP949) 및 DOCX(word/document.xml).
+ * PDF는 OCR·다단·줄바꿈 손실 위험 때문에 자동 추출하지 않고 안내만 표시한다.
+ * 무거운 외부 라이브러리 없이 Node 표준 모듈(fs, zlib)만 사용한다.
  */
 import { readFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import type { OriginalFetchResult, TextVerificationIssue } from '../../shared/source-types';
+import { ORIGINAL_FILE_EXTENSIONS, ORIGINAL_FILE_LABEL } from '../../shared/original-fetch';
 import { evaluateRightsEvidence } from '../../shared/copyright';
 import { verifyOriginalText } from '../../shared/text-verify';
-import { decodeHtmlEntities } from './html-extract';
+import { decodeHtmlEntities, extractWebArticle } from './html-extract';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -40,6 +38,22 @@ export function decodeTextBuffer(buf: Buffer): { text: string; encoding: string 
       return { text: buf.toString('utf8'), encoding: 'UTF-8 (손상 가능)' };
     }
   }
+}
+
+
+/** SRT 자막에서 번호·타임코드를 빼고 대사만 순서대로 추출 */
+export function extractSrtText(text: string): string {
+  const blocks = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split(/\n\s*\n/);
+  const lines: string[] = [];
+  for (const block of blocks) {
+    const parts = block.split('\n').map(l => l.trimEnd()).filter(l => l.trim());
+    if (!parts.length) continue;
+    let start = 0;
+    if (/^\d+$/.test(parts[0].trim())) start = 1;
+    const rest = parts.slice(start).filter(l => !/^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*/.test(l.trim()));
+    if (rest.length) lines.push(rest.join('\n'));
+  }
+  return lines.join('\n\n').trim();
 }
 
 /**
@@ -114,6 +128,7 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
   const fileName = basename(filePath);
   const ext = extname(filePath).toLowerCase();
   const titleGuess = fileName.replace(/\.[^.]+$/, '');
+  let resolvedTitle = titleGuess;
 
   if (ext === '.pdf') {
     return {
@@ -134,7 +149,9 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
     };
   }
 
-  if (ext !== '.txt' && ext !== '.md' && ext !== '.docx') {
+  const extNoDot = ext.replace(/^\./, '');
+  const supported = (ORIGINAL_FILE_EXTENSIONS as readonly string[]).includes(extNoDot);
+  if (!supported) {
     return {
       ok: false,
       sourceId: 'local-file',
@@ -148,7 +165,7 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
       fetchedAt,
       inputMethod: 'file',
       errorCode: 'UNSUPPORTED_FILE_TYPE',
-      errorMessage: `지원하지 않는 파일 형식(${ext || '없음'})입니다. TXT, MD(UTF-8) 또는 DOCX 파일을 선택해 주세요.`
+      errorMessage: `지원하지 않는 파일 형식(${ext || '없음'})입니다. ${ORIGINAL_FILE_LABEL} 파일을 선택해 주세요.`
     };
   }
 
@@ -186,8 +203,28 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
       });
     } else {
       const decoded = decodeTextBuffer(buf);
-      originalText = decoded.text.replace(/\r\n?/g, '\n');
       encodingLabel = decoded.encoding;
+      const normalized = decoded.text.replace(/\r\n?/g, '\n');
+      if (ext === '.srt') {
+        originalText = extractSrtText(normalized);
+        extraIssues.push({
+          code: 'FILE_EXTRACTION_NOTICE',
+          severity: 'info',
+          message: 'SRT 자막에서 번호와 시간 코드를 빼고 대사만 본문으로 넣었습니다. 원본과 다르면 직접 고쳐 주세요.'
+        });
+      } else if (ext === '.html' || ext === '.htm') {
+        const article = extractWebArticle(normalized);
+        originalText = article.text;
+        encodingLabel = `${decoded.encoding} · HTML 본문 추출`;
+        if (article.title.trim()) resolvedTitle = article.title.trim();
+        extraIssues.push({
+          code: 'FILE_EXTRACTION_NOTICE',
+          severity: 'info',
+          message: 'HTML에서 메뉴·스크립트를 제거하고 본문 텍스트만 추출했습니다. 빠진 문단이 없는지 확인해 주세요.'
+        });
+      } else {
+        originalText = normalized;
+      }
       if (decoded.encoding !== 'UTF-8' && decoded.encoding !== 'UTF-8 (BOM)') {
         extraIssues.push({
           code: 'FILE_EXTRACTION_NOTICE',
@@ -201,8 +238,7 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
     const rights = evaluateRightsEvidence({
       providerEvidenceStatus: 'UNKNOWN',
       providerEvidenceItems: [
-        `로컬 파일에서 가져옴: ${fileName} (${encodingLabel})`,
-        '로컬 파일만으로는 저작권 상태를 자동 판정할 수 없으므로 출처와 이용 권한을 직접 확인하세요.'
+        `로컬 파일에서 본문을 불러왔습니다: ${fileName} (${encodingLabel})`
       ]
     });
 
@@ -211,7 +247,7 @@ export async function importOriginalFromFilePath(filePath: string): Promise<Orig
       sourceId: 'local-file',
       sourceName: '로컬 파일 가져오기',
       workId: fileName,
-      title: titleGuess,
+      title: resolvedTitle,
       author: '',
       edition: `로컬 파일 (${fileName}, ${encodingLabel})`,
       sourceUrl: '',

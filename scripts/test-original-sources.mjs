@@ -1,5 +1,5 @@
 /**
- * 원문 자동 검색·가져오기·저작권 검증·성경·프로젝트 버전 관리 자동 테스트 (29건).
+ * 원문 자동 검색·가져오기·저작권 검증·성경·프로젝트 버전 관리 자동 테스트.
  * 외부 네트워크에 의존하지 않도록 MockSourceProvider 및 MockHttpClient를 사용한다.
  */
 import assert from 'node:assert/strict';
@@ -16,6 +16,7 @@ const bibleCatalog = loadTS(join(root, 'src/shared/bible-catalog.ts'));
 const versioning = loadTS(join(root, 'src/shared/original-versioning.ts'));
 const workflow = loadTS(join(root, 'src/shared/workflow.ts'));
 const prompts = loadTS(join(root, 'src/shared/prompts.ts'));
+const originalFetch = loadTS(join(root, 'src/shared/original-fetch.ts'));
 const htmlExtract = loadTS(join(root, 'src/main/sources/html-extract.ts'));
 const httpClient = loadTS(join(root, 'src/main/sources/http-client.ts'));
 const wikisourceMod = loadTS(join(root, 'src/main/sources/wikisource-provider.ts'));
@@ -775,6 +776,73 @@ await test('30. 위키문헌 {{머리말}} 파싱 (빈 역자 필드 오인 방�
   assert.equal(parsed.author, '윤동주');
   assert.equal(parsed.translator, undefined);
   assert.equal(parsed.year, '1941');
+});
+
+
+await test('31. 파일 가져오기: SRT 대사 추출, HTML 본문 추출, EUC-KR 텍스트', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gomo-file-extra-'));
+  try {
+    const srtPath = join(dir, 'poem.srt');
+    writeFileSync(srtPath, '1\n00:00:01,000 --> 00:00:04,000\n죽는 날까지 하늘을 우러러\n\n2\n00:00:04,500 --> 00:00:08,000\n한점 부끄럼이 없기를,\n', 'utf8');
+    const srtRes = await fileMod.importOriginalFromFilePath(srtPath);
+    assert.equal(srtRes.ok, true);
+    assert.equal(srtRes.originalText, '죽는 날까지 하늘을 우러러\n\n한점 부끄럼이 없기를,');
+
+    const htmlPath = join(dir, 'work.html');
+    writeFileSync(htmlPath, '<html><head><title>진달래꽃</title></head><body><nav>메뉴</nav><article><p>나 보기가 역겨워</p><p>가실 때에는</p></article></body></html>', 'utf8');
+    const htmlRes = await fileMod.importOriginalFromFilePath(htmlPath);
+    assert.equal(htmlRes.ok, true);
+    assert.match(htmlRes.originalText, /나 보기가 역겨워/);
+    assert.doesNotMatch(htmlRes.originalText, /메뉴/);
+    assert.equal(htmlRes.title, '진달래꽃');
+
+    const eucPath = join(dir, 'seosi.txt');
+    writeFileSync(eucPath, Buffer.from([193, 215, 180, 194, 32, 179, 175, 177, 238, 193, 246, 32, 199, 207, 180, 195, 192, 187, 32, 191, 236, 183, 175, 183, 175]));
+    const eucRes = await fileMod.importOriginalFromFilePath(eucPath);
+    assert.equal(eucRes.ok, true);
+    assert.equal(eucRes.originalText, '죽는 날까지 하늘을 우러러');
+    assert.match(eucRes.edition, /EUC-KR|CP949|euc/i);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('32. Gemini 원문 프롬프트에 장르·저자·제목이 들어간다', () => {
+  const prompt = originalFetch.makeOriginalTextPrompt({ title: '서시', author: '윤동주', genre: 'poetry' });
+  assert.match(prompt, /서시/);
+  assert.match(prompt, /윤동주/);
+  assert.match(prompt, /시/);
+  assert.match(prompt, /<<<ORIGINAL_TEXT/);
+  assert.match(prompt, /UNAVAILABLE/);
+});
+
+await test('33. Gemini 원문 응답에서 마커·코드 블록·거절을 구분한다', () => {
+  const marked = originalFetch.extractOriginalText('설명입니다.\n<<<ORIGINAL_TEXT\n죽는 날까지 하늘을 우러러\nORIGINAL_TEXT\n');
+  assert.equal(marked.ok, true);
+  assert.equal(marked.text, '죽는 날까지 하늘을 우러러');
+
+  const blocked = originalFetch.extractOriginalText('아래와 같습니다.', ['나 보기가 역겨워\n가실 때에는']);
+  assert.equal(blocked.ok, true);
+  assert.equal(blocked.text, '나 보기가 역겨워\n가실 때에는');
+
+  const no = originalFetch.extractOriginalText('UNAVAILABLE: 해당 작품의 전문을 제공할 수 없습니다.');
+  assert.equal(no.ok, false);
+  assert.match(no.reason, /제공할 수 없습니다/);
+
+  const empty = originalFetch.extractOriginalText('');
+  assert.equal(empty.ok, false);
+});
+
+await test('34. 더빙 전달 점검은 저작권 미확인만으로 막지 않는다', () => {
+  const p = workflow.makeProject('handoff-rights', {
+    ...workflow.DEFAULT_BRIEF,
+    title: '서시',
+    originalText: '죽는 날까지 하늘을 우러러',
+    rightsStatus: 'unreviewed'
+  });
+  // 장면·미디어·편집안이 없어 다른 경고는 남지만, 저작권 경고는 없어야 한다
+  const r = workflow.readyForHandoff(p);
+  assert.equal(r.warnings.some(w => w.includes('저작권')), false);
 });
 
 console.log(`\n${passed} original-source tests passed${failed ? `, ${failed} failed` : ''}`);

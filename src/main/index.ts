@@ -43,14 +43,20 @@ function registerHandlers(){
       title:'원문 텍스트 파일 가져오기',
       properties:['openFile'],
       filters:[
-        {name:'지원 원문 파일 (TXT · MD · DOCX)',extensions:['txt','md','docx']},
-        {name:'텍스트 파일 (UTF-8)',extensions:['txt','md']},
-        {name:'Word 문서 (DOCX · 선택 기능)',extensions:['docx']},
-        {name:'PDF (안내 표시)',extensions:['pdf']}
+        {name:'지원 원문 파일 (TXT · MD · SRT · HTML · DOCX)',extensions:['txt','md','srt','html','htm','docx']},
+        {name:'텍스트 파일',extensions:['txt','md','srt']},
+        {name:'HTML',extensions:['html','htm']},
+        {name:'Word 문서 (DOCX)',extensions:['docx']},
+        {name:'PDF (지원 안 함 · 안내)',extensions:['pdf']}
       ]
     });
     if(picked.canceled || !picked.filePaths.length) return null;
     return sourceService.importFilePath(picked.filePaths[0]);
+  });
+  ipcMain.handle('sources:import-file-path',async(_event,filePath:string)=>{
+    const raw=String(filePath||'').trim();
+    if(!raw) throw new Error('파일 경로가 비어 있습니다.');
+    return sourceService.importFilePath(raw);
   });
   ipcMain.handle('sources:fetch-bible',async(_event,req)=>sourceService.fetchBible(req));
   ipcMain.handle('sources:open-external',async(_event,url:string)=>sourceService.openExternal(String(url)));

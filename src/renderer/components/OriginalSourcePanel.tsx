@@ -14,7 +14,6 @@ import {
   RotateCcw,
   Search,
   ShieldAlert,
-  ShieldCheck,
   Sparkles,
   X
 } from 'lucide-react';
@@ -31,13 +30,6 @@ import type { GeminiJobRecord, Genre } from '../../shared/types';
 import { guideFor, phaseView } from '../../shared/gemini-analysis';
 import { makeSourceLookupPrompt, sourceResultFromGemini, type SourceLookupQuery } from '../../shared/gemini-source';
 import { GENRES } from '../../shared/workflow';
-import {
-  ALLOWANCE_LABELS,
-  RIGHTS_STATUS_META,
-  USAGE_LABELS,
-  applyUserRightsDeclaration,
-  canApproveOriginalRights
-} from '../../shared/copyright';
 import {
   BIBLE_BOOKS,
   BIBLE_TRANSLATIONS,
@@ -112,15 +104,8 @@ const UI_STATUS_LABEL: Record<UiStatus, { label: string; tone: 'muted' | 'accent
 };
 
 function computeReviewStatus(res: OriginalFetchResult): UiStatus {
-  if (!res.ok || !res.originalText) return 'rights_check';
-  if (
-    res.rights.status === 'UNKNOWN' ||
-    res.rights.status === 'REVIEW_REQUIRED' ||
-    res.rights.status === 'RESTRICTED'
-  ) {
-    return 'rights_check';
-  }
-  if (res.verification && res.verification.issues.length > 0) return 'text_review';
+  if (!res.ok || !res.originalText) return 'idle';
+  if (res.verification && res.verification.issues.some(i => i.severity === 'error')) return 'text_review';
   return 'ready';
 }
 
@@ -171,8 +156,6 @@ export function OriginalSourcePanel({
   const [rightsDraft, setRightsDraft] = useState<RightsEvidence | null>(null);
   const [comparison, setComparison] = useState<EditionComparisonSummary | null>(null);
   const [comparing, setComparing] = useState(false);
-  const [declarationNote, setDeclarationNote] = useState('');
-  const [reviewChecked, setReviewChecked] = useState(false);
 
   const selectedBook = useMemo(() => getBibleBook(bookId) || BIBLE_BOOKS[0], [bookId]);
   const filteredBooks = useMemo(() => BIBLE_BOOKS.filter(b => b.testament === testament), [testament]);
@@ -189,8 +172,6 @@ export function OriginalSourcePanel({
     setFetched(res);
     setRightsDraft(res.rights);
     setComparison(res.comparison || { compared: false, message: '다른 판본과 대조하지 못함' });
-    setDeclarationNote('');
-    setReviewChecked(false);
     setStatus(computeReviewStatus(res));
   };
 
@@ -386,28 +367,9 @@ export function OriginalSourcePanel({
     }
   };
 
-  const handleDeclareUserRights = () => {
-    if (!activeRights) return;
-    try {
-      const updated = applyUserRightsDeclaration(activeRights, declarationNote);
-      setRightsDraft(updated);
-      setStatus(fetched?.verification?.issues.length ? 'text_review' : 'ready');
-      if (flash) flash('사용자 직접 권리 신고가 기록되었습니다(시스템 검증과 별도 표시).', 'info');
-    } catch (err) {
-      if (flash) flash(err instanceof Error ? err.message : '신고 내용을 입력해 주세요.', 'error');
-    }
-  };
-
-  const approvalCheck = canApproveOriginalRights(activeRights || undefined, {
-    allowReviewRequiredWithAck: reviewChecked
-  });
-
   const handleConfirmApproval = () => {
-    if (!fetched?.ok || !fetched.originalText || !activeRights) return;
-    if (!approvalCheck.allowed) {
-      if (flash) flash(approvalCheck.reason || '저작권 확인이 필요합니다.', 'error');
-      return;
-    }
+    if (!fetched?.ok || !fetched.originalText) return;
+    const rightsForMeta = activeRights || fetched.rights;
     const sourceLabel = [fetched.sourceName, fetched.edition].filter(Boolean).join(' · ');
     const genreResolved: Genre | undefined =
       fetched.inputMethod === 'bible'
@@ -435,7 +397,7 @@ export function OriginalSourcePanel({
         publishedYear: fetched.publishedYear,
         sourceUrl: fetched.sourceUrl,
         fetchedAt: fetched.fetchedAt,
-        rights: activeRights,
+        rights: rightsForMeta,
         bibleRef: fetched.bibleRef as BibleReference | undefined,
         verification: fetched.verification,
         comparison: comparison || fetched.comparison
@@ -722,13 +684,11 @@ export function OriginalSourcePanel({
             <div className="candidate-list">
               {searchResult.candidates.map(c => {
                 const isSelected = fetched?.workId === c.workId && fetched?.sourceId === c.sourceId;
-                const prelim = RIGHTS_STATUS_META[c.preliminaryRightsStatus];
                 return (
                   <article key={`${c.sourceId}:${c.workId}`} className={`candidate-card ${isSelected ? 'selected' : ''}`}>
                     <div className="candidate-main">
                       <div className="candidate-tags">
                         <Tag tone="accent">{c.sourceName}</Tag>
-                        <Tag tone={prelim.tone}>{prelim.shortLabel}</Tag>
                         <Tag tone="muted">{c.autoFetchSupported ? '원문 가져오기 가능' : '공식 페이지 확인'}</Tag>
                       </div>
                       <h4>
@@ -859,20 +819,14 @@ export function OriginalSourcePanel({
             </Field>
           </div>
 
-          <div
-            className={`source-alert ${
-              selectedTranslation.rightsStatus === 'PUBLIC_DOMAIN_VERIFIED' ? 'tone-info' : 'tone-warning'
-            }`}
-          >
-            {selectedTranslation.rightsStatus === 'PUBLIC_DOMAIN_VERIFIED' ? (
-              <ShieldCheck size={15} />
-            ) : (
-              <ShieldAlert size={15} />
-            )}
-            <div>
-              <strong>{selectedTranslation.nameKo}</strong> — {selectedTranslation.rightsBasis}
+          {!selectedTranslation.autoFetchSupported && (
+            <div className="source-alert tone-info">
+              <Info size={15} />
+              <div>
+                <strong>{selectedTranslation.nameKo}</strong> — 이 번역본은 자동 가져오기를 지원하지 않습니다. 파일을 첨부하거나 본문을 붙여넣어 주세요.
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="bible-actions">
             <Button
@@ -937,7 +891,7 @@ export function OriginalSourcePanel({
             </Button>
           </div>
           <p className="source-hint">
-            HTTPS 우선 · 사설 IP/로컬 주소 차단 · robots.txt 준수 · HTML 스크립트/메뉴 제거 후 순수 텍스트로 추출합니다. 일반 웹페이지의 저작권은 자동으로 이용 가능 판정하지 않습니다.
+            HTTPS 우선 · 사설 IP/로컬 주소 차단 · robots.txt 준수 · HTML 스크립트/메뉴 제거 후 순수 텍스트로 추출합니다.
           </p>
         </div>
       )}
@@ -947,9 +901,9 @@ export function OriginalSourcePanel({
         <div className="source-tab-body">
           <div className="file-import-box">
             <div>
-              <strong>TXT · UTF-8 텍스트 또는 DOCX 파일에서 원문 불러오기</strong>
+              <strong>TXT, MD, SRT, HTML, DOCX 파일에서 원문 불러오기</strong>
               <p>
-                UTF-8 / UTF-16 / EUC-KR 텍스트 파일과 Word(DOCX) 본문 추출을 지원합니다. PDF는 다단·OCR 오류 위험 때문에 자동 추출을 비활성화했습니다.
+                UTF-8 / UTF-16 / EUC-KR(CP949) 텍스트와 Word(DOCX) 본문 추출을 지원합니다. PDF는 지원하지 않습니다. 작품 정보 화면의 본문 칸에 바로 끌어다 놓을 수도 있습니다.
               </p>
             </div>
             <Button type="button" onClick={() => void handleImportFile()} disabled={status === 'fetching'}>
@@ -983,11 +937,6 @@ export function OriginalSourcePanel({
                 </button>
               )}
             </div>
-            {activeRights && (
-              <Tag tone={RIGHTS_STATUS_META[activeRights.status].tone}>
-                {RIGHTS_STATUS_META[activeRights.status].label}
-              </Tag>
-            )}
           </div>
 
           {/* 가져오기 실패 또는 공식 페이지 전용 안내 */}
@@ -1009,90 +958,6 @@ export function OriginalSourcePanel({
                   </div>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* 저작권 검토 결과 및 용도별 범위 */}
-          {activeRights && (
-            <div className="rights-box">
-              <div className="rights-box-head">
-                <strong>저작권·이용허락 검토 결과</strong>
-                <span className="micro">{activeRights.status}</span>
-              </div>
-              <p className="rights-basis">{activeRights.basis}</p>
-
-              {activeRights.evidenceItems.length > 0 && (
-                <ul className="rights-evidence-list">
-                  {activeRights.evidenceItems.map((item, i) => (
-                    <li key={i}>{item}</li>
-                  ))}
-                </ul>
-              )}
-
-              <div className="usage-grid">
-                {(Object.keys(USAGE_LABELS) as Array<keyof typeof USAGE_LABELS>).map(key => {
-                  const allowance = activeRights.usage[key];
-                  const meta = ALLOWANCE_LABELS[allowance];
-                  return (
-                    <div key={key} className="usage-pill">
-                      <span>{USAGE_LABELS[key]}</span>
-                      <Tag tone={meta.tone}>{meta.label}</Tag>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {activeRights.reviewItems.length > 0 && (
-                <div className="rights-review-items">
-                  <strong>검증이 필요한 항목</strong>
-                  <ul>
-                    {activeRights.reviewItems.map((item, i) => (
-                      <li key={i}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* 시스템 검증 미충족 시 사용자 직접 권리 신고 영역 */}
-              {(activeRights.status === 'UNKNOWN' ||
-                activeRights.status === 'REVIEW_REQUIRED' ||
-                activeRights.status === 'RESTRICTED') &&
-                fetched.ok && (
-                  <div className="user-declare-box">
-                    <strong>사용자 권리 직접 신고 (시스템 검증과 구분됨)</strong>
-                    <p>
-                      직접 저작권을 보유하거나 권리자로부터 이용허락을 확보한 경우에만 근거를 기록해 신고하세요.
-                      {activeRights.status === 'REVIEW_REQUIRED' &&
-                        ' 또는 위 검토 항목을 직접 확인했다면 아래 확인 체크로 진행할 수 있습니다.'}
-                    </p>
-                    <div className="user-declare-row">
-                      <input
-                        value={declarationNote}
-                        onChange={e => setDeclarationNote(e.target.value)}
-                        placeholder="예: 저자 사망연도 및 한국 보호기간 만료 직접 확인 / 권리자 서면 허락 확보"
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        kind="secondary"
-                        onClick={handleDeclareUserRights}
-                        disabled={!declarationNote.trim()}
-                      >
-                        권리 직접 신고
-                      </Button>
-                    </div>
-                    {activeRights.status === 'REVIEW_REQUIRED' && (
-                      <label className="review-ack-check">
-                        <input
-                          type="checkbox"
-                          checked={reviewChecked}
-                          onChange={e => setReviewChecked(e.target.checked)}
-                        />
-                        <span>위 저작권 검토 항목과 판본·출처 조건을 직접 확인했습니다.</span>
-                      </label>
-                    )}
-                  </div>
-                )}
             </div>
           )}
 
@@ -1170,7 +1035,7 @@ export function OriginalSourcePanel({
             <div className="original-preview-wrap">
               <div className="rights-box-head">
                 <strong>원문 전체 미리보기 (줄바꿈·연 구분 원형 보존)</strong>
-                <span className="muted-text">확정 후에는 AI가 임의로 수정하지 않도록 보호됩니다</span>
+                <span className="muted-text">줄바꿈과 연 구분을 확인해 주세요. 채운 다음에도 고칠 수 있습니다.</span>
               </div>
               <pre className="original-preview-text">{fetched.originalText}</pre>
             </div>
@@ -1180,18 +1045,12 @@ export function OriginalSourcePanel({
           {fetched.ok && fetched.originalText && (
             <div className="source-approve-bar">
               <div className="source-approve-note">
-                {approvalCheck.allowed ? (
-                  <span>
-                    <CheckCircle2 size={14} /> 원문과 출처·저작권 검토를 확인했습니다. AI 기획 시작 시 확정 원문이 외부 Gemini로 전송됩니다.
-                  </span>
-                ) : (
-                  <span className="warn-text">
-                    <ShieldAlert size={14} /> {approvalCheck.reason}
-                  </span>
-                )}
+                <span>
+                  <CheckCircle2 size={14} /> 가져온 원문을 확인한 뒤 본문에 채웁니다. 채운 다음에도 수정할 수 있습니다.
+                </span>
               </div>
-              <Button type="button" onClick={handleConfirmApproval} disabled={!approvalCheck.allowed}>
-                <Check size={16} /> 이 원문을 기준 원문으로 확정
+              <Button type="button" onClick={handleConfirmApproval}>
+                <Check size={16} /> 이 원문으로 채우기
               </Button>
             </div>
           )}

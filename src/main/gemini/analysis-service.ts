@@ -362,7 +362,7 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
   async function startSource(projectId: string, query: SourceLookupQuery): Promise<GeminiAnalysisStartResult> {
     const q = normalizeSourceQuery(query);
     if (!q.title) return { ok: false, message: '찾을 작품 제목을 입력해 주세요.' };
-    const key = `${projectId} source`;
+    const key = `${projectId}\u0000source`;
     if (starting.has(key)) return { ok: true, job: queue.findActive(projectId, 'source'), reused: true, message: '이미 원문 찾기를 시작 중입니다.' };
     starting.add(key);
     try {

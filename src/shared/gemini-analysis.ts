@@ -283,8 +283,10 @@ export const ERROR_GUIDE: Record<string, { cause: string; fix: string }> = {
   SCENE_NOT_FOUND: { cause: '미디어를 연결할 대상 장면을 프로젝트에서 찾을 수 없습니다.', fix: '스토리보드에서 장면 목록을 확인한 뒤 다시 시도해 주세요.' },
   EMPTY_IMAGE_PROMPT: { cause: '이 장면의 이미지 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계에서 해당 장면의 이미지 프롬프트를 먼저 생성하거나 입력해 주세요.' },
   EMPTY_VIDEO_PROMPT: { cause: '이 장면의 동영상 생성 프롬프트가 비어 있습니다.', fix: '생성 프롬프트 단계의 고급 설정에서 동영상 프롬프트를 먼저 입력해 주세요.' },
-  EMPTY_BGM_PROMPT: { cause: '작품의 배경음악 프롬프트(bgmPrompt)가 비어 있습니다.', fix: '생성 프롬프트 단계에서 프롬프트를 먼저 생성해 주세요.' }
+  EMPTY_BGM_PROMPT: { cause: '작품의 배경음악 프롬프트(bgmPrompt)가 비어 있습니다.', fix: '생성 프롬프트 단계에서 프롬프트를 먼저 생성해 주세요.' },
+  ORIGINAL_TEXT_MISSING: { cause: '제미나이 응답에서 작품 원문을 찾지 못했습니다.', fix: 'Gemini 탭의 답변을 확인한 뒤 다시 시도하거나, 파일을 첨부하거나 본문을 직접 붙여넣어 주세요.' }
 };
+
 
 export function guideFor(job: GeminiJobRecord | null | undefined): { cause: string; fix: string } | null {
   if (!job || !job.errorCode) return null;
