@@ -83,7 +83,7 @@ export interface GeminiStatus {
 export interface GeminiPingResult { ok: boolean; roundtripMs: number; message: string; }
 export interface GeminiJob { jobId: string; projectId: string; stage: string; prompt: string; sceneId?: string; }
 export interface GeminiJobResult { success: boolean; jobId: string; errorCode?: string; message?: string; }
-export type GeminiJobKind = 'analysis' | 'storyboard' | 'prompt' | 'editplan' | 'image' | 'video' | 'music';
+export type GeminiJobKind = 'analysis' | 'storyboard' | 'prompt' | 'editplan' | 'image' | 'video' | 'music' | 'source';
 export type GeminiJobState = 'queued' | 'dispatching' | 'waiting' | 'completed' | 'failed' | 'needs_confirmation' | 'cancelled' | 'cancelling';
 /** UI 단계: 연결 확인/프롬프트 전송 중/Gemini 응답 대기/응답 수집 중/JSON 검증 중/분석 완료/사용자 확인 필요/오류 */
 export type GeminiJobPhase = 'queued' | 'checking' | 'sending' | 'waiting' | 'collecting' | 'validating' | 'done' | 'needs_user' | 'error' | 'cancelled';
@@ -169,6 +169,11 @@ export type StudioAPI = {
       start(projectId: string): Promise<GeminiAnalysisStartResult>;
       latest(projectId: string): Promise<GeminiJobRecord | null>;
       listForProject(projectId: string): Promise<GeminiJobRecord[]>;
+    };
+    /** 작품 정보: 제목·저자로 Gemini에 원문 전문 요청 (결과는 작품에 바로 저장하지 않고 검토 카드로) */
+    source: {
+      start(projectId: string, query: { title: string; author?: string; genre?: Genre | 'all' }): Promise<GeminiAnalysisStartResult>;
+      latest(projectId: string): Promise<GeminiJobRecord | null>;
     };
     /** 아무것도 보내지 않고 Gemini 화면의 셀렉터 일치 현황만 확인 */
     probe(): Promise<GeminiProbeResult>;

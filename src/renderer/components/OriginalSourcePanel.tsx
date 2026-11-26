@@ -11,9 +11,12 @@ import {
   Globe,
   Info,
   Loader2,
+  RotateCcw,
   Search,
   ShieldAlert,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles,
+  X
 } from 'lucide-react';
 import type {
   BibleReference,
@@ -24,7 +27,9 @@ import type {
   SourceCandidate,
   SourceSearchResponse
 } from '../../shared/source-types';
-import type { Genre } from '../../shared/types';
+import type { GeminiJobRecord, Genre } from '../../shared/types';
+import { guideFor, phaseView } from '../../shared/gemini-analysis';
+import { makeSourceLookupPrompt, sourceResultFromGemini, type SourceLookupQuery } from '../../shared/gemini-source';
 import { GENRES } from '../../shared/workflow';
 import {
   ALLOWANCE_LABELS,
@@ -41,7 +46,7 @@ import {
 } from '../../shared/bible-catalog';
 import { Button, Field, Tag } from './UI';
 
-export type SourceTab = 'search' | 'bible' | 'url' | 'file';
+export type SourceTab = 'gemini' | 'search' | 'bible' | 'url' | 'file';
 
 export interface ApprovedOriginalPayload {
   title: string;
@@ -54,6 +59,8 @@ export interface ApprovedOriginalPayload {
 }
 
 interface OriginalSourcePanelProps {
+  /** Gemini로 원문 찾기에 쓰는 작품 ID (gemini 탭에 필요) */
+  projectId?: string;
   defaultGenre?: Genre;
   initialQuery?: string;
   initialAuthor?: string;
@@ -76,7 +83,8 @@ interface OriginalSourcePanelProps {
 
 const ALL_TABS: SourceTab[] = ['search', 'bible', 'url', 'file'];
 const TAB_META: Record<SourceTab, { label: string; title: string; icon: typeof Search }> = {
-  search: { label: '작품 검색', title: '작품 검색', icon: Search },
+  gemini: { label: 'Gemini로 찾기', title: 'Gemini로 원문 찾기', icon: Sparkles },
+  search: { label: '공개 자료 검색', title: '공개 자료 검색', icon: Search },
   bible: { label: '성경 본문', title: '성경 본문 범위', icon: BookOpen },
   url: { label: 'URL에서 가져오기', title: 'URL에서 가져오기', icon: Globe },
   file: { label: '파일 가져오기', title: '파일 가져오기', icon: FileUp }
@@ -116,7 +124,10 @@ function computeReviewStatus(res: OriginalFetchResult): UiStatus {
   return 'ready';
 }
 
+const ACTIVE_JOB_STATES = new Set(['queued', 'dispatching', 'waiting', 'cancelling']);
+
 export function OriginalSourcePanel({
+  projectId,
   defaultGenre = 'poetry',
   initialQuery = '',
   initialAuthor = '',
@@ -131,7 +142,9 @@ export function OriginalSourcePanel({
   autoSearch = false
 }: OriginalSourcePanelProps) {
   const [tab, setTab] = useState<SourceTab>(
-    tabs.includes(defaultGenre === 'bible' ? 'bible' : 'search') ? (defaultGenre === 'bible' ? 'bible' : 'search') : tabs[0]
+    defaultGenre === 'bible' && tabs.includes('bible') ? 'bible'
+      : tabs.includes('gemini') && projectId ? 'gemini'
+      : tabs.includes('search') ? 'search' : tabs[0]
   );
   const [status, setStatus] = useState<UiStatus>('idle');
 
@@ -179,6 +192,88 @@ export function OriginalSourcePanel({
     setDeclarationNote('');
     setReviewChecked(false);
     setStatus(computeReviewStatus(res));
+  };
+
+  // 0) Gemini로 원문 찾기
+  const [srcJob, setSrcJob] = useState<GeminiJobRecord | null>(null);
+  const [srcError, setSrcError] = useState('');
+  const srcJobRef = useRef<GeminiJobRecord | null>(null);
+  srcJobRef.current = srcJob;
+  /** 작업별로 보낸 검색어 (응답 해석·제목 대조용) */
+  const srcQueries = useRef(new Map<string, SourceLookupQuery>());
+  const srcHandled = useRef(new Set<string>());
+  const currentSourceQuery = (): SourceLookupQuery => ({ title: queryText.trim(), author: authorQuery.trim(), genre: genreFilter });
+
+  useEffect(() => {
+    const off = window.studio.gemini.onJobUpdate(j => {
+      if (j.kind === 'source' && srcJobRef.current?.jobId === j.jobId) setSrcJob(j);
+    });
+    return off;
+  }, []);
+
+  /** 출처 URL이 있으면 그 페이지 원문과 자동 대조 (실패해도 조용히 넘어감) */
+  const crossCheckWithSourceUrl = async (res: OriginalFetchResult) => {
+    if (!res.ok || !res.originalText || !res.sourceUrl) return;
+    try {
+      const page = await window.studio.sources.importUrl(res.sourceUrl);
+      if (!page.ok || !page.originalText) return;
+      const diff = await window.studio.sources.compare(
+        { label: `Gemini (${res.edition})`, text: res.originalText },
+        { label: `출처 페이지 (${page.sourceName})`, text: page.originalText }
+      );
+      setComparison(cur => (cur && cur.compared ? cur : diff));
+    } catch { /* 대조는 참고용 */ }
+  };
+
+  useEffect(() => {
+    const j = srcJob;
+    if (!j || j.state !== 'completed' || srcHandled.current.has(j.jobId)) return;
+    srcHandled.current.add(j.jobId);
+    const q = srcQueries.current.get(j.jobId) || currentSourceQuery();
+    const res = sourceResultFromGemini(j, q);
+    applyFetchedResult(res);
+    if (!res.ok) {
+      if (flash) flash(res.errorMessage || 'Gemini가 원문을 찾지 못했습니다.', 'info');
+      return;
+    }
+    void crossCheckWithSourceUrl(res);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcJob]);
+
+  const handleGeminiLookup = async () => {
+    if (!projectId) return;
+    const q = currentSourceQuery();
+    if (!q.title) {
+      setSrcError('찾을 작품 제목을 입력해 주세요.');
+      return;
+    }
+    setSrcError('');
+    try {
+      const r = await window.studio.gemini.source.start(projectId, q);
+      if (r.job) {
+        if (!r.reused) srcQueries.current.set(r.job.jobId, q);
+        setSrcJob(r.job);
+      }
+      if (!r.ok) setSrcError(r.message || 'Gemini에 요청하지 못했습니다.');
+      else if (!r.reused) {
+        setFetched(null);
+        setRightsDraft(null);
+        setComparison(null);
+        setStatus('idle');
+      }
+    } catch (err) {
+      setSrcError(err instanceof Error ? err.message : 'Gemini에 요청하지 못했습니다.');
+    }
+  };
+
+  const srcAction = async (fn: () => Promise<unknown>) => {
+    try {
+      const r = await fn();
+      if (r && typeof r === 'object' && 'jobId' in r) setSrcJob(r as GeminiJobRecord);
+      else if (r && typeof r === 'object' && 'message' in r && flash) flash(String((r as { message: string }).message), 'info');
+    } catch (err) {
+      if (flash) flash(err instanceof Error ? err.message : '요청을 처리하지 못했습니다.', 'error');
+    }
   };
 
   const handleSearch = async () => {
@@ -371,13 +466,36 @@ export function OriginalSourcePanel({
   }, [fetched]);
   const autoSearched = useRef(false);
   useEffect(() => {
-    if (!autoSearch || autoSearched.current || tab !== 'search') return;
+    if (!autoSearch || autoSearched.current) return;
+    if (tab === 'gemini' && projectId) {
+      autoSearched.current = true;
+      // 같은 작품을 이미 찾았거나 찾는 중이면 다시 보내지 않고 그 결과를 이어서 보여 줌
+      void window.studio.gemini.source.latest(projectId).then(last => {
+        const q = currentSourceQuery();
+        const same = !!last && !!q.title && last.prompt === makeSourceLookupPrompt(q);
+        if (same && last && (last.state === 'completed' || last.state === 'needs_confirmation' || ACTIVE_JOB_STATES.has(last.state))) {
+          srcQueries.current.set(last.jobId, q);
+          setSrcJob(last);
+        } else if (q.title) {
+          void handleGeminiLookup();
+        }
+      }).catch(() => { if (queryText.trim()) void handleGeminiLookup(); });
+      return;
+    }
+    if (tab !== 'search') return;
     autoSearched.current = true;
     if (queryText.trim() || authorQuery.trim()) void handleSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const statusMeta = status === 'idle' && tab === 'bible' ? { label: '범위를 고르세요', tone: 'muted' as const } : UI_STATUS_LABEL[status];
+  const srcView = phaseView(srcJob);
+  const srcActive = !!srcJob && ACTIVE_JOB_STATES.has(srcJob.state);
+  const srcGuide = srcJob && (srcJob.state === 'failed' || srcJob.state === 'needs_confirmation') ? guideFor(srcJob) : null;
+  const statusMeta =
+    tab === 'gemini' && srcActive && srcView ? { label: `Gemini · ${srcView.label}`, tone: 'accent' as const }
+      : status === 'idle' && tab === 'bible' ? { label: '범위를 고르세요', tone: 'muted' as const }
+      : UI_STATUS_LABEL[status];
+  const statusSpin = status === 'searching' || status === 'fetching' || (tab === 'gemini' && srcActive);
   const gonguSearchUrl = `https://gongu.copyright.or.kr/gongu/search/search/list.do?searchWord=${encodeURIComponent(
     (queryText || authorQuery).trim()
   )}`;
@@ -408,7 +526,7 @@ export function OriginalSourcePanel({
         )}
         <div className="source-status-right">
           <Tag tone={statusMeta.tone}>
-            {(status === 'searching' || status === 'fetching') && <Loader2 size={12} className="spin" />}
+            {statusSpin && <Loader2 size={12} className="spin" />}
             {statusMeta.label}
           </Tag>
           {onSwitchManual && (
@@ -418,6 +536,112 @@ export function OriginalSourcePanel({
           )}
         </div>
       </div>
+
+      {/* ⓪ Gemini로 원문 찾기 */}
+      {tab === 'gemini' && (
+        <div className="source-tab-body">
+          <div className="source-search-bar">
+            <input
+              value={queryText}
+              onChange={e => setQueryText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleGeminiLookup();
+                }
+              }}
+              placeholder="작품 제목 (예: 님의 침묵, 진달래꽃, 서시)"
+              aria-label="작품 제목"
+            />
+            <input
+              value={authorQuery}
+              onChange={e => setAuthorQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleGeminiLookup();
+                }
+              }}
+              placeholder="저자 (권장 · 예: 한용운)"
+              aria-label="저자"
+              className="source-author-input"
+            />
+            <select
+              value={genreFilter}
+              onChange={e => setGenreFilter(e.target.value as Genre | 'all')}
+              aria-label="콘텐츠 유형"
+              className="source-genre-select"
+            >
+              <option value="all">전체 유형</option>
+              {Object.entries(GENRES)
+                .filter(([k]) => k !== 'bible')
+                .map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
+                ))}
+            </select>
+            <Button type="button" onClick={() => void handleGeminiLookup()} disabled={srcActive || !projectId}>
+              <Sparkles size={15} /> {srcJob ? '다시 찾기' : 'Gemini로 찾기'}
+            </Button>
+          </div>
+          <p className="source-hint">
+            작품 제목·저자만 Gemini 탭으로 보내 원문 전문을 받아옵니다. 받아온 원문은 바로 저장하지 않고 아래에서 확인한 뒤 확정합니다.
+          </p>
+
+          {srcError && (
+            <div className="source-alert tone-warning">
+              <AlertTriangle size={15} />
+              <span>{srcError}</span>
+            </div>
+          )}
+
+          {srcJob && srcActive && srcView && (
+            <div className="source-alert tone-info">
+              <Loader2 size={15} className="spin" />
+              <div className="source-alert-body">
+                <strong>Gemini에서 원문을 찾는 중 · {srcView.label}</strong>
+                <span> Gemini 답변이 끝나면 아래에 원문이 자동으로 표시됩니다.</span>
+                <div className="source-alert-actions">
+                  <Button type="button" size="sm" kind="ghost" onClick={() => void srcAction(() => window.studio.gemini.jobs.cancel(srcJob.jobId))}>
+                    <X size={13} /> 취소
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {srcJob && srcGuide && (
+            <div className="source-alert tone-warning">
+              <AlertTriangle size={15} />
+              <div className="source-alert-body">
+                <strong>{srcGuide.cause}</strong>
+                <span> {srcGuide.fix}</span>
+                <div className="source-alert-actions">
+                  {srcJob.state === 'failed' && (
+                    <Button type="button" size="sm" kind="outline" onClick={() => void srcAction(() => window.studio.gemini.jobs.retry(srcJob.jobId))}>
+                      <RotateCcw size={13} /> 다시 시도
+                    </Button>
+                  )}
+                  {srcJob.state === 'needs_confirmation' && (
+                    <>
+                      <Button type="button" size="sm" kind="outline" onClick={() => void srcAction(() => window.studio.gemini.analysis.fetchResult(srcJob.jobId))}>
+                        응답 다시 가져오기
+                      </Button>
+                      <Button type="button" size="sm" kind="outline" onClick={() => void srcAction(() => window.studio.gemini.jobs.continue(srcJob.jobId))}>
+                        응답 기다리기
+                      </Button>
+                      <Button type="button" size="sm" kind="outline" onClick={() => void srcAction(() => window.studio.gemini.jobs.confirm(srcJob.jobId))}>
+                        <RotateCcw size={13} /> 다시 보내기
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ① 작품 검색 */}
       {tab === 'search' && (

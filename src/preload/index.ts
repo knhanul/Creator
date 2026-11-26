@@ -48,6 +48,10 @@ const api:StudioAPI={
       latest:(projectId)=>ipcRenderer.invoke('gemini:music:latest',projectId),
       listForProject:(projectId)=>ipcRenderer.invoke('gemini:music:list',projectId)
     },
+    source:{
+      start:(projectId,query)=>ipcRenderer.invoke('gemini:source:start',projectId,query),
+      latest:(projectId)=>ipcRenderer.invoke('gemini:source:latest',projectId)
+    },
     probe:()=>ipcRenderer.invoke('gemini:probe'),
     onJobUpdate:(cb)=>{const h=(_e:unknown,job:GeminiJobRecord)=>cb(job);ipcRenderer.on('gemini:job-update',h);return()=>{ipcRenderer.removeListener('gemini:job-update',h);};}
   }

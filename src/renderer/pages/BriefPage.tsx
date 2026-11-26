@@ -118,7 +118,7 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
         <Field label="작품 제목" badge={autoBadge('title')} className="span-2">
           <div className="input-with-button">
             <input value={draft.title} onChange={e=>set('title',e.target.value)} placeholder={isBible?'본문을 가져오면 자동으로 채워져요 (예: 시편 23편 1~6절)':'작품 제목 (예: 서시, 진달래꽃)'} data-skip-focus={isBible?'':undefined} onKeyDown={e=>{if(e.key==='Enter'&&!isBible&&draft.title.trim()){e.preventDefault();setFinderKey(k=>k+1);setFinderOpen(true);}}}/>
-            {!isBible&&<Button type="button" kind={textEmpty&&!finderOpen?'primary':'outline'} size="sm" aria-expanded={finderOpen} title="위키문헌·구텐베르크·공유마당 검색, URL, 파일에서 원문을 찾아 칸을 채웁니다" onClick={()=>{if(!finderOpen)setFinderKey(k=>k+1);setFinderOpen(v=>!v);}}>{finderOpen?<><X size={14}/> 찾기 닫기</>:<><Search size={14}/> 원문 찾아 채우기</>}</Button>}
+            {!isBible&&<Button type="button" kind={textEmpty&&!finderOpen?'primary':'outline'} size="sm" aria-expanded={finderOpen} title="Gemini로 원문을 찾아 칸을 채웁니다 (공개 자료 검색·URL·파일도 가능)" onClick={()=>{if(!finderOpen)setFinderKey(k=>k+1);setFinderOpen(v=>!v);}}>{finderOpen?<><X size={14}/> 찾기 닫기</>:<><Search size={14}/> 원문 찾아 채우기</>}</Button>}
           </div>
         </Field>
         {!isBible&&<>
@@ -144,7 +144,8 @@ export function BriefPage({project,flash,saveState,panelOpen,onTogglePanel,regis
       {!isBible&&finderOpen&&<div className="finder-inline" role="region" aria-label="원문 찾아 채우기">
         <OriginalSourcePanel
           key={`finder-${projectId}-${finderKey}`}
-          tabs={['search','url','file']}
+          projectId={projectId}
+          tabs={['gemini','search','url','file']}
           defaultGenre={draft.genre}
           initialQuery={draft.title}
           initialAuthor={draft.author}

@@ -19,6 +19,7 @@ import {
   makeMusicGenerationPrompt,
   makeVideoGenerationPrompt
 } from '../../shared/gemini-analysis';
+import { makeSourceLookupPrompt, normalizeSourceQuery, type SourceLookupQuery } from '../../shared/gemini-source';
 
 /** GeminiJobQueue(job-queue.mjs) 중 이 서비스가 쓰는 부분 */
 export interface QueueLike {
@@ -354,6 +355,32 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
     }
   }
 
+  /**
+   * 작품 정보: 제목·저자로 Gemini에 원문 전문 요청.
+   * 결과는 작품에 저장하지 않고(outcome='received') 화면의 원문 검토 카드에서 사용자가 확정합니다.
+   */
+  async function startSource(projectId: string, query: SourceLookupQuery): Promise<GeminiAnalysisStartResult> {
+    const q = normalizeSourceQuery(query);
+    if (!q.title) return { ok: false, message: '찾을 작품 제목을 입력해 주세요.' };
+    const key = `${projectId} source`;
+    if (starting.has(key)) return { ok: true, job: queue.findActive(projectId, 'source'), reused: true, message: '이미 원문 찾기를 시작 중입니다.' };
+    starting.add(key);
+    try {
+      const prompt = makeSourceLookupPrompt(q);
+      const existing = queue.findActive(projectId, 'source');
+      if (existing) {
+        return existing.prompt === prompt
+          ? { ok: true, job: existing, reused: true, message: '같은 작품의 원문 찾기가 이미 진행 중입니다.' }
+          : { ok: false, job: existing, message: '앞서 요청한 원문 찾기가 아직 진행 중입니다. 끝나거나 취소한 뒤 다시 찾아 주세요.' };
+      }
+      const job = await queue.enqueue({ projectId, kind: 'source', prompt });
+      void kick();
+      return { ok: true, job };
+    } finally {
+      starting.delete(key);
+    }
+  }
+
   /** 완료된 동영상(video)·배경음악(music) 생성 작업 결과를 프로젝트 assets/에 저장 */
   async function applyCompletedMedia(jobId: string): Promise<GeminiJobRecord | null> {
     const job = queue.get(jobId);
@@ -593,6 +620,6 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
 
   /** 사용자가 「이 결과 적용」: 보류(stale)된 결과만 force. expectedStage가 다르면 거부(다른 단계 화면에서 적용 불가) */
   const applyResult = (jobId: string, expectedStage?: AIStage) => { const j = queue.get(jobId); return applyCompleted(jobId, j?.outcome === 'stale', expectedStage); };
-  return { start, startImage, startVideo, startMusic, kick, applyCompleted, applyCompletedImage, applyCompletedMedia, applyResult, handleMessage, fetchResult, onReconnect, provider };
+  return { start, startSource, startImage, startVideo, startMusic, kick, applyCompleted, applyCompletedImage, applyCompletedMedia, applyResult, handleMessage, fetchResult, onReconnect, provider };
 }
 export type AnalysisService = ReturnType<typeof createAnalysisService>;

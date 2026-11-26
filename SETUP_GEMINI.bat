@@ -48,11 +48,13 @@ for /f "usebackq delims=" %%i in (`node native-host\extension-id.mjs`) do set "F
 if not defined FIXED_ID set "FIXED_ID=ekibpgmnknamcpplppceoaogmcbcabbo"
 
 set "EXTDIR=%~dp0extension"
+set "CLIPOK=0"
 echo 확장 폴더 경로를 클립보드에 복사하는 중...
 <nul set /p="%EXTDIR%" | clip
 if errorlevel 1 (
-  echo 클립보드 복사에 실패했습니다. 아래 경로를 직접 복사하세요.
+  echo 클립보드 복사에 실패했습니다. 안내 창의 버튼으로 복사하세요.
 ) else (
+  set "CLIPOK=1"
   echo 확장 폴더 경로를 클립보드에 복사했습니다.
 )
 echo.
@@ -72,6 +74,24 @@ if defined CHROME (
 if errorlevel 1 echo Chrome 을 자동으로 열지 못했습니다. 주소창에 chrome://extensions 를 직접 입력하세요.
 echo 화면이 안 열리면 Chrome 주소창에 chrome://extensions 를 직접 입력하세요.
 echo.
+
+rem 안내문을 창(텍스트 상자)으로 띄움. 실패하면 메모장, 그것도 안 되면 아래 콘솔 안내
+set "GUIDE_PS=%~dp0native-host\setup-guide.ps1"
+echo 설정 안내 창을 띄웁니다. 창을 닫으면 이 설정이 끝납니다.
+powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%GUIDE_PS%" -ExtDir "%EXTDIR%" -ExtId "%FIXED_ID%" -ClipOk %CLIPOK%
+if not errorlevel 1 exit /b 0
+
+echo 안내 창을 띄우지 못해 메모장으로 엽니다...
+set "GUIDE_TXT=%TEMP%\gomo-gemini-setup.txt"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GUIDE_PS%" -ExtDir "%EXTDIR%" -ExtId "%FIXED_ID%" -ClipOk %CLIPOK% -TextOut "%GUIDE_TXT%"
+if not errorlevel 1 (
+  start "" notepad "%GUIDE_TXT%"
+  if not errorlevel 1 (
+    pause
+    exit /b 0
+  )
+)
+
 echo ------------------------------------------------
 echo  이제 Chrome 에서 확장 프로그램을 불러오세요.
 echo  아래 단계는 이 컴퓨터에서 한 번만 하면 됩니다.

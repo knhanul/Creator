@@ -79,6 +79,8 @@ function registerHandlers(){
   ipcMain.handle('gemini:music:start',async(_event,projectId:string)=>analysis.startMusic(String(projectId)));
   ipcMain.handle('gemini:music:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'music')||null);
   ipcMain.handle('gemini:music:list',async(_event,projectId:string)=>jobQueue.list().filter((j:GeminiJobRecord)=>j.projectId===String(projectId)&&j.kind==='music'));
+  ipcMain.handle('gemini:source:start',async(_event,projectId:string,query)=>analysis.startSource(String(projectId),query||{title:''}));
+  ipcMain.handle('gemini:source:latest',async(_event,projectId:string)=>jobQueue.latest(String(projectId),'source')||null);
   ipcMain.handle('gemini:probe',async()=>geminiAdapter.probe());
 }
 let analysis: AnalysisService;
