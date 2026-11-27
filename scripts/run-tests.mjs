@@ -97,7 +97,7 @@ test('고친 칸은 자동 입력 표시 제거',()=>assert.equal(clearAutoFille
 test('작품 정보 단계: 비면 다음 버튼 잠금 + 빠진 항목 안내',()=>{const g=stepGuide(draft0,'brief');assert.equal(g.ready,false);assert.deepEqual(g.missing,['작품 제목','낭독할 원문']);assert.equal(g.next,'analysis');});
 test('작품 정보 단계: 채우면 준비 완료',()=>{const g=stepGuide(s4.project,'brief');assert.equal(g.ready,true);assert.ok(g.hint.startsWith('준비 완료'));});
 test('기획 분석 단계: 화풍·연출 고르면 준비 완료',()=>{const g=stepGuide(p1,'analysis');assert.equal(g.ready,true);});
-test('더빙 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
+test('편집실 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
 
 console.log(`${checks} tests completed`);
 

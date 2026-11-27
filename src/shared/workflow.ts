@@ -5,7 +5,7 @@ import { clearStageReviewFlag } from './original-versioning';
 
 export const GENRES: Record<Genre, string> = { bible: '성경', poetry: '시', essay: '에세이', novel: '소설', classic: '고전' };
 export const AUDIENCES = { preschool: '유아', kids: '어린이', teens: '청소년', adult: '성인', family: '가족' } as const;
-export const STAGE_NAMES = { brief: '작품 등록', analysis: '기획 분석', storyboard: '스토리보드', prompt: '생성 프롬프트', media: '미디어 제작', assembly: '최종 편집안', handoff: '더빙 전달' } as const;
+export const STAGE_NAMES = { brief: '작품 등록', analysis: '기획 분석', storyboard: '스토리보드', prompt: '생성 프롬프트', media: '미디어 제작', assembly: '최종 편집안', handoff: '편집실 전달' } as const;
 export const STAGE_ORDER = ['brief', 'analysis', 'storyboard', 'prompt', 'media', 'assembly', 'handoff'] as const;
 const now = () => new Date().toISOString();
 const emptyStage = (): StageRecord => ({ status: 'idle', raw: '', updatedAt: null });
