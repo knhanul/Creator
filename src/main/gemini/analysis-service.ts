@@ -69,14 +69,14 @@ export interface AnalysisServiceDeps {
   saveGeneratedImageAsset?(
     projectId: string,
     sceneId: string,
-    input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
-  ): Promise<{ project: StudioProject; asset: MediaAsset }>;
+    input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string; requestedAt?: string }
+  ): Promise<{ project: StudioProject; asset: MediaAsset; linked?: boolean }>;
   /** Phase 5 확장: 생성된 이미지·동영상·오디오를 assets/<kind>/에 저장 (audio는 장면 미연결) */
   saveGeneratedMediaAsset?(
     projectId: string,
     kind: AssetKind,
-    input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string }
-  ): Promise<{ project: StudioProject; asset: MediaAsset }>;
+    input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string; requestedAt?: string }
+  ): Promise<{ project: StudioProject; asset: MediaAsset; linked?: boolean }>;
   /** 결과가 작품에 저장되었을 때 (renderer가 작품을 다시 읽도록) */
   onProjectUpdated?(project: StudioProject, job: GeminiJobRecord): void;
   /** 프로젝트 자산 파일을 읽어 기준 이미지 첨부에 사용 */
@@ -241,12 +241,13 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       });
     }
 
-    let savedResult: { project: StudioProject; asset: MediaAsset };
+    let savedResult: { project: StudioProject; asset: MediaAsset; linked?: boolean };
     try {
       savedResult = await deps.saveGeneratedImageAsset(job.projectId, job.sceneId, {
         imageDataUrl: job.imageDataUrl,
         downloadPath: job.downloadPath,
-        mimeType: job.imageMimeType
+        mimeType: job.imageMimeType,
+        requestedAt: job.createdAt
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -260,6 +261,16 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       });
     }
 
+    if (savedResult.linked === false) {
+      // 요청한 뒤 스토리보드·생성 프롬프트가 다시 만들어짐 → 옛 기획의 결과라 장면에 연결하지 않고 보관함에만 저장
+      const kept = await queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'stale', phase: 'done', needsUser: false, errorCode: 'PLAN_CHANGED',
+        errorMessage: '요청한 뒤 스토리보드나 생성 프롬프트가 다시 만들어져, 이 결과는 장면에 연결하지 않고 미디어 보관함에만 저장했어요.',
+        assetId: savedResult.asset.id, resultRef: savedResult.asset.relativePath, appliedRevision: savedResult.project.revision
+      });
+      if (kept) deps.onProjectUpdated?.(savedResult.project, kept);
+      return kept;
+    }
     const done = await queue.setOutcome(job.jobId, job.requestId, {
       outcome: 'applied',
       phase: 'done',
@@ -451,13 +462,14 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       });
     }
 
-    let savedResult: { project: StudioProject; asset: MediaAsset };
+    let savedResult: { project: StudioProject; asset: MediaAsset; linked?: boolean };
     try {
       savedResult = await deps.saveGeneratedMediaAsset(job.projectId, assetKind, {
         sceneId: job.kind === 'video' ? job.sceneId : undefined,
         mediaDataUrl: dataUrl,
         downloadPath: job.downloadPath,
-        mimeType: job.mediaMimeType || job.imageMimeType
+        mimeType: job.mediaMimeType || job.imageMimeType,
+        requestedAt: job.createdAt
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -471,6 +483,16 @@ export function createAnalysisService(deps: AnalysisServiceDeps) {
       });
     }
 
+    if (savedResult.linked === false) {
+      // 요청한 뒤 스토리보드·생성 프롬프트가 다시 만들어짐 → 옛 기획의 결과라 장면에 연결하지 않고 보관함에만 저장
+      const kept = await queue.setOutcome(job.jobId, job.requestId, {
+        outcome: 'stale', phase: 'done', needsUser: false, errorCode: 'PLAN_CHANGED',
+        errorMessage: '요청한 뒤 스토리보드나 생성 프롬프트가 다시 만들어져, 이 결과는 장면에 연결하지 않고 미디어 보관함에만 저장했어요.',
+        assetId: savedResult.asset.id, resultRef: savedResult.asset.relativePath, appliedRevision: savedResult.project.revision
+      });
+      if (kept) deps.onProjectUpdated?.(savedResult.project, kept);
+      return kept;
+    }
     const done = await queue.setOutcome(job.jobId, job.requestId, {
       outcome: 'applied',
       phase: 'done',

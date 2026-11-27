@@ -159,19 +159,19 @@ export interface StageMeta {
 export const STAGE_META: Record<AIStage, StageMeta> = {
   analysis: {
     name: '기획 분석', schema: 'creator.analysis.v1', startLabel: 'AI 기획 분석 시작', restartLabel: 'AI 기획 분석 다시 시작', doneLabel: '분석 완료', resultLabel: 'ANALYSIS RESULT',
-    resetWarning: p => p.analysis && (p.selection.styleId || p.scenes.length) ? '다시 분석하면 현재 화풍·연출 선택과 스토리보드 장면이 초기화됩니다. 계속할까요?' : null,
+    resetWarning: p => p.analysis && (p.selection.styleId || p.scenes.length) ? '다시 분석하면 화풍·연출 선택과 그 뒤 작업(스토리보드, 생성 프롬프트, 장면 미디어 연결, 최종 편집안)이 모두 초기화됩니다. 만든 미디어 파일은 미디어 보관함에 남아요. 계속할까요?' : null,
     prerequisite: p => (!p.brief.title.trim() || !p.brief.originalText.trim()) ? '작품 제목과 낭독 원문을 먼저 입력해 주세요.' : null,
     upstreamChanged: '요청을 보낸 뒤 작품 정보(원문·장르·대상 등)가 바뀌어 자동으로 적용하지 않았습니다.'
   },
   storyboard: {
     name: '스토리보드', schema: 'creator.storyboard.v2', startLabel: 'AI 장면 구성 시작', restartLabel: 'AI 장면 구성 다시 시작', doneLabel: '장면 구성 완료', resultLabel: 'STORYBOARD RESULT',
-    resetWarning: p => p.scenes.length ? '다시 구성하면 바뀐 장면의 생성 프롬프트·미디어 연결과 최종 편집안이 초기화됩니다. 계속할까요?' : null,
+    resetWarning: p => p.scenes.length ? '다시 구성하면 그 뒤 작업(생성 프롬프트, 장면에 연결된 이미지·동영상, 최종 편집안)이 모두 초기화됩니다. 만든 미디어 파일은 미디어 보관함에 남아요. 계속할까요?' : null,
     prerequisite: p => !p.analysis || !p.selection.styleId || !p.selection.directionId ? '기획 분석 후 화풍과 연출안을 먼저 선택해 주세요.' : null,
     upstreamChanged: '요청을 보낸 뒤 작품 정보나 선택한 화풍·연출안이 바뀌어 자동으로 적용하지 않았습니다.'
   },
   prompt: {
     name: '생성 프롬프트', schema: 'creator.prompts.v1', startLabel: 'AI 프롬프트 생성 시작', restartLabel: 'AI 프롬프트 다시 생성', doneLabel: '프롬프트 생성 완료', resultLabel: 'PROMPT RESULT',
-    resetWarning: p => p.scenes.some(s => s.imagePrompt) ? '다시 생성하면 장면별 이미지·영상 프롬프트를 새 결과로 덮어씁니다. 계속할까요?' : null,
+    resetWarning: p => p.scenes.some(s => s.imagePrompt) ? `다시 생성하면 장면별 프롬프트를 새로 만들고, ${p.scenes.some(s => s.assetId) || p.assembly.clips.length ? '장면에 연결된 이미지·동영상과 최종 편집안도 초기화됩니다(만든 미디어 파일은 미디어 보관함에 남아요)' : '그 뒤 작업도 새로 시작합니다'}. 계속할까요?` : null,
     prerequisite: p => !p.scenes.length ? '스토리보드 장면을 먼저 구성해 주세요.' : null,
     upstreamChanged: '요청을 보낸 뒤 작품 정보·화풍 또는 스토리보드 장면이 바뀌어 자동으로 적용하지 않았습니다.'
   },
