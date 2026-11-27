@@ -71,6 +71,28 @@ test('composer: 자막이 줄 단위로 나뉘고 시간 순서',()=>{const item
 test('효과 다시 채우기(자막 줄 유지)',()=>{const r=withSceneEffects(pv2,{regenerate:true});assert.deepEqual(r.scenes[0].effects.captions,pv2.scenes[0].effects.captions);assert.ok(r.scenes[0].effects.shots.length>=1);});
 test('스토리보드 프롬프트에 효과 설계 요청',()=>{const t=makeAIPrompt(p1,'storyboard');assert.ok(t.includes('creator.storyboard.v2')&&t.includes('focus_in')&&t.includes('captions'));});
 
+// ── 미디어 한 번에 만들기: 이미지(기준 이미지 포함) 먼저 → 동영상 맨 뒤 → 배경음악 ──
+const {planMediaBatch,describeBatch}=loadTS(join(root,'src/shared/media-batch.ts'));
+const mb=applyAIResponse(pv2,'prompt',JSON.stringify({schema:'creator.prompts.v1',items:pv2.scenes.map(s=>({sceneId:s.id,imagePrompt:'img '+s.id,videoPrompt:s.kind==='video'?'vid '+s.id:'',negativePrompt:''})),bgmPrompt:'soft piano'}));
+test('계획: 장면 순서와 상관없이 이미지·기준 이미지 먼저, 동영상은 맨 뒤, 배경음악 마지막',()=>{
+  const plan=planMediaBatch(mb);
+  assert.deepEqual(plan.map(x=>`${x.kind}:${x.sceneId||''}`),['image:S01','reference:S02','image:S03','video:S02','music:']);
+  assert.equal(describeBatch(plan),'이미지 2 · 기준 이미지 1 → 동영상 1 → 배경음악');
+});
+test('계획: 이미 만든 것은 건너뜀(이어서 만들기)',()=>{
+  const q=structuredClone(mb);
+  q.assets=[{id:'i1',kind:'image',name:'S01_image.png',relativePath:'assets/image/S01_image.png',bytes:1,importedAt:''},{id:'r2',kind:'image',name:'S02_image.png',relativePath:'assets/image/S02_image.png',bytes:1,importedAt:''}];
+  q.scenes[0].assetId='i1';q.scenes[1].assetId='r2';q.scenes[1].referenceImageAssetId='r2';
+  assert.deepEqual(planMediaBatch(q).map(x=>`${x.kind}:${x.sceneId||''}`),['image:S03','video:S02','music:']);
+});
+test('계획: 동영상이 연결된 장면·오디오가 있으면 배경음악도 건너뜀, 배경음악 끄기',()=>{
+  const q=structuredClone(mb);
+  q.assets=[{id:'v2',kind:'video',name:'S02_video.mp4',relativePath:'v',bytes:1,importedAt:''},{id:'a',kind:'audio',name:'bgm.mp3',relativePath:'a',bytes:1,importedAt:''}];
+  q.scenes[1].assetId='v2';
+  assert.deepEqual(planMediaBatch(q).map(x=>x.kind),['image','image']);
+  assert.ok(!planMediaBatch(mb,{music:false}).some(x=>x.kind==='music'));
+});
+
 
 // ── 리모델링: 새 작품(빈 작품) · 자동 저장 버전 묶기 · 단계 안내 ──
 const {isEmptyDraft,NEW_DRAFT_BRIEF,summarize}=loadTS(join(root,'src/shared/workflow.ts'));
