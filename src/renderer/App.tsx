@@ -38,8 +38,6 @@ const STAGE_DONE_FLASH:Record<AIStage,string>={
 };
 const stageHasResult=(p:StudioProject,st:AIStage)=>st==='analysis'?!!p.analysis:st==='storyboard'?p.scenes.length>0:st==='prompt'?p.scenes.some(s=>!!s.imagePrompt||!!s.videoPrompt):p.assembly.clips.length>0;
 
-/** 화면별 AI 단계 (이 화면에서 시작하는 Gemini 작업) */
-const VIEW_AI_STAGE:Partial<Record<string,AIStage>>={analysis:'analysis',storyboard:'storyboard',prompt:'prompt',assembly:'editplan'};
 type View = 'home'|'projects'|'brief'|'analysis'|'storyboard'|'prompt'|'media'|'assembly'|'handoff'|'settings';
 const STEP_VIEWS:Stage[]=['brief','analysis','storyboard','prompt','media','assembly','handoff'];
 const isStepView=(v:View):v is Stage=>(STEP_VIEWS as string[]).includes(v);
@@ -132,7 +130,7 @@ function ProjectRow({p,onOpen,onArchive}:{p:ProjectSummary,onOpen:()=>void,onArc
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
   const themeApi = useTheme();
-  const [view,setView]=useState<View>('home');const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiAuto,setAiAuto]=useState(false);
+  const [view,setView]=useState<View>('home');const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiView,setAiView]=useState<View|null>(null);const [aiAuto,setAiAuto]=useState(false);
   const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);
   const [imageJobs,setImageJobs]=useState<Record<string,GeminiJobRecord>>({});
   const [videoJobs,setVideoJobs]=useState<Record<string,GeminiJobRecord>>({});
@@ -275,16 +273,16 @@ function App(){
   const analysisView=phaseView(analysisJob);
   const busyOf=(st:AIStage)=>{const j=stageJobs[st];return !!j&&!['completed','failed','cancelled'].includes(j.state);};
   const analysisBusy=busyOf('analysis');
-  const openStage=(st:AIStage,auto:boolean)=>{setAiAuto(auto&&!busyOf(st));setAiStage(st);};
+  const openStage=(st:AIStage,auto:boolean)=>{setAiAuto(auto&&!busyOf(st));setAiStage(st);setAiView(view);};
   const openAnalysis=(auto:boolean)=>openStage('analysis',auto);
   /** 단계 페이지 상단 버튼: 진행 중이면 「진행 상황 보기」, 아니면 「AI … 시작」 */
   const stageButton=(st:AIStage,disabled=false)=>busyOf(st)?<Button size="sm" onClick={()=>openStage(st,false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openStage(st,true)} disabled={disabled}><Sparkles size={15}/> {project&&stageHasResult(project,st)?STAGE_META[st].restartLabel:STAGE_META[st].startLabel}</Button>;
   /** 진행 중·확인 필요 작업 배너 (모달을 닫아도 표시) */
   const stageBanner=(st:AIStage)=>{const j=stageJobs[st];const v=phaseView(j);if(!j||!v||!(v.active||v.phase==='needs_user'||v.phase==='error'))return null;return <button className={`analysis-job-banner tone-${v.tone}`} onClick={()=>openStage(st,false)}><Sparkles size={16}/><strong>Gemini {STAGE_META[st].name} · {v.label}</strong><span>{v.active?'창을 닫아도 계속 진행됩니다.':'확인이 필요합니다.'} 눌러서 자세히 보기</span><ArrowRight size={15}/></button>;};
   const onNavigate=(t:AINavTarget)=>{if(t==='select'){goSelect();return;}void go(t);};
-  // 다른 제작 단계 화면으로 옮기면: 자동 시작은 끄고, 다른 단계의 AI 작업 창은 닫는다
+  // AI 작업 창은 연 화면에서만 보인다. 다른 화면으로 옮기면 닫고 자동 시작도 끈다
   // (이전 단계 창이 새 화면에서 다시 만들어지며 그 단계를 다시 시작하려던 문제 방지)
-  useEffect(()=>{setAiAuto(false);const st=VIEW_AI_STAGE[view];if(st)setAiStage(cur=>cur&&cur!==st?null:cur);},[view]);
+  useEffect(()=>{if(aiView&&aiView!==view){setAiStage(null);setAiAuto(false);setAiView(null);}},[view]);
   const goSelect=()=>{setView('analysis');setTimeout(()=>document.querySelector('.choice-layout')?.scrollIntoView({behavior:'smooth',block:'start'}),120);};
   /** 작품 정보 자동 저장을 끝낸다. 실패하면 오류를 알리고 false를 돌려 화면 이동을 막는다. */
   const flushBrief=async()=>{
@@ -341,7 +339,7 @@ function App(){
     if(!project)return null;
     const guide=stepGuide(project,stage);
     const Icon=iconFor[stage];
-    const panel=aiStage?<AIDock key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onAutoStartConsumed={()=>setAiAuto(false)} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>
+    const panel=aiStage&&aiView===view?<AIDock key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onAutoStartConsumed={()=>setAiAuto(false)} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);setAiView(null);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>
       :stepPanel?<ProjectPropsPanel project={project} brief={project.brief} onChange={patch=>void mutate(p=>({...p,brief:{...p.brief,...patch}}))} onClose={toggleStepPanel}/>:null;
     return <StepLayout key={stage} focusKey={`${stage}-${project.id}`}
       header={<DocHeader icon={<Icon size={16}/>} title={STEP_TITLES[stage]} description={STAGE_HINTS[stage]} project={project} saveState={saveState} actions={opts.actions} panelOpen={stepPanel&&!aiStage} onTogglePanel={toggleStepPanel}/>}
