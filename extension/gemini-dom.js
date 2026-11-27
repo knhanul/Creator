@@ -724,8 +724,10 @@
     }
 
     const MENU_OPEN_HINTS = /파일 업로드(?! ?메뉴)|Drive에서 파일|업로드 더보기|Google 검색|이미지 만들기|동영상 만들기|음악 만들기|Create (an?\s+)?(image|video|music|videos?)/i;
-    const NEW_CHAT_DIALOG_RE = /새 채팅을 시작하시겠습니까|이 도구를 선택하면 새 채팅|start a new chat\??|this tool will start a new chat|start new chat\?/i;
-    const NEW_CHAT_CONFIRM_RE = /^(새 채팅|new chat|start new chat)$/i;
+    /** 동영상 등 도구가 요구하는 「새 채팅」 확인 창 (문구가 조금 달라도 인식: 시작하시겠습니까/시작하시겠어요/새 채팅에서 계속/새 채팅이 필요 등) */
+    const NEW_CHAT_DIALOG_RE = /(새|새로운)\s*채팅(을|를|이|에서|으로)?\s*(시작|열|계속|필요|만들|이동|전환)|이 도구를 (선택|사용)하면|start (a )?new chat|this tool will start a new chat|starts? a new chat|new chat (is )?required|continue in a new chat/i;
+    /** 그 창의 확인 버튼 (취소·닫기는 절대 아님) */
+    const NEW_CHAT_CONFIRM_RE = /^(새 채팅|새로운 채팅|새 채팅 시작|새 채팅 시작하기|새 채팅 열기|새 채팅에서 계속|새 채팅으로 이동|시작|시작하기|계속|계속하기|확인|new chat|start new chat|start a new chat|start chat|continue|ok)$/i;
 
     function scanClickable(pred) {
       const out = [];

@@ -330,5 +330,24 @@ for (const stage of ['analysis', 'image']) {
   });
 }
 
+
+// ── 회귀: 동영상 도구가 요구하는 「새 채팅」 확인 창의 문구가 조금 달라도 자동으로 확인 (취소는 절대 누르지 않음) ──
+const NEW_CHAT_VARIANTS = [
+  { name: '시작하시겠어요? / 새 채팅 시작', newChatTitle: '새 채팅을 시작하시겠어요?', newChatBody: '동영상을 만들려면 새 채팅이 필요합니다.', newChatConfirmLabel: '새 채팅 시작' },
+  { name: '새 채팅에서 계속 / 계속', newChatTitle: '새 채팅에서 계속할까요?', newChatBody: '이 도구는 새 채팅에서 사용할 수 있습니다.', newChatConfirmLabel: '계속' },
+  { name: '영문 Start a new chat? / Start new chat', newChatTitle: 'Start a new chat?', newChatBody: 'Creating videos starts a new chat.', newChatConfirmLabel: 'Start new chat', newChatCancelLabel: 'Cancel' }
+];
+for (const v of NEW_CHAT_VARIANTS) {
+  await test(`회귀(새 채팅 확인 창: ${v.name}): 동영상 도구를 고르고 확인 창을 자동으로 넘겨 전송`, async () => {
+    const { g, sim } = setup({ newChatConfirm: true, ...v }, realisticHtml());
+    const r = await g.submit({ prompt: '양이 물가로 걸어감', marker, stage: 'video' });
+    assert.equal(r.sendState, 'sent', r.message);
+    assert.deepEqual(sim.menuItemClicks, ['동영상 만들기']);
+    assert.equal(sim.newChatConfirmClicks, 1, '새 채팅 확인을 눌러야 함');
+    assert.equal(sim.newChatCancelClicks || 0, 0, '취소는 누르면 안 됨');
+    assert.equal(sim.toolMode, 'video');
+  });
+}
+
 console.log(`\n${checks} gemini-tool-mode (jsdom 모형) checks finished — 실제 Gemini DOM 검증 아님`);
 if (process.exitCode) process.exit(process.exitCode);
