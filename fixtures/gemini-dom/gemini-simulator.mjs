@@ -6,7 +6,7 @@ export function installGeminiSimulator(win, opts = {}) {
   const doc = win.document;
   const o = { chunkMs: 15, firstDelayMs: 40, thinking: false, noEvidence: false, neverEnable: false, neverFinish: false, rerender: false, pauseMs: 0, ...opts };
   const composer = doc.querySelector('rich-textarea [contenteditable]');
-  const send = doc.querySelector('button[data-test-id="send-button"]');
+  const send = doc.querySelector('button[data-test-id="send-button"], button.send-button:not(.stop)');
   const stop = doc.querySelector('button[data-test-id="stop-button"]');
   const history = doc.getElementById('chat-history');
   const state = { sentTexts: [], clicks: 0, plusClicks: 0, sidebarClicks: 0, sidebarNewChatClicks: 0, menuItemClicks: [], chipDismisses: 0, newChatConfirmClicks: 0, toolMode: o.initialToolMode || null };

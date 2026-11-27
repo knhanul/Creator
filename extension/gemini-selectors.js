@@ -39,7 +39,8 @@
       S('button[data-test-id="send-button"]', '[B] data-test-id'),
       S('button[aria-label="Send message"]', '[A][B][C] 영문 aria-label'),
       S('button[aria-label*="Send" i]', '[A] 영문 aria-label 부분 일치'),
-      S('button[aria-label*="보내기"]', '한국어 UI "메시지 보내기" 추정 (진단 필요)'),
+      S('button[aria-label="메시지 보내기"]', '한국어 UI "메시지 보내기" 정확 일치'),
+      S('button[aria-label*="보내기"]', '한국어 UI "…보내기" 부분 일치 (「공유 및 내보내기」는 코드에서 제외)'),
       S('button[aria-label*="전송"]', '한국어 UI 변형 추정 (진단 필요)'),
       S('button.send-button:not(.stop)', '[A][C] 클래스 — 대체 수단')
     ],

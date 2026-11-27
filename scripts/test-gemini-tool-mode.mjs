@@ -312,5 +312,23 @@ await test('회귀: + 를 눌렀는데 도구 메뉴가 아닌 하단 시트가 
   assert.ok(/다른 메뉴/.test(r.message), r.message);
 });
 
+
+// ── 회귀: 한국어 전송 버튼 「메시지 보내기」를 찾는 부분 일치(*="보내기")가 이전 답변의 「공유 및 내보내기」와 일치해
+//    전송 대신 공유 하단 시트를 열고 프롬프트가 입력창에 남던 문제 (기획 분석 등 텍스트 단계에서도 발생) ──
+function koreanSendHtml() {
+  return realisticHtml().replace(/<button class="send-button" data-test-id="send-button" aria-label="Send message"/, '<button class="send-button" aria-label="메시지 보내기"');
+}
+for (const stage of ['analysis', 'image']) {
+  await test(`회귀(${stage}): 「메시지 보내기」 대신 「공유 및 내보내기」를 누르지 않고 실제로 전송`, async () => {
+    const { g, sim, doc } = setup({}, koreanSendHtml());
+    assert.ok(!doc.querySelector('[data-test-id="send-button"]'), '모형: data-test-id 없는 한국어 전송 버튼');
+    const share = installShareSheet(doc);
+    const r = await g.submit({ prompt: '시편 23편 기획 분석 요청', marker, stage });
+    assert.equal(share.shareClicks, 0, '공유·내보내기 버튼을 누르면 안 됨');
+    assert.equal(r.sendState, 'sent', r.message);
+    assert.equal(sim.sentTexts.length, 1, '실제로 한 번 전송되어야 함');
+  });
+}
+
 console.log(`\n${checks} gemini-tool-mode (jsdom 모형) checks finished — 실제 Gemini DOM 검증 아님`);
 if (process.exitCode) process.exit(process.exitCode);
