@@ -38,6 +38,11 @@ const STAGE_DONE_FLASH:Record<AIStage,string>={
 };
 const stageHasResult=(p:StudioProject,st:AIStage)=>st==='analysis'?!!p.analysis:st==='storyboard'?p.scenes.length>0:st==='prompt'?p.scenes.some(s=>!!s.imagePrompt||!!s.videoPrompt):p.assembly.clips.length>0;
 
+/** 「다음」으로 넘어갈 때 비어 있으면 바로 시작하는 AI 단계 */
+const AUTO_START_NEXT:Partial<Record<Stage,{stage:AIStage,label:string,hint:string,empty:(p:StudioProject)=>boolean}>>={
+  storyboard:{stage:'storyboard',label:'AI 장면 구성 시작',hint:'스토리보드로 넘어가 Gemini 장면 구성을 바로 시작해요',empty:p=>!p.scenes.length},
+  prompt:{stage:'prompt',label:'AI 프롬프트 생성 시작',hint:'생성 프롬프트로 넘어가 Gemini 프롬프트 생성을 바로 시작해요',empty:p=>!p.scenes.some(s=>!!s.imagePrompt||!!s.videoPrompt)}
+};
 type View = 'home'|'projects'|'brief'|'analysis'|'storyboard'|'prompt'|'media'|'assembly'|'handoff'|'settings';
 const STEP_VIEWS:Stage[]=['brief','analysis','storyboard','prompt','media','assembly','handoff'];
 const isStepView=(v:View):v is Stage=>(STEP_VIEWS as string[]).includes(v);
@@ -273,7 +278,8 @@ function App(){
   const analysisView=phaseView(analysisJob);
   const busyOf=(st:AIStage)=>{const j=stageJobs[st];return !!j&&!['completed','failed','cancelled'].includes(j.state);};
   const analysisBusy=busyOf('analysis');
-  const openStage=(st:AIStage,auto:boolean)=>{setAiAuto(auto&&!busyOf(st));setAiStage(st);setAiView(view);};
+  /** onView: 창을 보여 줄 화면(기본: 지금 화면). 「다음」으로 넘어가며 바로 시작할 때는 넘어갈 화면 */
+  const openStage=(st:AIStage,auto:boolean,onView:View=view)=>{setAiAuto(auto&&!busyOf(st));setAiStage(st);setAiView(onView);};
   const openAnalysis=(auto:boolean)=>openStage('analysis',auto);
   /** 단계 페이지 상단 버튼: 진행 중이면 「진행 상황 보기」, 아니면 「AI … 시작」 */
   const stageButton=(st:AIStage,disabled=false)=>busyOf(st)?<Button size="sm" onClick={()=>openStage(st,false)}><Sparkles size={15}/> 진행 상황 보기</Button>:<Button size="sm" onClick={()=>openStage(st,true)} disabled={disabled}><Sparkles size={15}/> {project&&stageHasResult(project,st)?STAGE_META[st].restartLabel:STAGE_META[st].startLabel}</Button>;
@@ -301,10 +307,11 @@ function App(){
     return true;
   };
   const go=async(next:View)=>{
-    if(next!=='projects'&&next!=='home'&&next!=='settings'&&!studio.current()){setView('projects');return;}
-    if(next==='home'||next==='projects'){if(!await leaveProject())return;}
-    else if(!await flushBrief())return;
+    if(next!=='projects'&&next!=='home'&&next!=='settings'&&!studio.current()){setView('projects');return false;}
+    if(next==='home'||next==='projects'){if(!await leaveProject())return false;}
+    else if(!await flushBrief())return false;
     setView(next);
+    return true;
   };
   const open=async(id:string)=>{if(studio.current()?.id!==id&&!await leaveProject())return;const p=await studio.load(id);if(p){setView('brief');setActiveAsset(null);setEditingSceneId(null);setNewScene(null);}};
   /** 「새 작품」: 입력 창 없이 바로 빈 작품을 만들고 작품 정보 화면을 연다 */
@@ -337,14 +344,19 @@ function App(){
   /** 단계 화면 공통 틀: 한 줄 머리 + 본문 + (오른쪽 창) + 아래 고정 줄 */
   const renderStep=(stage:Stage,opts:{actions?:ReactNode,body:ReactNode,primaryLabel?:string,onPrimary?:()=>void}):ReactNode=>{
     if(!project)return null;
-    const guide=stepGuide(project,stage);
+    const baseGuide=stepGuide(project,stage);
+    // 다음 단계가 아직 비어 있는 AI 단계면: 「다음」을 누르면 그 화면으로 가서 바로 AI 작업을 시작한다
+    const auto=baseGuide.ready&&baseGuide.next?AUTO_START_NEXT[baseGuide.next]:undefined;
+    const autoOn=!!auto&&auto.empty(project)&&!busyOf(auto.stage)&&!STAGE_META[auto.stage].prerequisite(project);
+    const guide=autoOn?{...baseGuide,hint:`준비 완료 ✓ 다음을 누르면 ${auto!.hint}`}:baseGuide;
+    const onNext=async()=>{if(!guide.next)return;const target=guide.next;if(await go(target)&&autoOn)openStage(auto!.stage,true,target);};
     const Icon=iconFor[stage];
     const panel=aiStage&&aiView===view?<AIDock key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onAutoStartConsumed={()=>setAiAuto(false)} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);setAiView(null);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>
       :stepPanel?<ProjectPropsPanel project={project} brief={project.brief} onChange={patch=>void mutate(p=>({...p,brief:{...p.brief,...patch}}))} onClose={toggleStepPanel}/>:null;
     return <StepLayout key={stage} focusKey={`${stage}-${project.id}`}
       header={<DocHeader icon={<Icon size={16}/>} title={STEP_TITLES[stage]} description={STAGE_HINTS[stage]} project={project} saveState={saveState} actions={opts.actions} panelOpen={stepPanel&&!aiStage} onTogglePanel={toggleStepPanel}/>}
       panel={panel}
-      actionBar={<ActionBar guide={guide} primaryLabel={opts.primaryLabel} onNext={opts.onPrimary||(()=>{if(guide.next)void go(guide.next);})}/>}>
+      actionBar={<ActionBar guide={guide} primaryLabel={opts.primaryLabel||(autoOn?`다음: ${auto!.label}`:undefined)} onNext={opts.onPrimary||(()=>void onNext())}/>}>
       {opts.body}
     </StepLayout>;
   };
@@ -410,7 +422,7 @@ function App(){
             {stageBanner('storyboard')}
             {project.scenes.length||newScene?<div className="scene-grid">{project.scenes.map((scene,i)=>editingSceneId===scene.id?<article className="scene-card is-editing" key={scene.id}><div className="scene-card-body"><div className="scene-card-top"><div className="micro">SCENE {String(i+1).padStart(2,'0')} · {scene.id}</div></div><SceneEditor scene={scene} index={i} isNew={false} onCancel={()=>setEditingSceneId(null)} onSave={s=>{saveScene(s);setEditingSceneId(null);}}/></div></article>:<article className="scene-card" key={scene.id}><div className="scene-cover"><Photo project={project} asset={sceneAsset(project,scene)}/><div className="scene-index">{scene.id}</div><div className="scene-kind">{scene.kind==='video'?<Film size={13}/>:<ImageIcon size={13}/>} {scene.kind==='video'?'동영상':'이미지'}</div></div><div className="scene-card-body"><div className="scene-card-top"><div className="micro">SCENE {String(i+1).padStart(2,'0')}</div><span className="duration"><Clock3 size={13}/>{scene.durationSec}초</span></div><h3>{scene.title}</h3><p className="scene-visual">{scene.visual}</p>{scene.mood&&<p className="scene-mood">{scene.mood}</p>}<blockquote>{scene.narration}</blockquote><EffectsSummary scene={scene}/><div className="scene-card-actions"><Button kind="secondary" size="sm" onClick={()=>{setNewScene(null);setEditingSceneId(scene.id);}}><PenLine size={14}/> 바로 고치기</Button><span className="scene-reorder"><IconButton label="앞으로 이동" disabled={i===0} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i-1],a[i]]=[a[i],a[i-1]];return {...p,scenes:a};})}><ArrowUp size={15}/></IconButton><IconButton label="뒤로 이동" disabled={i===project.scenes.length-1} onClick={()=>void mutate(p=>{const a=[...p.scenes];[a[i],a[i+1]]=[a[i+1],a[i]];return {...p,scenes:a};})}><ArrowDown size={15}/></IconButton><IconButton label="삭제" onClick={()=>{if(confirm('이 장면을 삭제할까요?'))void mutate(p=>({...p,scenes:p.scenes.filter(s=>s.id!==scene.id),assembly:{...p.assembly,clips:p.assembly.clips.filter(c=>c.sceneId!==scene.id)}}));}}><Trash2 size={15}/></IconButton></span></div></div></article>)}
               {newScene&&<article className="scene-card is-editing is-new" key={newScene.id}><div className="scene-card-body"><div className="scene-card-top"><div className="micro">새 장면 · {newScene.id}</div></div><SceneEditor scene={newScene} index={project.scenes.length} isNew onCancel={()=>setNewScene(null)} onSave={s=>{void mutate(p=>withSceneEffects({...p,scenes:[...p.scenes,s]}));setNewScene(null);}}/></div></article>}
-            </div>:<Card><Empty title="아직 장면 구성이 없어요" description="「AI 장면 구성 시작」을 누르면 선택한 화풍·연출로 Gemini에 장면 구성을 요청하고 결과를 바로 반영해요. 「장면 추가」로 직접 만들 수도 있어요." action={<div className="action-group"><Button disabled={!stageComplete(project,'analysis')||busyOf('storyboard')} onClick={()=>openStage('storyboard',true)}><Sparkles size={16}/> AI 장면 구성 시작</Button><Button kind="outline" onClick={addScene}><Plus size={15}/> 장면 추가</Button></div>}/></Card>}
+            </div>:busyOf('storyboard')?<Card><Empty title="Gemini가 장면을 구성하고 있어요" description="오른쪽 AI 작업 창에서 진행 상황을 볼 수 있어요. 끝나면 장면 카드가 여기에 바로 나타나요." action={<Button kind="outline" onClick={()=>openStage('storyboard',false)}><Sparkles size={16}/> 진행 상황 보기</Button>}/></Card>:<Card><Empty title="아직 장면 구성이 없어요" description="「AI 장면 구성 시작」을 누르면 선택한 화풍·연출로 Gemini에 장면 구성을 요청하고 결과를 바로 반영해요. 「장면 추가」로 직접 만들 수도 있어요." action={<div className="action-group"><Button disabled={!stageComplete(project,'analysis')||busyOf('storyboard')} onClick={()=>openStage('storyboard',true)}><Sparkles size={16}/> AI 장면 구성 시작</Button><Button kind="outline" onClick={addScene}><Plus size={15}/> 장면 추가</Button></div>}/></Card>}
           </div>})}
         {project&&view==='prompt'&&renderStep('prompt',{
           actions:<>{stageButton('prompt',!project.scenes.length)}<Button size="sm" kind="outline" onClick={()=>openStage('prompt',false)} disabled={!project.scenes.length}>상세·수동 연결</Button></>,
