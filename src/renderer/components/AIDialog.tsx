@@ -7,7 +7,7 @@ import {PROGRESS_STEPS,STAGE_META,guideFor,phaseView} from '../../shared/gemini-
 import {Button,Tag} from './UI';
 /** 새 요청을 시작해도 되는 상태 (나머지는 진행 중이거나 사용자 확인 대기) */
 const TERMINAL:GeminiJobRecord['state'][]=['completed','failed','cancelled'];
-type Props={project:StudioProject,stage:AIStage,onClose:()=>void,onApply:(p:StudioProject)=>Promise<boolean>,onCopy:(text:string)=>void,autoStart?:boolean,onNavigate?:(t:AINavTarget)=>void,flash?:(text:string,type?:'info'|'success'|'error')=>void};
+type Props={project:StudioProject,stage:AIStage,onClose:()=>void,onApply:(p:StudioProject)=>Promise<boolean>,onCopy:(text:string)=>void,autoStart?:boolean,/** 자동 시작을 한 번 썼음을 알림 → 화면을 옮겨 창이 다시 만들어져도 또 시작하지 않음 */onAutoStartConsumed?:()=>void,onNavigate?:(t:AINavTarget)=>void,flash?:(text:string,type?:'info'|'success'|'error')=>void};
 
 /** 기존 수동 연결(프롬프트 복사 + JSON 붙여넣기). 모든 단계에서 접힌 보조 기능 */
 function ManualPanel({project,stage,onApply,onCopy,onDone,initialAnswer}:{project:StudioProject,stage:AIStage,onApply:(p:StudioProject)=>Promise<boolean>,onCopy:(text:string)=>void,onDone:()=>void,initialAnswer?:string}){
@@ -54,7 +54,7 @@ function StageResult({project,stage,onNavigate,onClose}:{project:StudioProject,s
 
 /** AI 단계 자동화 화면 (기획 분석·스토리보드·생성 프롬프트·최종 편집 구성 공용).
  *  작업 상태는 main의 작업 큐에 저장되므로 창을 닫아도 유지됩니다. */
-function StageAutomation({project,stage,onClose,onApply,onCopy,autoStart,onNavigate,flash}:Props){
+function StageAutomation({project,stage,onClose,onApply,onCopy,autoStart,onAutoStartConsumed,onNavigate,flash}:Props){
   const meta=STAGE_META[stage];
   const [job,setJob]=useState<GeminiJobRecord|null>(null);const [loaded,setLoaded]=useState(false);
   const [starting,setStarting]=useState(false);const [notice,setNotice]=useState('');const [manualOpen,setManualOpen]=useState(false);
@@ -79,7 +79,7 @@ function StageAutomation({project,stage,onClose,onApply,onCopy,autoStart,onNavig
     finally{setStarting(false);}
   };
   // 페이지의 시작 버튼으로 열린 경우: 진행 중인 작업이 없을 때만 한 번 자동 시작 (StrictMode 이중 실행 방지)
-  useEffect(()=>{if(!autoStart||!loaded||autoStarted.current)return;autoStarted.current=true;if(!job||TERMINAL.includes(job.state))void start(true);},[autoStart,loaded]);
+  useEffect(()=>{if(!autoStart||!loaded||autoStarted.current)return;autoStarted.current=true;onAutoStartConsumed?.();if(!job||TERMINAL.includes(job.state))void start(true);},[autoStart,loaded]);
   const act=async(fn:()=>Promise<unknown>,msg?:string)=>{try{await fn();if(msg)setNotice(msg);}catch(e){setNotice(String(e));}};
   const jobs=window.studio.gemini.jobs;
   const applied=job?.outcome==='applied'&&project.revision>=(job.appliedRevision||0);
