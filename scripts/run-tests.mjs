@@ -20,7 +20,12 @@ test('JSON 코드블록 추출',()=>assert.deepEqual(extractJSON('설명\n```jso
 test('JSON 주변 설명 추출',()=>assert.deepEqual(extractJSON('설명 {"a":2} 입니다'),{a:2}));
 const p1=applyAIResponse(p,'analysis',JSON.stringify(fixture('ai-analysis.example.json')));
 test('분석 JSON 검사 및 반영',()=>assert.equal(p1.analysis.styles.length,3));
-test('화풍 미승인시 스토리보드 차단',()=>assert.throws(()=>applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')))));
+test('분석 결과가 들어오면 추천안이 없을 때 첫 번째 화풍·연출을 미리 선택',()=>assert.deepEqual(p1.selection,{styleId:'warm-watercolor',directionId:'gentle'}));
+test('미리 선택되어 바로 스토리보드로 진행 가능',()=>assert.equal(stageComplete(p1,'analysis'),true));
+test('AI 추천 화풍·연출을 미리 선택',()=>{const a={...fixture('ai-analysis.example.json'),recommendedStyleId:'pastel',recommendedDirectionId:'scenic',recommendationReason:'어린이에게 밝고 친근함'};const r=applyAIResponse(p,'analysis',JSON.stringify(a));assert.deepEqual(r.selection,{styleId:'pastel',directionId:'scenic'});assert.equal(r.analysis.recommendationReason,'어린이에게 밝고 친근함');});
+test('없는 추천 id는 무시하고 첫 번째 안 선택',()=>{const a={...fixture('ai-analysis.example.json'),recommendedStyleId:'nope'};const r=applyAIResponse(p,'analysis',JSON.stringify(a));assert.equal(r.selection.styleId,'warm-watercolor');assert.equal(r.analysis.recommendedStyleId,undefined);});
+test('화풍 미승인시 스토리보드 차단',()=>assert.throws(()=>applyAIResponse({...p1,selection:{styleId:'',directionId:''}},'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')))));
+test('분석 프롬프트에 추천안 요청',()=>assert.ok(makeAIPrompt(p,'analysis').includes('recommendedStyleId')));
 p1.selection={styleId:'warm-watercolor',directionId:'gentle'};
 const p2=applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')));
 test('스토리보드 장면 적용',()=>assert.equal(p2.scenes.length,3));
@@ -92,7 +97,7 @@ test('고친 칸은 자동 입력 표시 제거',()=>assert.equal(clearAutoFille
 test('작품 정보 단계: 비면 다음 버튼 잠금 + 빠진 항목 안내',()=>{const g=stepGuide(draft0,'brief');assert.equal(g.ready,false);assert.deepEqual(g.missing,['작품 제목','낭독할 원문']);assert.equal(g.next,'analysis');});
 test('작품 정보 단계: 채우면 준비 완료',()=>{const g=stepGuide(s4.project,'brief');assert.equal(g.ready,true);assert.ok(g.hint.startsWith('준비 완료'));});
 test('기획 분석 단계: 화풍·연출 고르면 준비 완료',()=>{const g=stepGuide(p1,'analysis');assert.equal(g.ready,true);});
-test('더빙 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
+test('편집실 전달 단계: 다음 단계 없음',()=>assert.equal(stepGuide(p4,'handoff').next,null));
 
 console.log(`${checks} tests completed`);
 

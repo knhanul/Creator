@@ -5,7 +5,7 @@ import { clearStageReviewFlag } from './original-versioning';
 
 export const GENRES: Record<Genre, string> = { bible: '성경', poetry: '시', essay: '에세이', novel: '소설', classic: '고전' };
 export const AUDIENCES = { preschool: '유아', kids: '어린이', teens: '청소년', adult: '성인', family: '가족' } as const;
-export const STAGE_NAMES = { brief: '작품 등록', analysis: '기획 분석', storyboard: '스토리보드', prompt: '생성 프롬프트', media: '미디어 제작', assembly: '최종 편집안', handoff: '더빙 전달' } as const;
+export const STAGE_NAMES = { brief: '작품 등록', analysis: '기획 분석', storyboard: '스토리보드', prompt: '생성 프롬프트', media: '미디어 제작', assembly: '최종 편집안', handoff: '편집실 전달' } as const;
 export const STAGE_ORDER = ['brief', 'analysis', 'storyboard', 'prompt', 'media', 'assembly', 'handoff'] as const;
 const now = () => new Date().toISOString();
 const emptyStage = (): StageRecord => ({ status: 'idle', raw: '', updatedAt: null });
@@ -58,10 +58,17 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
   const result: AnalysisResult = { schema: 'creator.analysis.v1', summary: str(raw.summary,'summary'), emotion: str(raw.emotion, 'emotion'), keywords: array(raw.keywords,'keywords').map((v,i)=>str(v,`keywords[${i}]`)), styles: choiceArray(raw.styles,'styles'), directions: choiceArray(raw.directions,'directions'), cautions: Array.isArray(raw.cautions) ? raw.cautions.map(v => String(v)) : [] };
   const arc = strList(raw.emotionArc); if (arc.length) result.emotionArc = arc;
   const bible = parseVisualBible(raw.visualBible); if (bible) result.visualBible = bible;
+  if (typeof raw.recommendedStyleId === 'string' && result.styles.some(x => x.id === raw.recommendedStyleId)) result.recommendedStyleId = raw.recommendedStyleId;
+  if (typeof raw.recommendedDirectionId === 'string' && result.directions.some(x => x.id === raw.recommendedDirectionId)) result.recommendedDirectionId = raw.recommendedDirectionId;
+  const reason = optStr(raw.recommendationReason); if (reason) result.recommendationReason = reason;
   return result;
 }
 function strList(x: unknown): string[] { return Array.isArray(x) ? x.filter((v): v is string => typeof v === 'string' && !!v.trim()).map(v => v.trim()) : []; }
 const optStr = (x: unknown) => typeof x === 'string' ? x.trim() : '';
+/** 분석 결과가 들어오면 바로 다음 단계로 갈 수 있게 AI 추천안(없으면 첫 번째 안)을 미리 선택 */
+export function defaultSelection(a: AnalysisResult): { styleId: string; directionId: string } {
+  return { styleId: a.recommendedStyleId || a.styles[0]?.id || '', directionId: a.recommendedDirectionId || a.directions[0]?.id || '' };
+}
 /** 스타일 바이블(선택). 내용이 하나도 없으면 undefined */
 export function parseVisualBible(x: unknown): VisualBible | undefined {
   if (!isRecord(x)) return undefined;
@@ -111,7 +118,7 @@ export function validateEditPlan(raw: unknown, scenes: Scene[]): EditPlanResult 
 /** Purposely no global state. Apply a validated AI response to a copy of one project. */
 export function applyAIResponse(project: StudioProject, stage: AIStage, answer: string): StudioProject {
   const result = extractJSON(answer); const p: StudioProject = structuredClone(project);
-  if (stage === 'analysis') { const analysis=validateAnalysis(result); p.analysis=analysis; p.selection={styleId:'',directionId:''}; p.scenes=[]; p.ai.storyboard=emptyStage(); p.ai.prompt=emptyStage(); p.ai.editplan=emptyStage(); p.assembly.clips=[]; }
+  if (stage === 'analysis') { const analysis=validateAnalysis(result); p.analysis=analysis; p.selection=defaultSelection(analysis); p.scenes=[]; p.ai.storyboard=emptyStage(); p.ai.prompt=emptyStage(); p.ai.editplan=emptyStage(); p.assembly.clips=[]; }
   if (stage === 'storyboard') { if(!p.analysis || !p.selection.styleId || !p.selection.directionId) throw Error('화풍과 연출안을 먼저 승인하세요.'); const story=validateStoryboard(result);
     const normalize=(t:string)=>t.replace(/\s+/g,'').replace(/[“”‘’]/g,'');
     const original=normalize(p.brief.originalText);

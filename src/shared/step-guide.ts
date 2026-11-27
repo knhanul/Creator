@@ -23,7 +23,7 @@ const nextOf = (stage: Stage): Stage | null => {
 /** 화면 이름: 사이드바와 같은 이름을 쓴다 (미디어 단계는 '미디어 보관함') */
 export const STEP_TITLES: Record<Stage, string> = {
   brief: '작품 정보', analysis: '기획 분석', storyboard: '스토리보드', prompt: '생성 프롬프트',
-  media: '미디어 보관함', assembly: '최종 편집안', handoff: '더빙 전달'
+  media: '미디어 보관함', assembly: '최종 편집안', handoff: '편집실 전달'
 };
 
 /** 받침에 맞춘 '(으)로' */

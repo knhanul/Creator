@@ -37,9 +37,10 @@ export function makeAIPrompt(p:StudioProject, stage:AIStage):string {
 - styles: 각 description에 붓질·질감·색·빛을 구체적으로, 그리고 이 작품에 맞는 이유를 한 문장.
 - directions: 각 description에 중심 연출 아이디어, 카메라 움직임·효과·전환의 리듬(예: "느린 확대와 좌우 이동을 번갈아, 정서 전환에서만 하얗게 밝아지는 전환"), 장점과 주의점.
 - visualBible: 첫 번째 화풍 기준의 스타일 바이블. styleSentence(이미지 생성에 그대로 붙일 영어 화풍 문장), palette(색 이름과 HEX 4~6개), lighting(장면 흐름에 따른 빛·시간대 변화), character(주인공이 있다면 모든 장면에서 같은 모습이 되도록 영어로 고정 묘사, 없으면 빈 문자열), avoid(금지 요소 영어 목록), motionStyle(이 작품에 맞는 움직임·효과 원칙 한국어 한두 문장).
+- recommendedStyleId / recommendedDirectionId: 위 styles·directions 중 이 작품과 시청 대상에 가장 맞는 안의 id, recommendationReason: 추천 이유 한두 문장.
 - cautions: 영상화할 때 주의할 점(시대·지리 고증, 대상 연령, 종교적 표현 등) 3~6개.
 [출력 형식 정확히]
-{ "schema":"creator.analysis.v1", "summary":"작품 요약", "emotion":"핵심 정서", "emotionArc":["단계(정서)"], "keywords":["키워드"], "styles":[{"id":"watercolor","label":"따뜻한 수채화","description":"묘사"}], "directions":[{"id":"gentle","label":"잔잔한 서정","description":"묘사"}], "visualBible":{"styleSentence":"English style sentence","palette":["paper cream #F6F1E6"],"lighting":"빛 흐름","character":"English fixed character description","avoid":["text","watermark"],"motionStyle":"움직임 원칙"}, "cautions":["주의점"] }
+{ "schema":"creator.analysis.v1", "summary":"작품 요약", "emotion":"핵심 정서", "emotionArc":["단계(정서)"], "keywords":["키워드"], "styles":[{"id":"watercolor","label":"따뜻한 수채화","description":"묘사"}], "directions":[{"id":"gentle","label":"잔잔한 서정","description":"묘사"}], "visualBible":{"styleSentence":"English style sentence","palette":["paper cream #F6F1E6"],"lighting":"빛 흐름","character":"English fixed character description","avoid":["text","watermark"],"motionStyle":"움직임 원칙"}, "recommendedStyleId":"watercolor", "recommendedDirectionId":"gentle", "recommendationReason":"추천 이유", "cautions":["주의점"] }
 styles/directions는 각각 3개, keywords는 3~6개로 작성하세요.`;
   if(stage==='storyboard') { const style=p.analysis?.styles.find(x=>x.id===p.selection.styleId),direction=p.analysis?.directions.find(x=>x.id===p.selection.directionId); const bible=p.analysis?.visualBible; return `${intro}
 선택한 화풍: ${style?.label||'미선택'} — ${style?.description||''}

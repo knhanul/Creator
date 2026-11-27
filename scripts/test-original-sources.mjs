@@ -833,7 +833,7 @@ await test('33. Gemini 원문 응답에서 마커·코드 블록·거절을 구�
   assert.equal(empty.ok, false);
 });
 
-await test('34. 더빙 전달 점검은 저작권 미확인만으로 막지 않는다', () => {
+await test('34. 편집실 전달 점검은 저작권 미확인만으로 막지 않는다', () => {
   const p = workflow.makeProject('handoff-rights', {
     ...workflow.DEFAULT_BRIEF,
     title: '서시',

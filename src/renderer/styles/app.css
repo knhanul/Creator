@@ -706,3 +706,9 @@ body{min-width:1280px;min-height:720px}
 .visual-bible dt{color:var(--color-text-muted);font-weight:600}
 .visual-bible dd{margin:0;color:var(--color-text);overflow-wrap:anywhere}
 .assembly-shots{display:block;color:var(--color-text-muted);margin-top:2px}
+
+/* 기획 분석: AI 추천 화풍·연출 */
+.ai-pick{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--color-primary-soft);color:var(--color-primary);font-size:11px;font-weight:700;vertical-align:middle}
+.ai-pick-reason{display:flex;gap:8px;align-items:flex-start;margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--color-info-soft);color:var(--color-text-secondary);font-size:13px;line-height:1.6}
+.ai-pick-reason svg{flex:none;margin-top:3px;color:var(--color-info)}
+.ai-pick-reason b{color:var(--color-text);margin-right:4px}
