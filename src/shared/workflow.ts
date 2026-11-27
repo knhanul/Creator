@@ -115,6 +115,19 @@ export function validateEditPlan(raw: unknown, scenes: Scene[]): EditPlanResult 
   if (!clips.length) throw Error('편집 클립이 필요합니다.');
   return { schema: 'creator.editplan.v1', clips, notes: typeof raw.notes==='string' ? raw.notes : '' };
 }
+/**
+ * 미디어 기준 시각: 미디어를 만드는 데 쓰는 앞 단계(기획 분석·스토리보드·생성 프롬프트)가 마지막으로 바뀐 때.
+ * 이보다 먼저 요청한 미디어 생성 결과는 옛 기획으로 만든 것이므로 장면에 연결하지 않는다.
+ */
+export function mediaEpoch(p: StudioProject): string {
+  return [p.ai.analysis.updatedAt, p.ai.storyboard.updatedAt, p.ai.prompt.updatedAt].filter((x): x is string => !!x).sort().pop() || '';
+}
+/** 장면에 연결된 미디어(동영상·기준 이미지)와 최종 편집안을 비운다. 미디어 파일은 보관함(p.assets)에 그대로 둔다 */
+function unlinkMediaAndEditPlan(p: StudioProject): void {
+  p.scenes = p.scenes.map(s => ({ ...s, assetId: null, referenceImageAssetId: null, status: s.imagePrompt || s.videoPrompt ? 'ready' as const : 'draft' as const }));
+  p.ai.editplan = emptyStage(); p.assembly.clips = [];
+}
+
 /** Purposely no global state. Apply a validated AI response to a copy of one project. */
 export function applyAIResponse(project: StudioProject, stage: AIStage, answer: string): StudioProject {
   const result = extractJSON(answer); const p: StudioProject = structuredClone(project);
@@ -124,11 +137,11 @@ export function applyAIResponse(project: StudioProject, stage: AIStage, answer: 
     const original=normalize(p.brief.originalText);
     const mismatch=story.scenes.find(s=>!original.includes(normalize(s.narration)));
     if(mismatch)throw Error(`${mismatch.id} 낭독 문장이 등록된 원문과 정확히 일치하지 않습니다. 원문을 임의로 변경하지 마세요.`);
-    const byId = new Map(p.scenes.map(s=>[s.id,s])); p.scenes=story.scenes.map(s => { const previous=byId.get(s.id);
-      const same=!!previous&&previous.narration===s.narration&&previous.visual===s.visual&&previous.kind===s.kind;
-      return {...s,imagePrompt:same?previous!.imagePrompt:'',videoPrompt:same?previous!.videoPrompt:'',negativePrompt:same?previous!.negativePrompt:'',assetId:same?previous!.assetId:null,referenceImageAssetId:same?previous!.referenceImageAssetId:null,status:same?previous!.status:'draft'}; });
+    // 다시 구성하면 뒤 단계(생성 프롬프트·장면 미디어 연결·최종 편집안)는 모두 새로 시작한다. 만든 미디어 파일은 보관함에 남는다
+    p.scenes=story.scenes.map(s => ({...s,imagePrompt:'',videoPrompt:'',negativePrompt:'',assetId:null,referenceImageAssetId:null,status:'draft' as const}));
+    delete p.bgmPrompt;
     const effected = withSceneEffects(p); p.scenes = effected.scenes; p.ai.prompt=emptyStage(); p.ai.editplan=emptyStage(); p.assembly.clips=[]; }
-  if (stage === 'prompt') { const prompts=validatePrompts(result,p.scenes); const map=new Map(prompts.items.map(x=>[x.sceneId,x])); p.scenes=p.scenes.map(s=> ({...s,...{ imagePrompt:map.get(s.id)?.imagePrompt||'',videoPrompt:map.get(s.id)?.videoPrompt||'',negativePrompt:map.get(s.id)?.negativePrompt||''},status:'ready'})); p.bgmPrompt=prompts.bgmPrompt||''; }
+  if (stage === 'prompt') { const prompts=validatePrompts(result,p.scenes); const map=new Map(prompts.items.map(x=>[x.sceneId,x])); p.scenes=p.scenes.map(s=> ({...s,...{ imagePrompt:map.get(s.id)?.imagePrompt||'',videoPrompt:map.get(s.id)?.videoPrompt||'',negativePrompt:map.get(s.id)?.negativePrompt||''},status:'ready'})); p.bgmPrompt=prompts.bgmPrompt||''; unlinkMediaAndEditPlan(p); }
   if (stage === 'editplan') { const plan=validateEditPlan(result,p.scenes); p.assembly.clips=plan.clips; }
   p.ai[stage]={ raw:answer, updatedAt:now(), status:'approved' };
   p.reviewNeeded = clearStageReviewFlag(p, stage);

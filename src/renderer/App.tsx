@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import {BRAND} from '../shared/brand';
 import brandLogo from './assets/brand-logo.svg?url';
-import {AUDIENCES,GENRES,NEW_DRAFT_BRIEF,STAGE_ORDER,UNTITLED,buildTimeline,clipsFromScenes,isEmptyDraft,readyForHandoff,stageComplete,withSceneEffects} from '../shared/workflow';
+import {AUDIENCES,GENRES,NEW_DRAFT_BRIEF,STAGE_ORDER,UNTITLED,buildTimeline,clipsFromScenes,isEmptyDraft,mediaEpoch,readyForHandoff,stageComplete,withSceneEffects} from '../shared/workflow';
 import {TRANSITION_LABEL,TRANSITION_TYPES,describeShots,type TransitionType} from '../shared/effects';
 import {EffectsEditor,EffectsSummary} from './components/EffectsEditor';
 import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,getProjectBgmPrompt,guideFor,isAIStage,makeImageGenerationPrompt,makeMusicGenerationPrompt,makeVideoGenerationPrompt,phaseView} from '../shared/gemini-analysis';
@@ -137,6 +137,10 @@ function ProjectRow({p,onOpen,onArchive}:{p:ProjectSummary,onOpen:()=>void,onArc
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
   const batch=useMediaBatch({reload:id=>studio.load(id),flash});
+  /** 스토리보드·생성 프롬프트를 다시 만든 뒤에는 그 전에 요청한 미디어 작업 결과(오류·멈춤 안내 포함)를 보여 주지 않는다 */
+  const epoch=project?mediaEpoch(project):'';
+  const freshJob=(j:GeminiJobRecord|null|undefined)=>j&&(!epoch||j.createdAt>=epoch)?j:null;
+  useEffect(()=>{batch.reset();},[project?.id,epoch]);
   const themeApi = useTheme();
   const [view,setView]=useState<View>('home');const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiView,setAiView]=useState<View|null>(null);const [aiAuto,setAiAuto]=useState(false);
   const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);
@@ -508,8 +512,8 @@ function App(){
               const bgmPromptText=getProjectBgmPrompt(project);
               const audioAssets=project.assets.filter(a=>a.kind==='audio');
               const selectedBgm=audioAssets.find(a=>a.id===project.assembly.bgmAssetId);
-              const mpv=phaseView(musicJob);
-              const musicActive=busyOf(musicJob);
+              const mJob=freshJob(musicJob);const mpv=phaseView(mJob);
+              const musicActive=busyOf(mJob);
               const musicWorking=musicActive&&!needsUserOf(mpv);
               const sceneCard=<Card className="scene-image-gen-card">
                 <div className="subsection-head">
@@ -524,7 +528,7 @@ function App(){
                     const linked=sceneAsset(project,s);
                     const isVideo=s.kind==='video';
                     const mainKind:'image'|'video'=isVideo?'video':'image';
-                    const imgJob=imageJobs[s.id];const vidJob=videoJobs[s.id];
+                    const imgJob=freshJob(imageJobs[s.id]);const vidJob=freshJob(videoJobs[s.id]);
                     const mainJob=isVideo?vidJob:imgJob;const otherJob=isVideo?imgJob:vidJob;
                     const setImg=(u:GeminiJobRecord)=>setImageJobs(o=>({...o,[s.id]:u}));
                     const setVid=(u:GeminiJobRecord)=>setVideoJobs(o=>({...o,[s.id]:u}));
@@ -606,12 +610,12 @@ function App(){
                 <div className="bgm-gen-body">
                   <div className="bgm-gen-main">
                     {bgmPromptText?<p className="scene-image-gen-prompt"><strong>BGM 프롬프트:</strong> {bgmPromptText}</p>:<p className="scene-image-gen-noprompt">작품의 배경음악 프롬프트(bgmPrompt)가 없습니다. 생성 프롬프트 단계에서 프롬프트를 먼저 생성해 주세요.</p>}
-                    {recoveryBox(musicJob,'music','배경음악 파일 가져오기',()=>void studio.importAssets(),u=>setMusicJob(u),startProjectMusic)}
+                    {recoveryBox(mJob,'music','배경음악 파일 가져오기',()=>void studio.importAssets(),u=>setMusicJob(u),startProjectMusic)}
                   </div>
                   <div className="bgm-gen-actions">
                     {!bgmPromptText?<Button size="sm" kind="outline" onClick={()=>go('prompt')}>프롬프트 단계 열기</Button>:musicWorking?<Button size="sm" kind="secondary" disabled><Music2 size={14}/> {mpv?.label||'생성 중…'}</Button>:musicActive?null:<Button size="sm" onClick={()=>void startProjectMusic()}><Music2 size={14}/> 배경음악 생성</Button>}
                     {bgmPromptText&&<Button size="sm" kind="outline" onClick={()=>void copyProjectMusicPrompt()}><Copy size={13}/> BGM 프롬프트 복사</Button>}
-                    {musicActive&&musicJob&&<Button size="sm" kind="ghost" onClick={()=>void cancelJob(musicJob,u=>setMusicJob(u),'배경음악')}>배경음악 취소</Button>}
+                    {musicActive&&mJob&&<Button size="sm" kind="ghost" onClick={()=>void cancelJob(mJob,u=>setMusicJob(u),'배경음악')}>배경음악 취소</Button>}
                   </div>
                 </div>
               </Card>;

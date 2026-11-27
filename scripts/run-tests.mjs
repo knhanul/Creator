@@ -93,6 +93,29 @@ test('계획: 동영상이 연결된 장면·오디오가 있으면 배경음악
   assert.ok(!planMediaBatch(mb,{music:false}).some(x=>x.kind==='music'));
 });
 
+// ── 다시 생성하면 뒤 단계 초기화 (미디어 파일은 보관함에 남김) ──
+const {mediaEpoch}=loadTS(join(root,'src/shared/workflow.ts'));
+const withMedia=()=>{const q=structuredClone(mb);q.assets=[{id:'i1',kind:'image',name:'S01_image.png',relativePath:'a',bytes:1,importedAt:''},{id:'v2',kind:'video',name:'S02_video.mp4',relativePath:'b',bytes:1,importedAt:''},{id:'r2',kind:'image',name:'S02_image.png',relativePath:'c',bytes:1,importedAt:''}];
+  q.scenes[0].assetId='i1';q.scenes[0].status='complete';q.scenes[1].assetId='v2';q.scenes[1].referenceImageAssetId='r2';q.assembly.clips=[{sceneId:'S01',durationSec:10,transition:'fade'}];q.ai.editplan={status:'approved',raw:'x',updatedAt:'2026-01-01T00:00:00Z'};return q;};
+test('생성 프롬프트 다시: 장면 미디어 연결·기준 이미지·최종 편집안 초기화, 파일은 보관함에 남음',()=>{
+  const q=withMedia();const r=applyAIResponse(q,'prompt',q.ai.prompt.raw);
+  assert.ok(r.scenes.every(s=>s.assetId===null&&s.referenceImageAssetId===null));
+  assert.equal(r.assembly.clips.length,0);assert.equal(r.ai.editplan.status,'idle');
+  assert.equal(r.assets.length,3,'미디어 파일 목록은 그대로');
+  assert.ok(r.scenes.every(s=>s.imagePrompt));
+});
+test('스토리보드 다시: 같은 장면이어도 프롬프트·미디어 연결·편집안 모두 초기화',()=>{
+  const q=withMedia();const r=applyAIResponse(q,'storyboard',JSON.stringify(fixture('ai-storyboard-v2.example.json')));
+  assert.ok(r.scenes.every(s=>!s.imagePrompt&&!s.videoPrompt&&s.assetId===null&&s.referenceImageAssetId===null));
+  assert.equal(r.assembly.clips.length,0);assert.equal(r.ai.prompt.status,'idle');assert.equal(r.bgmPrompt,undefined);
+  assert.equal(r.assets.length,3);
+});
+test('미디어 기준 시각 = 기획 분석·스토리보드·생성 프롬프트 중 가장 늦은 시각',()=>{
+  const q=withMedia();q.ai.analysis.updatedAt='2026-01-01T00:00:00Z';q.ai.storyboard.updatedAt='2026-01-02T00:00:00Z';q.ai.prompt.updatedAt='2026-01-03T00:00:00Z';
+  assert.equal(mediaEpoch(q),'2026-01-03T00:00:00Z');
+  const r=applyAIResponse(q,'prompt',q.ai.prompt.raw);assert.ok(mediaEpoch(r)>'2026-01-03T00:00:00Z');
+});
+
 
 // ── 리모델링: 새 작품(빈 작품) · 자동 저장 버전 묶기 · 단계 안내 ──
 const {isEmptyDraft,NEW_DRAFT_BRIEF,summarize}=loadTS(join(root,'src/shared/workflow.ts'));

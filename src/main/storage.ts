@@ -4,7 +4,7 @@ import { constants as fsConstants } from 'node:fs';
 import { access, cp, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { AssetKind, Brief, StudioProject, ProjectSummary } from '../shared/types';
-import { isEmptyDraft, makeProject, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
+import { isEmptyDraft, makeProject, mediaEpoch, summarize, toHandoff, toComposerDraft } from '../shared/workflow';
 import { migrateProjectDocument } from '../shared/original-versioning';
 import { INTERNAL } from '../shared/brand';
 import { bgmFileName, sceneAssetBase, splitExt, versionedFileName } from '../shared/asset-naming';
@@ -186,8 +186,8 @@ export function decodeImageDataUrl(dataUrl: string): { buffer: Buffer; mimeType:
 export async function saveGeneratedMediaAsset(
   projectId: string,
   kind: AssetKind,
-  input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string }
-): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset }> {
+  input: { sceneId?: string; imageDataUrl?: string; mediaDataUrl?: string; downloadPath?: string; mimeType?: string; /** 생성을 요청한 시각: 그 뒤 기획이 바뀌었으면 장면에 연결하지 않고 보관함에만 저장 */ requestedAt?: string }
+): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset; linked: boolean }> {
   const p = await readProject(projectId);
   let sceneIdx = -1;
   if (kind === 'image' || kind === 'video') {
@@ -250,8 +250,9 @@ export async function saveGeneratedMediaAsset(
     importedAt
   };
 
+  const stale = !!input.requestedAt && sceneIdx >= 0 && input.requestedAt < mediaEpoch(p);
   const nextScenes =
-    sceneIdx >= 0
+    sceneIdx >= 0 && !stale
       ? p.scenes.map((s, idx) => (idx === sceneIdx ? linkSceneMediaAsset(s, asset, [...p.assets, asset]) : s))
       : p.scenes;
 
@@ -263,15 +264,15 @@ export async function saveGeneratedMediaAsset(
     updatedAt: importedAt
   };
   await persist(next);
-  return { project: next, asset };
+  return { project: next, asset, linked: !stale };
 }
 
 /** Phase 5 MVP 호환 래퍼: 이미지 생성 저장 */
 export async function saveGeneratedImageAsset(
   projectId: string,
   sceneId: string,
-  input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string }
-): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset }> {
+  input: { imageDataUrl?: string; downloadPath?: string; mimeType?: string; requestedAt?: string }
+): Promise<{ project: StudioProject; asset: import('../shared/types').MediaAsset; linked: boolean }> {
   return saveGeneratedMediaAsset(projectId, 'image', { ...input, sceneId });
 }
 export async function revealAsset(id:string,assetId:string):Promise<void>{

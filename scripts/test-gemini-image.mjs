@@ -13,6 +13,7 @@ import { loadTS } from './load-ts.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const { createAnalysisService } = loadTS(join(root, 'src/main/gemini/analysis-service.ts'));
+const { mediaEpoch } = loadTS(join(root, 'src/shared/workflow.ts'));
 const { DEFAULT_BRIEF, makeProject } = loadTS(join(root, 'src/shared/workflow.ts'));
 const { makeRequestMarker } = loadTS(join(root, 'src/shared/gemini-protocol.ts'));
 const { sceneAssetBase, versionedFileName } = loadTS(join(root, 'src/shared/asset-naming.ts'));
@@ -165,9 +166,11 @@ function makeTestEnv(tag) {
       importedAt: new Date().toISOString()
     };
     p.assets.push(asset);
-    p.scenes[sceneIdx] = { ...p.scenes[sceneIdx], assetId: asset.id, status: 'complete' };
+    // storage.ts와 같은 규칙: 요청 뒤 기획(스토리보드·생성 프롬프트)이 다시 만들어졌으면 장면에 연결하지 않음
+    const stale = !!input.requestedAt && input.requestedAt < mediaEpoch(p);
+    if (!stale) p.scenes[sceneIdx] = { ...p.scenes[sceneIdx], assetId: asset.id, status: 'complete' };
     const saved = await saveProject(p);
-    return { project: saved, asset, fullPath: full };
+    return { project: saved, asset, fullPath: full, linked: !stale };
   }
 
   return { dir, projects, p1, adapter, readProject, saveProject, saveGeneratedImageAsset };
@@ -595,6 +598,29 @@ await test('10. 다운로드 버튼 미발견 및 셀렉터 불일치(빈 응답
   assert.equal(outB.errorCode, 'IMAGE_DETECT_FAILED');
   assert.equal(outB.needsUser, true);
   assert.ok(outB.message.includes('미디어 가져오기'));
+});
+
+await test('회귀: 이미지 생성 중에 생성 프롬프트를 다시 만들면, 늦게 온 결과는 보관함에만 저장하고 장면에 연결하지 않음', async () => {
+  const env = makeTestEnv('t-stale');
+  const queue = new GeminiJobQueue(join(env.dir, 'jobs.json'));
+  await queue.load();
+  const service = createAnalysisService({ queue, adapter: env.adapter, readProject: env.readProject, saveProject: env.saveProject, saveGeneratedImageAsset: env.saveGeneratedImageAsset });
+  const started = await service.startImage(env.p1.id, 'S01');
+  await service.kick();
+  const job = queue.get(started.job.jobId);
+  // 요청 이후 생성 프롬프트를 다시 만듦 (ai.prompt.updatedAt이 요청보다 늦음)
+  const cur = await env.readProject(env.p1.id);
+  cur.ai.prompt = { ...cur.ai.prompt, updatedAt: new Date(Date.parse(job.createdAt) + 1000).toISOString() };
+  await env.saveProject(cur);
+  const r = await service.handleMessage({ protocolVersion: 1, requestId: job.requestId, jobId: job.jobId, projectId: env.p1.id, sceneId: 'S01', type: 'RESPONSE_RECEIVED', timestamp: new Date().toISOString(),
+    payload: { jobId: job.jobId, sceneId: 'S01', text: '생성된 이미지입니다.', complete: true, imageDataUrl: SAMPLE_PNG_DATA_URL, mimeType: 'image/png', isolation: 'marker' } });
+  const done = queue.get(job.jobId);
+  assert.equal(done.outcome, 'stale', String(r));
+  assert.equal(done.errorCode, 'PLAN_CHANGED');
+  assert.ok(done.assetId, '보관함에는 저장');
+  const saved = await env.readProject(env.p1.id);
+  assert.equal(saved.assets.length, 1);
+  assert.equal(saved.scenes[0].assetId ?? null, null, '장면에는 연결하지 않음');
 });
 
 console.log(`\n${passed} phase5-gemini-image checks passed`);
