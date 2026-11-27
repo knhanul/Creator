@@ -68,7 +68,9 @@ export function stepGuide(p: StudioProject, stage: Stage): StepGuide {
         if (emptyImage) missing.push(`이미지 프롬프트 ${emptyImage}개`);
         if (emptyVideo) missing.push(`동영상 프롬프트 ${emptyVideo}개`);
       }
-      todo = p.scenes.length ? '장면마다 종류(이미지·영상)에 맞는 프롬프트를 채우면 미디어 단계로 넘어갈 수 있어요' : '스토리보드에서 장면을 먼저 만들어 주세요';
+      todo = !p.scenes.length ? '스토리보드에서 장면을 먼저 만들어 주세요'
+        : !p.scenes.some(s => !!scenePrimaryPrompt(s)) ? '「AI 프롬프트 생성 시작」을 누르면 모든 장면의 프롬프트를 한 번에 만들어요'
+        : '비어 있는 장면의 프롬프트를 채우면 미디어 단계로 넘어갈 수 있어요';
       break;
     }
     case 'media': {
