@@ -206,6 +206,10 @@
       S('button[data-test-id*="tool-menu"]', 'data-test-id tool-menu'),
       S('button[data-test-id*="plus"]', 'data-test-id plus'),
       S('button[aria-label="추가"]', '한국어 UI 입력창 왼쪽 + (승희님 스크린샷, 진단 필요)'),
+      S('button[aria-label*="파일 업로드 메뉴"]', '한국어 입력창 + (파일 업로드 메뉴 열기) 추정'),
+      S('button[aria-label*="upload file menu" i]', '영문 Open upload file menu 추정'),
+      S('button.upload-card-button', 'Gemini upload-card-button 클래스 추정'),
+      S('uploader button', 'uploader 요소 안 버튼 추정'),
       S('button[aria-label="+"]', 'aria-label이 + 인 버튼'),
       S('button[aria-label="Add"]', '영문 Add'),
       S('button[aria-label*="도구"]', '한국어 도구 메뉴 폴백'),
@@ -272,7 +276,7 @@
   /** 화면 문구 기반 차단 신호(정규식). 자동 우회하지 않고 중단만 합니다. */
   const BLOCKED_TEXT = /(unusual traffic|비정상적인 트래픽|자동화된 요청|automated queries)/i;
 
-  const api = { SELECTORS, BLOCKED_TEXT, version: '2026-11-26' };
+  const api = { SELECTORS, BLOCKED_TEXT, version: '2026-11-27' };
   root.GOMO_GEMINI_SELECTORS = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : self);

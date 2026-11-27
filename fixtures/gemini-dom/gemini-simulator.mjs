@@ -69,7 +69,7 @@ export function installGeminiSimulator(win, opts = {}) {
 /** 입력창 왼쪽 + 메뉴와 도구 칩(동영상/이미지/음악) — 승희님 Gemini UI 모형 */
 function installToolUi(doc, o, state, composer) {
   const plus = doc.querySelector('[data-test-id="open-tools-button"], .plus-button');
-  const inputArea = doc.querySelector('.input-area');
+  const inputArea = doc.querySelector('.input-area, .composer-shell');
   if (!plus || !inputArea || !composer) return;
 
   let menuOpen = false;
