@@ -74,7 +74,15 @@
 
     function label(el) { return ((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('data-test-id') || '') + ' ' + (el.className && el.className.baseVal === undefined ? el.className : '')).trim(); }
     function isEnabled(el) { return !el.disabled && el.getAttribute('aria-disabled') !== 'true'; }
-    function findSend() { return find('sendButton', null, (el) => !STOP_LIKE.test(el.getAttribute('aria-label') || '') && !/\bstop\b/.test(String(el.className || ''))); }
+    /** 전송 버튼 후보: 중지 버튼, 대화(답변) 안 버튼, 「공유 및 내보내기」처럼 '보내기'가 들어간 다른 버튼은 제외 */
+    function isSendCandidate(el) {
+      const label = (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('data-test-id') || '');
+      if (STOP_LIKE.test(el.getAttribute('aria-label') || '') || /\bstop\b/.test(String(el.className || ''))) return false;
+      if (isInConversation(el) || isInSidebar(el)) return false;
+      if (/(내보내기|공유|export|share)/i.test(label)) return false;
+      return true;
+    }
+    function findSend() { return find('sendButton', null, isSendCandidate); }
     function findComposer() { return find('composer', null, (el) => el.getAttribute('contenteditable') !== 'false'); }
 
     /**
@@ -584,7 +592,7 @@
         for (let i = 0; i < list.length; i++) {
           try { if (cur.matches(list[i].sel)) return cur; } catch { /* ignore */ }
         }
-        const hasSend = find('sendButton', cur);
+        const hasSend = find('sendButton', cur, isSendCandidate);
         const plusHit = findDeep('toolMenuButton', cur, (el) => !isInSidebar(el) && el !== comp && !composedContains(comp, el));
         if (hasSend || plusHit) return cur;
         cur = cur.parentElement;
