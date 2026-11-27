@@ -443,6 +443,16 @@
       return !!closestDeep(el, 'nav, aside, bard-sidenav, [role="navigation"], mat-sidenav, [data-test-id*="sidebar"], [data-test-id*="conversation"], .conversation-list, .sidenav, .sidebar');
     }
 
+    /** 대화(질문·답변) 안의 요소: 답변 아래 공유·내보내기·더보기·복사 버튼 등. 입력창 도구 버튼이 아님 */
+    const CONVERSATION_SEL = 'model-response, user-query, #chat-history, message-actions, .response-container, response-container, infinite-scroller, [data-test-id*="conversation"]';
+    function isInConversation(el) { return !!(el && closestDeep(el, CONVERSATION_SEL)); }
+    /** 이 요소 안에 대화가 들어 있나 (입력 영역을 찾으며 위로 올라갈 때 여기서 멈춤) */
+    function containsConversation(el) {
+      try { return !!(el && el.querySelector && el.querySelector(CONVERSATION_SEL)); } catch { return false; }
+    }
+    /** 공유·내보내기·더보기·복사·평가 같은 답변 동작 버튼 라벨 */
+    const NOT_TOOL_BUTTON_RE = /(공유|내보내기|share|export|더보기|more options|more_vert|복사|copy|좋아요|싫어요|good response|bad response|다시 생성|regenerate|수정|edit|듣기|listen|신고|report)/i;
+
     function isExcludedFromToolMenu(el) {
       if (!el) return true;
       if (isInSidebar(el)) return true;
@@ -568,6 +578,8 @@
       let cur = comp.parentElement;
       let last = null;
       while (cur && !shouldStop(cur)) {
+        // 대화(이전 답변)까지 감싸는 상위 요소로는 올라가지 않는다 → 답변의 공유·내보내기 버튼을 + 로 오인하지 않음
+        if (last && containsConversation(cur)) return last;
         last = cur;
         for (let i = 0; i < list.length; i++) {
           try { if (cur.matches(list[i].sel)) return cur; } catch { /* ignore */ }
@@ -582,7 +594,9 @@
 
     function isComposerToolButton(el, area) {
       if (!el || !area || !composedContains(area, el)) return false;
-      if (isInSidebar(el)) return false;
+      if (isInSidebar(el) || isInConversation(el)) return false;
+      const id0 = (el.getAttribute('data-test-id') || '') + ' ' + (el.getAttribute('aria-label') || '');
+      if (NOT_TOOL_BUTTON_RE.test(id0)) return false;
       if (closestDeep(el, 'rich-textarea, [contenteditable="true"]')) return false;
       const id = el.getAttribute('data-test-id') || '';
       if (id === 'send-button' || id === 'stop-button' || id === 'tool-chip') return false;
@@ -622,7 +636,7 @@
           const ic = el.querySelector('mat-icon');
           icon = ic ? ((ic.getAttribute('fonticon') || '') + ' ' + (ic.textContent || '')) : '';
         } catch { /* ignore */ }
-        if (/^\s*(\+|x|×)\s*$/i.test(t) || /추가|도구|\btools\b|\badd\b|\bplus\b|닫기/i.test(t) || /\b(add|plus|close)\b/i.test(icon) || el.getAttribute('aria-haspopup') === 'menu' || el.getAttribute('aria-expanded') === 'true') {
+        if (/^\s*(\+|x|×)\s*$/i.test(t) || /추가|도구|업로드|\btools\b|\badd\b|\bplus\b|\bupload\b|닫기/i.test(t) || /\b(add|plus|close)(_\w+)?\b/i.test(icon) || el.getAttribute('aria-haspopup') === 'menu' || el.getAttribute('aria-expanded') === 'true') {
           found = { el, selector: '(composer-area plus fallback)', index: -1 };
         }
       });
@@ -701,7 +715,7 @@
       return out;
     }
 
-    const MENU_OPEN_HINTS = /파일 업로드|Drive에서 파일|업로드 더보기|Google 검색|이미지 만들기|동영상 만들기|음악 만들기|Create (an?\s+)?(image|video|music|videos?)/i;
+    const MENU_OPEN_HINTS = /파일 업로드(?! ?메뉴)|Drive에서 파일|업로드 더보기|Google 검색|이미지 만들기|동영상 만들기|음악 만들기|Create (an?\s+)?(image|video|music|videos?)/i;
     const NEW_CHAT_DIALOG_RE = /새 채팅을 시작하시겠습니까|이 도구를 선택하면 새 채팅|start a new chat\??|this tool will start a new chat|start new chat\?/i;
     const NEW_CHAT_CONFIRM_RE = /^(새 채팅|new chat|start new chat)$/i;
 
@@ -830,8 +844,24 @@
       return /닫기|close|^\s*[×x]\s*$/i.test(t) || /\bclose\b/i.test(icon);
     }
 
+    /** 열린 오버레이(메뉴·하단 시트)를 바깥 클릭으로 닫는다 */
+    function clickOverlayBackdrop() {
+      let clicked = false;
+      for (const b of queryAllDeep(doc, '.cdk-overlay-backdrop, .mat-bottom-sheet-backdrop, .cdk-overlay-dark-backdrop')) {
+        if (!isVisible(b) && !isMenuItemDisplayed(b)) continue;
+        try { realClick(b); clicked = true; } catch { /* ignore */ }
+      }
+      return clicked;
+    }
+    /** + 를 눌렀는데 도구 메뉴가 아닌 다른 메뉴(공유·내보내기 하단 시트 등)가 열렸는가 */
+    function isForeignMenuOpen() {
+      const sheets = [...queryAllDeep(doc, 'mat-bottom-sheet-container'), ...queryAllDeep(doc, '.cdk-overlay-pane [role="menu"]'), ...queryAllDeep(doc, '.cdk-overlay-pane')];
+      return sheets.some((el) => (isVisible(el) || isMenuItemDisplayed(el)) && !MENU_OPEN_HINTS.test(dialogText(el)) && !NEW_CHAT_DIALOG_RE.test(dialogText(el)));
+    }
+
     function closeToolMenu(area, opts) {
       const force = !!(opts && opts.force);
+      if (force) clickOverlayBackdrop();
       try {
         const ev = new win.KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
         (doc.activeElement || doc.body || doc).dispatchEvent(ev);
@@ -850,7 +880,9 @@
       try { realClick(btn.el); } catch { return { ok: false, reason: 'plus_click_failed' }; }
       const opened = await waitFor(() => (isToolMenuOpen() ? true : null), timing.toolModeWaitMs || 4000);
       if (!opened) {
+        const foreign = isForeignMenuOpen();
         closeToolMenu(area, { force: true });
+        if (foreign) return { ok: false, reason: 'wrong_menu_opened', stats: menuSearchStats() };
         return { ok: false, reason: 'menu_items_not_found', stats: menuSearchStats() };
       }
       return { ok: true };
@@ -899,8 +931,9 @@
       const item = findMenuItemForMode(target);
       if (!item) {
         const stats = menuSearchStats(target);
+        const foreign = isForeignMenuOpen() && !hasOpenMenuHint();
         closeToolMenu(area, { force: true });
-        return { ok: false, reason: 'item_not_found', stats };
+        return { ok: false, reason: foreign ? 'wrong_menu_opened' : 'item_not_found', stats };
       }
       try { realClick(item); } catch { closeToolMenu(area, { force: true }); return { ok: false, reason: 'item_click_failed' }; }
       let confirmClicked = false;
@@ -927,6 +960,7 @@
         no_plus_button: '입력창 왼쪽 `+` 버튼을 찾지 못했습니다',
         plus_click_failed: '입력창 왼쪽 `+` 버튼을 클릭하지 못했습니다',
         menu_items_not_found: '`+` 메뉴는 열렸지만 메뉴 항목을 찾지 못했습니다',
+        wrong_menu_opened: '`+` 대신 다른 메뉴(공유·내보내기 등)가 열려 닫았습니다',
         item_not_found: '`+` 메뉴는 열렸지만 `' + name + '` 항목을 찾지 못했습니다',
         item_click_failed: '`' + name + '` 항목을 클릭하지 못했습니다',
         chip_not_confirmed: '`' + name + '`를 눌렀지만 도구 칩이 켜진 것을 확인하지 못했습니다'

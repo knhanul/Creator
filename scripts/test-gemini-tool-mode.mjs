@@ -251,5 +251,66 @@ await test('동영상 만들기 후 새 채팅 확인 다이얼로그의 새 채
   assert.equal(g.readActiveToolMode().mode, 'video');
 });
 
+
+// ── 회귀: 입력창 + 를 못 알아볼 때 이전 답변의 「공유 및 내보내기」(aria-haspopup=menu)를 + 로 오인하던 문제 ──
+// 실제 Gemini처럼 대화와 입력창이 같은 상위 요소 안에 있고, 입력 전에는 전송 버튼이 없으며, + 라벨이 「파일 업로드 메뉴 열기」인 모형
+function realisticHtml({ plusLabel = '파일 업로드 메뉴 열기', plusIcon = 'add_2' } = {}) {
+  return html
+    .replace('<div id="chat-history">', '<div class="chat-container"><div id="chat-history">').replace('</chat-app>', '</div></chat-app>')
+    .replace('<message-actions><button aria-label="Copy"><mat-icon>content_copy</mat-icon></button></message-actions>',
+      '<message-actions><button aria-label="Copy"><mat-icon>content_copy</mat-icon></button><button class="share-btn" data-test-id="share-and-export-menu-button" aria-label="공유 및 내보내기" aria-haspopup="menu"><mat-icon>share</mat-icon></button><button class="more-btn" aria-label="더보기" aria-haspopup="menu"><mat-icon>more_vert</mat-icon></button></message-actions>')
+    .replace('<div class="input-area">', '<div class="composer-shell"><div class="leading-actions">')
+    .replace(/<button type="button" class="plus-button" data-test-id="open-tools-button"[^>]*>.*?<\/button>/,
+      `<button type="button" class="plus-button upload-card-button" aria-label="${plusLabel}" aria-expanded="false"><mat-icon fonticon="${plusIcon}">${plusIcon}</mat-icon></button></div>`);
+}
+/** 답변의 공유 버튼을 누르면 실제처럼 하단 시트(대화 공유·Docs로 내보내기·Gmail 초안 작성)를 연다 */
+function installShareSheet(doc) {
+  const st = { shareClicks: 0, sheetClosed: 0 };
+  for (const b of doc.querySelectorAll('.share-btn, .more-btn')) b.addEventListener('click', () => {
+    st.shareClicks++;
+    const pane = doc.createElement('div'); pane.className = 'cdk-overlay-pane';
+    pane.innerHTML = '<mat-bottom-sheet-container><button>대화 공유</button><button>Docs로 내보내기</button><button>Gmail 초안 작성</button></mat-bottom-sheet-container>';
+    const backdrop = doc.createElement('div'); backdrop.className = 'cdk-overlay-backdrop';
+    backdrop.addEventListener('click', () => { st.sheetClosed++; pane.remove(); backdrop.remove(); });
+    doc.body.append(backdrop, pane);
+  });
+  return st;
+}
+for (const v of [{ name: '「파일 업로드 메뉴 열기」 라벨' }, { name: '알 수 없는 라벨 + add_2 아이콘', plusLabel: '옵션', plusIcon: 'add_2' }]) {
+  await test(`회귀(${v.name}): 이전 답변의 공유·내보내기 버튼을 + 로 누르지 않고, 이미지 도구를 골라 전송`, async () => {
+    const { g, sim, doc } = setup({}, realisticHtml(v));
+    const share = installShareSheet(doc);
+    const area = g.findComposerArea();
+    assert.ok(area && !area.querySelector('model-response'), '입력 영역이 대화를 포함하면 안 됨');
+    const plus = g.findToolMenuButton(area);
+    assert.ok(plus && plus.el.classList.contains('upload-card-button'), '입력창 + 를 골라야 함: ' + (plus && plus.el.getAttribute('aria-label')));
+    const r = await g.submit({ prompt: '언덕 위 어린 양', marker, stage: 'image' });
+    assert.equal(r.sendState, 'sent', r.message);
+    assert.equal(share.shareClicks, 0, '공유·내보내기 버튼을 누르면 안 됨');
+    assert.deepEqual(sim.menuItemClicks, ['이미지 만들기']);
+    assert.equal(sim.toolMode, 'image');
+  });
+}
+await test('회귀: + 를 눌렀는데 도구 메뉴가 아닌 하단 시트가 열리면 닫고 넘어감', async () => {
+  // + 버튼이 (잘못) 공유 하단 시트를 여는 최악의 경우를 만든다 (시뮬레이터 + 연결 없이)
+  const { g, doc } = setup(null, realisticHtml().replace('class="plus-button upload-card-button"', 'class="upload-card-button"'));
+  const plus = doc.querySelector('.upload-card-button');
+  let opened = 0, closed = 0;
+  plus.addEventListener('click', () => {
+    opened++;
+    const pane = doc.createElement('div'); pane.className = 'cdk-overlay-pane';
+    pane.innerHTML = '<mat-bottom-sheet-container><button>대화 공유</button><button>Docs로 내보내기</button></mat-bottom-sheet-container>';
+    const backdrop = doc.createElement('div'); backdrop.className = 'cdk-overlay-backdrop';
+    backdrop.addEventListener('click', () => { closed++; pane.remove(); backdrop.remove(); });
+    doc.body.append(backdrop, pane);
+  });
+  const r = await g.ensureToolMode('video');
+  assert.equal(opened >= 1, true, '+ 를 눌러야 함');
+  assert.equal(doc.querySelector('mat-bottom-sheet-container'), null, '잘못 열린 하단 시트를 닫아야 함');
+  assert.ok(closed >= 1);
+  assert.equal(r.ok, false);
+  assert.ok(/다른 메뉴/.test(r.message), r.message);
+});
+
 console.log(`\n${checks} gemini-tool-mode (jsdom 모형) checks finished — 실제 Gemini DOM 검증 아님`);
 if (process.exitCode) process.exit(process.exitCode);

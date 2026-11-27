@@ -9,7 +9,7 @@ const PROTOCOL_VERSION = 1;
 /** 자동화 프로토콜 수준 — 이 파일 자체에 박혀 있으므로 서비스 워커가 실제로 새 코드로 돌고 있는지 앱이 확인할 수 있음 */
 const AUTOMATION_PROTOCOL = 2;
 /** 이 서비스 워커 코드 자체의 빌드 표식 (manifest 버전과 별개: Chrome이 서비스 워커를 이전 코드로 돌리는지 구분) */
-const BG_BUILD = '0.2.8';
+const BG_BUILD = '0.2.9';
 const SW_FILE = 'gomo-sw.js';
 const SW_STARTED_AT = new Date().toISOString();
 function selfInfo() {
