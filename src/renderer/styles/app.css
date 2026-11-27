@@ -712,3 +712,18 @@ body{min-width:1280px;min-height:720px}
 .ai-pick-reason{display:flex;gap:8px;align-items:flex-start;margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--color-info-soft);color:var(--color-text-secondary);font-size:13px;line-height:1.6}
 .ai-pick-reason svg{flex:none;margin-top:3px;color:var(--color-info)}
 .ai-pick-reason b{color:var(--color-text);margin-right:4px}
+
+/* 미디어 한 번에 만들기 */
+.media-batch{margin-bottom:14px;display:grid;gap:10px}
+.media-batch.is-running{border-color:var(--color-primary)}
+.media-batch.is-paused{border-color:var(--color-warning);background:var(--color-warning-soft)}
+.media-batch-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.media-batch-head strong{font-size:15px}
+.media-batch-head p{margin-top:4px;font-size:13px;color:var(--color-text-secondary)}
+.media-batch-bar{height:6px;border-radius:999px;background:var(--color-hover);overflow:hidden}
+.media-batch-bar span{display:block;height:100%;background:var(--color-primary);transition:width .4s}
+.media-batch-steps{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.media-batch-steps li{padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--color-primary-soft);color:var(--color-primary)}
+.media-batch-steps li small{font-weight:400;opacity:.85}
+.media-batch-steps li.kind-video,.media-batch-steps li.kind-music{background:var(--color-hover);color:var(--color-text-secondary)}
+.media-batch-steps li+li::before{content:'→ ';color:var(--color-text-muted);font-weight:400}

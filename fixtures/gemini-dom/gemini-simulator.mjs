@@ -163,19 +163,22 @@ function installToolUi(doc, o, state, composer) {
     dlg.setAttribute('aria-modal', 'true');
     dlg.className = 'cdk-overlay-pane new-chat-confirm';
     const title = doc.createElement('h2');
-    title.textContent = '새 채팅을 시작하시겠습니까?';
+    title.textContent = o.newChatTitle || '새 채팅을 시작하시겠습니까?';
     const body = doc.createElement('p');
-    body.textContent = '이 도구를 선택하면 새 채팅이 시작됩니다. 언제든지 이 대화로 돌아올 수 있습니다.';
+    body.textContent = o.newChatBody != null ? o.newChatBody : '이 도구를 선택하면 새 채팅이 시작됩니다. 언제든지 이 대화로 돌아올 수 있습니다.';
+    const cancel = doc.createElement('button');
+    cancel.textContent = o.newChatCancelLabel || '취소';
+    cancel.addEventListener('click', () => { state.newChatCancelClicks = (state.newChatCancelClicks || 0) + 1; closeNewChatDialog(); });
     const confirm = doc.createElement('button');
     confirm.setAttribute('data-test-id', 'confirm-new-chat');
-    confirm.textContent = '새 채팅';
+    confirm.textContent = o.newChatConfirmLabel || '새 채팅';
     confirm.addEventListener('click', () => {
       state.newChatConfirmClicks++;
       startNewChat(pendingMode);
     });
     const skip = doc.createElement('label');
     skip.textContent = '다시 묻지 않음';
-    dlg.append(title, body, skip, confirm);
+    dlg.append(title, body, skip, cancel, confirm);
     doc.body.appendChild(dlg);
     state.newChatDialog = dlg;
   }

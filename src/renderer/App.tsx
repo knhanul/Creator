@@ -17,6 +17,8 @@ import {AI_STAGES,ERROR_GUIDE,PHASE_LABEL,STAGE_META,getProjectBgmPrompt,guideFo
 import {findSceneReferenceImage} from '../shared/reference-image';
 import type {AIStage,Brief,Genre,MediaAsset,ProjectSummary,Scene,Stage,StudioProject,EditClip,GeminiJobRecord} from '../shared/types';
 import {useStudio} from './hooks/useStudio';
+import {useMediaBatch} from './hooks/useMediaBatch';
+import {BATCH_KIND_LABEL,describeBatch,planMediaBatch} from '../shared/media-batch';
 import {AIDock,type AINavTarget} from './components/AIDialog';
 import {type ApprovedOriginalPayload} from './components/OriginalSourcePanel';
 import {RIGHTS_STATUS_META} from '../shared/copyright';
@@ -134,6 +136,7 @@ function ProjectRow({p,onOpen,onArchive}:{p:ProjectSummary,onOpen:()=>void,onArc
 }
 function App(){
   const studio=useStudio();const {project,projects,loading,busy,flash,copy,mutate}=studio;
+  const batch=useMediaBatch({reload:id=>studio.load(id),flash});
   const themeApi = useTheme();
   const [view,setView]=useState<View>('home');const [aiStage,setAiStage]=useState<AIStage|null>(null);const [aiView,setAiView]=useState<View|null>(null);const [aiAuto,setAiAuto]=useState(false);
   const [stageJobs,setStageJobs]=useState<Record<AIStage,GeminiJobRecord|null>>(EMPTY_STAGE_JOBS);
@@ -353,15 +356,17 @@ function App(){
     // 다음 단계가 아직 비어 있는 AI 단계면: 「다음」을 누르면 그 화면으로 가서 바로 AI 작업을 시작한다
     const auto=baseGuide.ready&&baseGuide.next?AUTO_START_NEXT[baseGuide.next]:undefined;
     const autoOn=!!auto&&auto.empty(project)&&!busyOf(auto.stage)&&!STAGE_META[auto.stage].prerequisite(project);
-    const guide=autoOn?{...baseGuide,hint:`준비 완료 ✓ 다음을 누르면 ${auto!.hint}`}:baseGuide;
-    const onNext=async()=>{if(!guide.next)return;const target=guide.next;if(await go(target)&&autoOn)openStage(auto!.stage,true,target);};
+    // 생성 프롬프트 → 미디어 보관함: 아직 연결된 미디어가 하나도 없으면 「미디어 한 번에 만들기」로 바로 시작
+    const mediaAuto=baseGuide.ready&&baseGuide.next==='media'&&!batch.running()&&!project.scenes.some(s=>!!s.assetId)&&planMediaBatch(project).length>0;
+    const guide=autoOn?{...baseGuide,hint:`준비 완료 ✓ 다음을 누르면 ${auto!.hint}`}:mediaAuto?{...baseGuide,hint:'준비 완료 ✓ 다음을 누르면 이미지를 모두 먼저 만들고, 동영상은 맨 뒤에 기준 이미지를 붙여 만들어요'}:baseGuide;
+    const onNext=async()=>{if(!guide.next)return;const target=guide.next;if(!await go(target))return;if(autoOn)openStage(auto!.stage,true,target);else if(mediaAuto)void batch.start(project.id);};
     const Icon=iconFor[stage];
     const panel=aiStage&&aiView===view?<AIDock key={project.id+aiStage} project={project} stage={aiStage} autoStart={aiAuto} onAutoStartConsumed={()=>setAiAuto(false)} onNavigate={onNavigate} flash={flash} onClose={()=>{setAiStage(null);setAiAuto(false);setAiView(null);}} onCopy={t=>void copy(t)} onApply={async(next)=>{const saved=await mutate(()=>next);if(saved){flash('AI 결과를 검사하고 적용했습니다.','success');return true;}return false;}}/>
       :stepPanel?<ProjectPropsPanel project={project} brief={project.brief} onChange={patch=>void mutate(p=>({...p,brief:{...p.brief,...patch}}))} onClose={toggleStepPanel}/>:null;
     return <StepLayout key={stage} focusKey={`${stage}-${project.id}`}
       header={<DocHeader icon={<Icon size={16}/>} title={STEP_TITLES[stage]} description={STAGE_HINTS[stage]} project={project} saveState={saveState} actions={opts.actions} panelOpen={stepPanel&&!aiStage} onTogglePanel={toggleStepPanel}/>}
       panel={panel}
-      actionBar={<ActionBar guide={guide} primaryLabel={opts.primaryLabel||(autoOn?`다음: ${auto!.label}`:undefined)} onNext={opts.onPrimary||(()=>void onNext())}/>}>
+      actionBar={<ActionBar guide={guide} primaryLabel={opts.primaryLabel||(autoOn?`다음: ${auto!.label}`:mediaAuto?'다음: 미디어 한 번에 만들기':undefined)} onNext={opts.onPrimary||(()=>void onNext())}/>}>
       {opts.body}
     </StepLayout>;
   };
@@ -439,6 +444,28 @@ function App(){
         {project&&view==='media'&&renderStep('media',{
           actions:<Button size="sm" onClick={()=>void studio.importAssets()}><Upload size={15}/> 미디어 가져오기</Button>,
           body:<div className="step-body">
+            {(()=>{
+              const plan=planMediaBatch(project);
+              const b=batch.state.projectId===project.id?batch.state:null;
+              const active=!!b&&(b.status==='running'||b.status==='stopping');
+              if(!active&&!plan.length&&b?.status!=='paused'&&b?.status!=='done')return null;
+              const pct=b&&b.total?Math.round(b.done/b.total*100):0;
+              return <Card className={`media-batch ${active?'is-running':''} ${b?.status==='paused'?'is-paused':''}`}>
+                <div className="media-batch-head">
+                  <div><strong>{active?`미디어 만드는 중 · ${b!.done}/${b!.total}`:b?.status==='paused'?'미디어 만들기를 멈췄어요':b?.status==='done'&&!plan.length?'미디어를 모두 만들었어요':'미디어 한 번에 만들기'}</strong>
+                    <p>{active&&b!.current?`${b!.current.label} 만드는 중${b!.current.kind==='video'?' — 기준 이미지를 첨부해 새 채팅에서 만들어요':''}${b!.status==='stopping'?' · 이것까지 만들고 멈춰요':''}`
+                      :b?.status==='paused'?b.message
+                      :plan.length?`${describeBatch(plan)} 순서로 자동으로 만들어요. 이미지를 같은 채팅에서 모두 먼저 만들어 느낌을 맞추고, 동영상은 맨 뒤에 장면의 기준 이미지를 붙여 만들어요.`
+                      :b?.message||''}</p></div>
+                  <div className="action-group">
+                    {active?<Button kind="outline" size="sm" disabled={b!.status==='stopping'} onClick={batch.stop}>멈추기</Button>
+                      :plan.length?<Button size="sm" onClick={()=>void batch.start(project.id)}><Sparkles size={15}/> {b?.status==='paused'?'이어서 만들기':'미디어 한 번에 만들기'}</Button>:null}
+                  </div>
+                </div>
+                {active&&<div className="media-batch-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><span style={{width:`${pct}%`}}/></div>}
+                {!active&&plan.length>0&&<ol className="media-batch-steps">{plan.map((st,i)=><li key={i} className={`kind-${st.kind}`}>{st.sceneId||''} <small>{BATCH_KIND_LABEL[st.kind]}</small></li>)}</ol>}
+              </Card>;
+            })()}
             {(()=>{
               const busyOf=(j?:GeminiJobRecord|null)=>!!j&&!['completed','failed','cancelled'].includes(j.state);
               const needsUserOf=(pv:ReturnType<typeof phaseView>)=>pv?.phase==='needs_user'||pv?.phase==='error';
