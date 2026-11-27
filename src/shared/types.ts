@@ -45,7 +45,9 @@ export interface VisualBible { styleSentence: string; palette: string[]; lightin
 export interface AnalysisResult { schema: 'creator.analysis.v1'; summary: string; emotion: string; keywords: string[]; styles: Choice[]; directions: Choice[]; cautions: string[];
   /** 정서 흐름 (예: 고백 → 쉼 → 그늘 → 잔치 → 집으로) */
   emotionArc?: string[];
-  visualBible?: VisualBible; }
+  visualBible?: VisualBible;
+  /** AI가 이 작품에 가장 맞다고 추천한 화풍·연출 id와 이유 (분석 결과가 들어오면 미리 선택됨) */
+  recommendedStyleId?: string; recommendedDirectionId?: string; recommendationReason?: string; }
 export interface StoryScene { id: string; title: string; narration: string; visual: string; durationSec: number; kind: 'image' | 'video';
   /** 장면 효과: 샷(움직임)·분위기 효과·색감·전환·자막 줄 (스토리보드 v2, 기존 장면 하위 호환: optional) */
   effects?: SceneEffects;

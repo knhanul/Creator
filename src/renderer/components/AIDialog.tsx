@@ -32,7 +32,7 @@ function StageResult({project,stage,onNavigate,onClose}:{project:StudioProject,s
     <div className="micro">{meta.resultLabel}</div><h3>{project.analysis.summary}</h3><p>{project.analysis.emotion}</p>
     <div className="keywords">{project.analysis.keywords.map(k=><span key={k}>#{k}</span>)}</div>
     <div className="automation-choices"><div><strong>화풍 {project.analysis.styles.length}안</strong><ul>{project.analysis.styles.map(s=><li key={s.id}>{s.label}</li>)}</ul></div><div><strong>연출 {project.analysis.directions.length}안</strong><ul>{project.analysis.directions.map(s=><li key={s.id}>{s.label}</li>)}</ul></div></div>
-    <div className="automation-cta"><span>JSON 검사를 통과해 작품에 저장했습니다. 이제 화풍과 연출안을 고르세요.</span><Button onClick={()=>nav('select')}>화풍·연출안 선택하기 <ArrowRight size={16}/></Button></div>
+    <div className="automation-cta"><span>작품에 저장하고 {project.analysis.recommendedStyleId||project.analysis.recommendedDirectionId?'AI 추천':'첫 번째'} 화풍·연출안을 미리 골라 두었어요. 가운데에서 바꿀 수 있고, 아래 「다음: 스토리보드」로 바로 넘어가면 돼요.</span></div>
   </div>;
   if(stage==='storyboard'&&project.scenes.length){const total=project.scenes.reduce((n,s)=>n+s.durationSec,0);return <div className="automation-result">
     <div className="micro">{meta.resultLabel}</div><h3>장면 {project.scenes.length}개 · 예상 {total}초</h3><p>낭독 문장이 등록된 원문과 일치하는지 검사했습니다.</p>

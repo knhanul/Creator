@@ -20,7 +20,12 @@ test('JSON 코드블록 추출',()=>assert.deepEqual(extractJSON('설명\n```jso
 test('JSON 주변 설명 추출',()=>assert.deepEqual(extractJSON('설명 {"a":2} 입니다'),{a:2}));
 const p1=applyAIResponse(p,'analysis',JSON.stringify(fixture('ai-analysis.example.json')));
 test('분석 JSON 검사 및 반영',()=>assert.equal(p1.analysis.styles.length,3));
-test('화풍 미승인시 스토리보드 차단',()=>assert.throws(()=>applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')))));
+test('분석 결과가 들어오면 추천안이 없을 때 첫 번째 화풍·연출을 미리 선택',()=>assert.deepEqual(p1.selection,{styleId:'warm-watercolor',directionId:'gentle'}));
+test('미리 선택되어 바로 스토리보드로 진행 가능',()=>assert.equal(stageComplete(p1,'analysis'),true));
+test('AI 추천 화풍·연출을 미리 선택',()=>{const a={...fixture('ai-analysis.example.json'),recommendedStyleId:'pastel',recommendedDirectionId:'scenic',recommendationReason:'어린이에게 밝고 친근함'};const r=applyAIResponse(p,'analysis',JSON.stringify(a));assert.deepEqual(r.selection,{styleId:'pastel',directionId:'scenic'});assert.equal(r.analysis.recommendationReason,'어린이에게 밝고 친근함');});
+test('없는 추천 id는 무시하고 첫 번째 안 선택',()=>{const a={...fixture('ai-analysis.example.json'),recommendedStyleId:'nope'};const r=applyAIResponse(p,'analysis',JSON.stringify(a));assert.equal(r.selection.styleId,'warm-watercolor');assert.equal(r.analysis.recommendedStyleId,undefined);});
+test('화풍 미승인시 스토리보드 차단',()=>assert.throws(()=>applyAIResponse({...p1,selection:{styleId:'',directionId:''}},'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')))));
+test('분석 프롬프트에 추천안 요청',()=>assert.ok(makeAIPrompt(p,'analysis').includes('recommendedStyleId')));
 p1.selection={styleId:'warm-watercolor',directionId:'gentle'};
 const p2=applyAIResponse(p1,'storyboard',JSON.stringify(fixture('ai-storyboard.example.json')));
 test('스토리보드 장면 적용',()=>assert.equal(p2.scenes.length,3));
